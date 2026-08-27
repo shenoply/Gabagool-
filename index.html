@@ -541,6 +541,53 @@ function base64ToArrayBuffer(b64) {
   return bytes.buffer;
 }
 
+
+/* ---------- On-screen diagnostics ----------
+   There is no dev console on a phone, so failures here have been diagnosed by
+   inference rather than evidence. This captures uncaught errors, promise
+   rejections, and failed asset loads, and shows them in a tap-to-dismiss panel.
+   It reports; it never changes behaviour. */
+(function installDiagnostics() {
+  const log = [];
+  let panel = null;
+  function show() {
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.style.cssText = 'position:fixed;left:8px;right:8px;bottom:8px;z-index:200;max-height:38vh;overflow:auto;' +
+        'background:rgba(20,6,6,0.94);border:1px solid #a33;border-radius:12px;padding:10px 12px;' +
+        'font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;color:#ffd9d9;white-space:pre-wrap;';
+      panel.addEventListener('click', () => { panel.style.display = 'none'; });
+      document.body.appendChild(panel);
+    }
+    panel.style.display = '';
+    panel.textContent = 'ISSUES (tap to hide)\n\n' + log.slice(-12).join('\n');
+  }
+  function note(msg) {
+    log.push(msg.length > 220 ? msg.slice(0, 220) + '...' : msg);
+    show();
+  }
+  window.addEventListener('error', (e) => {
+    if (e.target && e.target !== window && e.target.src) {
+      note('ASSET FAILED: ' + String(e.target.src).split('/').pop());
+    } else {
+      note('ERROR: ' + (e.message || 'unknown') + '  @' + (e.filename || '').split('/').pop() + ':' + e.lineno);
+    }
+  }, true); // capture phase, so failed <audio>/<img> loads are caught too
+  window.addEventListener('unhandledrejection', (e) => {
+    note('PROMISE REJECTED: ' + (e.reason && (e.reason.message || e.reason)));
+  });
+  window.__gameNote = note; // so load callbacks can report too
+  // GPU memory pressure is the standing suspect — report the renderer's own counts.
+  window.__reportGPU = () => {
+    try {
+      const i = renderer.info;
+      note('GPU: ' + i.memory.geometries + ' geometries, ' + i.memory.textures +
+           ' textures, ' + i.render.triangles.toLocaleString() + ' tris/frame, ' +
+           i.render.calls + ' draw calls');
+    } catch (e) { /* ignore */ }
+  };
+})();
+
 /* ---------- Scene setup ---------- */
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -1076,6 +1123,7 @@ function loadGarageCars() {
       garageCars.push({ group, name: def.name, home, dismissedUntilAway: false });
     }, (err) => {
       console.warn('Garage car failed to load (non-fatal):', def.name, err);
+      if (window.__gameNote) window.__gameNote('GARAGE CAR failed: ' + def.name);
     });
   });
 }
@@ -1325,7 +1373,7 @@ function applyGroundGrassTexture() {
       groundMat.normalScale = new THREE.Vector2(0.6, 0.6); // full strength reads as noise at this tiling density
       groundMat.needsUpdate = true;
     }, undefined, () => console.warn('grass normal map failed, colour only'));
-  }, undefined, () => console.warn('grass texture failed, keeping procedural ground'));
+  }, undefined, () => { if (window.__gameNote) window.__gameNote('GRASS texture failed'); });
 }
 
 const patioGeo = new THREE.PlaneGeometry(9, 7);
@@ -3487,81 +3535,41 @@ const pendingTaskNames = ['character', 'house', 'collision proxy', 'ducks'];
      city backdrop  sits at z -62                              -> nothing with z < -42
      ground plane   320 x 320                                  -> footprint within +/-160 */
 const FOREST_PATCHES = [
-  // Solved on a grid, then thinned by distance: full density inside 140 units where
-  // you actually walk and drive, checkerboarded beyond that, quarter density past 240.
-  // 71 patches at 47,920 verts each is 3.4M total, but they are separate objects so
-  // frustum culling means only the handful in view is ever submitted.
-  [-110, -14, 3.04],
-  [-85, -14, 4.79],
-  [115, -14, 6.23],
-  [-185, 10, 0.91],
-  [-135, 10, 4.41],
-  [-110, 10, 6.16],
-  [-85, 10, 1.63],
-  [-60, 10, 3.38],
-  [90, 10, 1.32],
-  [115, 10, 3.07],
-  [165, 10, 0.29],
-  [-210, 34, 2.28],
-  [-160, 34, 5.78],
-  [-135, 34, 1.25],
-  [-110, 34, 3.0],
-  [-85, 34, 4.75],
-  [-60, 34, 0.22],
-  [90, 34, 4.44],
-  [115, 34, 6.19],
-  [140, 34, 1.66],
-  [190, 34, 5.16],
-  [-185, 58, 0.87],
-  [-135, 58, 4.37],
-  [-110, 58, 6.12],
-  [-85, 58, 1.59],
-  [-60, 58, 3.34],
-  [90, 58, 1.28],
-  [115, 58, 3.03],
-  [165, 58, 0.25],
-  [-210, 82, 2.24],
-  [-160, 82, 5.74],
-  [-110, 82, 2.96],
-  [-85, 82, 4.71],
-  [-60, 82, 0.18],
-  [-35, 82, 1.93],
-  [90, 82, 4.4],
-  [140, 82, 1.62],
-  [190, 82, 5.12],
-  [-185, 106, 0.83],
-  [-135, 106, 4.33],
-  [-85, 106, 1.55],
-  [-60, 106, 3.3],
-  [-35, 106, 5.05],
-  [90, 106, 1.24],
-  [115, 106, 2.99],
-  [165, 106, 0.21],
-  [-160, 130, 5.7],
-  [-110, 130, 2.92],
-  [-60, 130, 0.14],
-  [-35, 130, 1.89],
-  [90, 130, 4.36],
-  [140, 130, 1.58],
-  [190, 130, 5.08],
-  [-185, 154, 0.79],
-  [-135, 154, 4.29],
-  [-85, 154, 1.51],
-  [-35, 154, 5.01],
-  [115, 154, 2.95],
-  [165, 154, 0.17],
-  [-210, 178, 2.16],
-  [-160, 178, 5.66],
-  [-110, 178, 2.88],
-  [-60, 178, 0.1],
-  [90, 178, 4.32],
-  [140, 178, 1.54],
-  [190, 178, 5.04],
-  [-135, 202, 4.25],
-  [-85, 202, 1.47],
-  [-35, 202, 4.97],
-  [115, 202, 2.91],
-  [165, 202, 0.13],
+  // Cut back from 71. That build had 3.4M vertices of alpha-tested foliage and
+  // coincided with trees, grass and the garage cars all failing to appear — the
+  // pattern of a device running out of GPU resources and dropping later loads
+  // rather than of a code fault. Sparser grid, and the same distance thinning.
+  [-62, -14, 0.12],
+  [118, -14, 0.16],
+  [-134, 20, 5.78],
+  [-98, 20, 2.02],
+  [-62, 20, 4.54],
+  [82, 20, 2.06],
+  [118, 20, 4.58],
+  [154, 20, 0.82],
+  [-170, 54, 1.4],
+  [-134, 54, 3.92],
+  [-98, 54, 0.16],
+  [-62, 54, 2.68],
+  [82, 54, 0.2],
+  [118, 54, 2.72],
+  [-134, 88, 2.06],
+  [-98, 88, 4.58],
+  [-62, 88, 0.82],
+  [-26, 88, 3.34],
+  [82, 88, 4.62],
+  [118, 88, 0.86],
+  [154, 88, 3.38],
+  [-170, 122, 3.96],
+  [-98, 122, 2.72],
+  [-62, 122, 5.24],
+  [-26, 122, 1.48],
+  [82, 122, 2.76],
+  [118, 122, 5.28],
+  [-134, 156, 4.62],
+  [-62, 156, 3.38],
+  [82, 156, 0.9],
+  [154, 156, 5.94],
 ];
 
 function placeForest(nearScene) {
@@ -3587,7 +3595,7 @@ function loadForest() {
   loader.parse(ASSETS.FOREST_NEAR, '', (gltf) => {
     try { placeForest(gltf.scene); }
     catch (e) { console.warn('forest placement failed, skipping:', e); }
-  }, (e) => console.warn('forest load failed, skipping:', e));
+  }, (e) => { console.warn('forest load failed:', e); if (window.__gameNote) window.__gameNote('FOREST failed to load'); });
 }
 
 function beginLoad() { pendingLoads++; }
@@ -3605,6 +3613,7 @@ function endLoad(name) {
     // Scenery starts downloading only once the game is actually playable, so it
     // never competes with the critical assets or delays the start screen.
     setTimeout(() => { applyGroundGrassTexture(); loadForest(); }, 1500);
+    setTimeout(() => { if (window.__reportGPU) window.__reportGPU(); }, 9000); // one-shot resource report once scenery has settled
   }
 }
 function updateLoadingPercent() {
