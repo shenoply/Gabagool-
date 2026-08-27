@@ -456,9 +456,46 @@ const ASSETS = {
 // Fetch an asset as an ArrayBuffer and hand it to cb — same shape the old
 // base64ToArrayBuffer sites fed into GLTFLoader.parse, so call sites keep
 // their parse flow and load-tracking unchanged.
+// Streams the response and reports real downloaded bytes, so the loading
+// percentage reflects actual progress instead of jumping to 25% and sitting
+// there while the one big file (the house) downloads with zero feedback.
+const assetByteProgress = {}; // url -> { loaded, total }
+function reportAssetProgress() {
+  if (typeof updateLoadingPercent === 'function') updateLoadingPercent();
+}
 function fetchAssetBuffer(url, cb, onErr) {
   fetch(url)
-    .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + url); return r.arrayBuffer(); })
+    .then(async (r) => {
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + url);
+      const total = parseInt(r.headers.get('Content-Length') || '0', 10);
+      assetByteProgress[url] = { loaded: 0, total: total || 0 };
+      if (!r.body || !total) {
+        // No streaming or unknown size — fall back to a single-step read
+        const buf = await r.arrayBuffer();
+        assetByteProgress[url].loaded = assetByteProgress[url].total = buf.byteLength;
+        reportAssetProgress();
+        return buf;
+      }
+      const reader = r.body.getReader();
+      const chunks = [];
+      let received = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        // Clamp: if the server gzip-compresses, decompressed bytes can exceed
+        // the Content-Length; never show over 100% for a single file.
+        assetByteProgress[url].loaded = Math.min(received, total);
+        reportAssetProgress();
+      }
+      assetByteProgress[url].loaded = assetByteProgress[url].total;
+      reportAssetProgress();
+      const merged = new Uint8Array(received);
+      let offset = 0;
+      for (const c of chunks) { merged.set(c, offset); offset += c.length; }
+      return merged.buffer;
+    })
     .then(cb)
     .catch((e) => { (onErr || ((err) => showFatalError('Asset fetch failed: ' + url + '\n' + err)))(e); });
 }
@@ -2893,7 +2930,25 @@ function endLoad(name) {
   }
 }
 function updateLoadingPercent() {
-  loadingPct.textContent = Math.min(100, Math.round((completedLoads / TOTAL_LOAD_TASKS) * 100)) + '%';
+  // Byte-weighted progress across all in-flight asset downloads — the old
+  // task-count version (completed/4 × 100) leapt to 25% when the three small
+  // files finished and then froze there for minutes while the 41MB house
+  // downloaded silently. Bytes give honest, continuously moving feedback.
+  let loadedBytes = 0, totalBytes = 0;
+  for (const k in assetByteProgress) {
+    loadedBytes += assetByteProgress[k].loaded;
+    totalBytes += assetByteProgress[k].total;
+  }
+  let pct;
+  if (totalBytes > 0) {
+    pct = Math.round((loadedBytes / totalBytes) * 100);
+  } else {
+    pct = Math.round((completedLoads / TOTAL_LOAD_TASKS) * 100); // pre-fetch fallback
+  }
+  // Hold at 99 until the task system confirms everything parsed, since bytes
+  // finish slightly before GLTF parsing does.
+  if (completedLoads < TOTAL_LOAD_TASKS) pct = Math.min(99, pct);
+  loadingPct.textContent = Math.min(100, pct) + '%';
 }
 function maybeFinishLoading() {
   if (!allLoaded || !hasTappedStart) return;
