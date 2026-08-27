@@ -456,6 +456,10 @@ const ASSETS = {
   GARAGE_E50: 'mercedes_e50.glb',
   GARAGE_W201: 'mercedes_w201.glb',
   GARAGE_PONY: 'hyundai_pony.glb',
+  ENGINE_IDLE: 'engine_idle.mp3',  // CC0, from pmndrs/racing-game
+  ENGINE_REV: 'engine_rev.mp3',
+  CAR_BRAKE: 'car_brake.mp3',
+  CAR_CRASH: 'car_crash.mp3',
   GRASS_COLOR: 'grass_color.webp',   // photoscanned ground grass, 1024 — replaces the procedural canvas texture
   GRASS_NORMAL: 'grass_normal.webp', // 512 is plenty for a normal map at this viewing distance
   FOREST_NEAR: 'pine_near.glb', // pine patch, 47,920 verts, ~51 x 46 units — cloned across the map
@@ -2849,7 +2853,7 @@ function updateCarDriving(dt) {
   const resolved = resolveCarCollisions(carState.x, carState.z);
   carState.x = resolved.x;
   carState.z = resolved.z;
-  if (resolved.hit) { carState.speed *= 0.15; carState.vx *= 0.15; carState.vz *= 0.15; } // solid impact — kill the slide vector too, or it drifts on through
+  if (resolved.hit) { if (Math.abs(carState.speed) > 3) playCrashSound(); carState.speed *= 0.15; carState.vx *= 0.15; carState.vz *= 0.15; } // solid impact — kill the slide vector too, or it drifts on through
 
   // Weight transfer: lean into corners, squat under power, dive under braking. The
   // car is a rigid box welded to y=0, so this is what stands in for suspension —
@@ -2868,6 +2872,7 @@ function updateCarDriving(dt) {
   // safe substitute for real motion blur (no custom shaders on the car models).
   const speedFrac = Math.min(1, Math.abs(carState.speed) / CAR_MAX_SPEED);
   updateEngineAudio(speedFrac, throttle, true);
+  if (throttle < -0.4 && carState.speed > CAR_MAX_SPEED * 0.35) playBrakeSound();
   camera.fov = 45 + speedFrac * 16;
   camera.updateProjectionMatrix();
   document.getElementById('speed-vignette').style.opacity = Math.max(0, speedFrac - 0.25) * 0.95;
@@ -2941,7 +2946,24 @@ function playCatchCutscene(onDone) {
   video.play().catch(finish); // if playback fails for any reason, don't get stuck — just continue
 }
 
+let crashSampleReady = false;
+(function warmCrashSample() {
+  // Preload so the first impact uses the sample rather than the fallback.
+  try {
+    const el = new Audio(ASSETS.CAR_CRASH);
+    el.preload = 'auto';
+    el.addEventListener('canplaythrough', () => { crashSampleReady = true; }, { once: true });
+    el.load();
+  } catch (e) { /* stays false; the synth fallback covers it */ }
+})();
+let lastCrashSound = 0;
 function playCrashSound() {
+  // Prefer the recorded impact; the synthesized burst below stays as the fallback
+  // for when the sample has not downloaded yet.
+  const nowMs = performance.now();
+  if (nowMs - lastCrashSound < 400) return;
+  lastCrashSound = nowMs;
+  if (crashSampleReady) { playCarOneShot(ASSETS.CAR_CRASH, 0.5); return; }
   if (!ambientCtx) return;
   const now = ambientCtx.currentTime;
   // Sharp noise burst for the impact crack, plus a low thud underneath.
@@ -4086,86 +4108,107 @@ function initAmbientAudio() {
 }
 
 /* ---------- Engine ----------
-   Synthesized rather than streamed: a real engine loop would be another download
-   on a payload that already fails on this device, and pitch-shifting a recording
-   convincingly is harder than generating the tone outright.
+   Was fully synthesized: two detuned sawtooths plus filtered noise. It never worked.
+   The first attempt put the fundamental at 48-132 Hz, which a phone speaker cannot
+   reproduce at all, and even retuned upward a synthesized engine lacks the harmonic
+   mess that makes a real one recognisable.
 
-   Two detuned sawtooths an octave apart give the harmonic body a single oscillator
-   lacks, a little filtered noise adds intake roughness, and a lowpass that opens
-   with throttle is what makes it sound like it's working rather than just louder.
-   Frequency follows speed with a fake gearbox, so revs climb and drop back on each
-   shift instead of sweeping in one long uninterrupted whine. */
+   Now sample-based, using two CC0 loops from pmndrs/racing-game: an idle bed and a
+   high-RPM layer. Both run continuously and are crossfaded by speed, with playback
+   rate driving pitch — the standard two-layer approach. It is not a full multi-state
+   pack (no separate on/off throttle, no startup or shutdown), so the character is
+   limited by what two layers can express, but it is a real engine rather than a tone.
+
+   Loop points were checked before use: head and tail energy match on both clips, so
+   they repeat without a click and need no crossfade at the seam. */
 let engineNodes = null;
 const ENGINE_GEARS = [0.28, 0.5, 0.72, 1.0];
 
 function initEngineAudio() {
-  if (!ambientCtx) initAmbientAudio(); // engine shouldn't depend on ambient having been started first
+  if (!ambientCtx) initAmbientAudio();
   if (engineNodes || !ambientCtx) return;
   try {
-    const oscA = ambientCtx.createOscillator();
-    const oscB = ambientCtx.createOscillator();
-    oscA.type = 'sawtooth'; oscB.type = 'sawtooth';
-    oscA.frequency.value = 120; oscB.frequency.value = 60;
-    oscB.detune.value = 8; // slight detune — perfectly tuned octaves sound synthetic
-
-    const bufSize = ambientCtx.sampleRate;
-    const nb = ambientCtx.createBuffer(1, bufSize, ambientCtx.sampleRate);
-    const nd = nb.getChannelData(0);
-    for (let i = 0; i < bufSize; i++) nd[i] = (Math.random() * 2 - 1) * 0.5;
-    const noise = ambientCtx.createBufferSource();
-    noise.buffer = nb; noise.loop = true;
-    const noiseGain = ambientCtx.createGain();
-    noiseGain.gain.value = 0.06;
-
-    const filter = ambientCtx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 1200;
-    filter.Q.value = 3;
-
-    const gain = ambientCtx.createGain();
-    gain.gain.value = 0; // silent until the car actually moves
-
-    oscA.connect(filter); oscB.connect(filter);
-    noise.connect(noiseGain); noiseGain.connect(filter);
-    filter.connect(gain);
-    gain.connect(ambientCtx.destination);
-    oscA.start(); oscB.start(); noise.start();
-
-    engineNodes = { oscA, oscB, filter, gain };
-  } catch (e) { engineNodes = null; }
+    const make = (url) => {
+      const el = new Audio(url);
+      el.loop = true;
+      el.preload = 'auto';
+      el.crossOrigin = 'anonymous';
+      const src = ambientCtx.createMediaElementSource(el);
+      const gain = ambientCtx.createGain();
+      gain.gain.value = 0;
+      src.connect(gain);
+      gain.connect(ambientCtx.destination);
+      return { el, gain };
+    };
+    engineNodes = {
+      idle: make(ASSETS.ENGINE_IDLE),
+      rev: make(ASSETS.ENGINE_REV),
+      started: false,
+    };
+  } catch (e) {
+    engineNodes = null; // non-fatal: no engine sound rather than no game
+  }
 }
 
 function updateEngineAudio(speedFrac, throttle, driving) {
   if (!ambientCtx) return;
   if (!engineNodes) initEngineAudio();
   if (!engineNodes) return;
-  // A context left in 'suspended' state plays nothing and throws nothing — it has to
-  // be resumed from a user gesture, and drive mode is one.
-  if (ambientCtx.state === 'suspended') ambientCtx.resume().catch(() => {});
   const t = ambientCtx.currentTime;
-  // Muted, or out of the car: fade out rather than cut, and stop there.
+
   if (!driving || !soundOn) {
-    engineNodes.gain.gain.setTargetAtTime(0, t, 0.15);
+    engineNodes.idle.gain.gain.setTargetAtTime(0, t, 0.2);
+    engineNodes.rev.gain.gain.setTargetAtTime(0, t, 0.2);
+    if (engineNodes.started) {
+      engineNodes.idle.el.pause();
+      engineNodes.rev.el.pause();
+      engineNodes.started = false;
+    }
     return;
   }
-  // Fake gearbox — revs rise through each band then drop on the shift.
+
+  // A suspended context plays nothing and throws nothing — resume before use.
+  if (ambientCtx.state === 'suspended') ambientCtx.resume().catch(() => {});
+  if (!engineNodes.started) {
+    engineNodes.idle.el.play().catch(() => {});
+    engineNodes.rev.el.play().catch(() => {});
+    engineNodes.started = true;
+  }
+
+  // Fake gearbox so revs climb and drop on each shift rather than sweeping once.
   let gear = 0;
   while (gear < ENGINE_GEARS.length - 1 && speedFrac > ENGINE_GEARS[gear]) gear++;
   const low = gear === 0 ? 0 : ENGINE_GEARS[gear - 1];
-  const rev = Math.min(1, (speedFrac - low) / Math.max(0.01, ENGINE_GEARS[gear] - low));
+  const rev = Math.min(1, Math.max(0, (speedFrac - low) / Math.max(0.01, ENGINE_GEARS[gear] - low)));
 
-  // Retuned upward. The first version ran the fundamental at 48-132 Hz behind a
-  // 320 Hz lowpass, which is inaudible on a phone speaker — they roll off hard below
-  // roughly 400 Hz. Fundamental now sits at 115-300 Hz and the filter stays open
-  // enough to pass the harmonics that actually carry the sound on a small speaker.
-  const base = 115 + rev * 165 + gear * 9;
-  engineNodes.oscA.frequency.setTargetAtTime(base, t, 0.06);
-  engineNodes.oscB.frequency.setTargetAtTime(base * 0.5, t, 0.06);
-  // Filter opens under load — the difference between revving and cruising.
-  engineNodes.filter.frequency.setTargetAtTime(1100 + rev * 3200 + Math.abs(throttle) * 1400, t, 0.08);
-  engineNodes.gain.gain.setTargetAtTime(0.09 + speedFrac * 0.08 + Math.abs(throttle) * 0.04, t, 0.1);
+  // Pitch: playbackRate is clamped well inside the range where MP3 resampling still
+  // sounds like an engine rather than a chipmunk or a tractor.
+  engineNodes.idle.el.playbackRate = 0.85 + rev * 0.5;
+  engineNodes.rev.el.playbackRate = 0.8 + rev * 0.55;
+
+  // Crossfade: idle carries the bottom end, the rev layer takes over under load.
+  const blend = Math.min(1, speedFrac * 1.5 + Math.max(0, throttle) * 0.35);
+  engineNodes.idle.gain.gain.setTargetAtTime(0.30 * (1 - blend * 0.75), t, 0.12);
+  engineNodes.rev.gain.gain.setTargetAtTime(0.34 * blend, t, 0.12);
 }
 
+/* One-shots: braking and impacts. Each gets its own short-lived element so repeats
+   overlap instead of cutting each other off. */
+function playCarOneShot(url, volume) {
+  if (!soundOn) return;
+  try {
+    const el = new Audio(url);
+    el.volume = volume;
+    el.play().catch(() => {});
+  } catch (e) { /* non-fatal */ }
+}
+let lastBrakeSound = 0;
+function playBrakeSound() {
+  const now = performance.now();
+  if (now - lastBrakeSound < 900) return; // don't machine-gun it while the brake is held
+  lastBrakeSound = now;
+  playCarOneShot(ASSETS.CAR_BRAKE, 0.35);
+}
 function playBirdChirp() {
   if (!ambientCtx) return;
   const now = ambientCtx.currentTime;
