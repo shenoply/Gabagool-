@@ -468,11 +468,20 @@ function fetchAssetBuffer(url, cb, onErr) {
     .then(async (r) => {
       if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + url);
       const total = parseInt(r.headers.get('Content-Length') || '0', 10);
-      assetByteProgress[url] = { loaded: 0, total: total || 0 };
+      // If the server compresses the stream, Content-Length is the COMPRESSED
+      // size while we count decompressed bytes — the percent maths becomes a
+      // lie (this is how "stuck at 99%" happens while data is still arriving).
+      // Mark such totals unreliable; they're excluded from the % denominator
+      // and the display falls back to a moving MB counter for them.
+      const enc = r.headers.get('Content-Encoding');
+      const reliableTotal = (!enc || enc === 'identity') ? (total || 0) : 0;
+      assetByteProgress[url] = { loaded: 0, total: reliableTotal, done: false };
       if (!r.body || !total) {
         // No streaming or unknown size — fall back to a single-step read
         const buf = await r.arrayBuffer();
-        assetByteProgress[url].loaded = assetByteProgress[url].total = buf.byteLength;
+        assetByteProgress[url].loaded = buf.byteLength;
+        if (!assetByteProgress[url].total) assetByteProgress[url].total = buf.byteLength;
+        assetByteProgress[url].done = true;
         reportAssetProgress();
         return buf;
       }
@@ -484,12 +493,11 @@ function fetchAssetBuffer(url, cb, onErr) {
         if (done) break;
         chunks.push(value);
         received += value.length;
-        // Clamp: if the server gzip-compresses, decompressed bytes can exceed
-        // the Content-Length; never show over 100% for a single file.
-        assetByteProgress[url].loaded = Math.min(received, total);
+        assetByteProgress[url].loaded = received;
         reportAssetProgress();
       }
-      assetByteProgress[url].loaded = assetByteProgress[url].total;
+      assetByteProgress[url].done = true;
+      if (assetByteProgress[url].total) assetByteProgress[url].loaded = assetByteProgress[url].total;
       reportAssetProgress();
       const merged = new Uint8Array(received);
       let offset = 0;
@@ -2930,25 +2938,31 @@ function endLoad(name) {
   }
 }
 function updateLoadingPercent() {
-  // Byte-weighted progress across all in-flight asset downloads — the old
-  // task-count version (completed/4 × 100) leapt to 25% when the three small
-  // files finished and then froze there for minutes while the 41MB house
-  // downloaded silently. Bytes give honest, continuously moving feedback.
-  let loadedBytes = 0, totalBytes = 0;
+  // Byte-weighted progress with two honesty upgrades: compressed responses
+  // (whose totals are unreliable) show as a moving MB counter instead of a
+  // false percent, and once all downloads finish but models are still being
+  // parsed, the label says so instead of freezing at 99%.
+  let loadedAll = 0, loadedKnown = 0, totalKnown = 0, allDone = true, anyStarted = false;
   for (const k in assetByteProgress) {
-    loadedBytes += assetByteProgress[k].loaded;
-    totalBytes += assetByteProgress[k].total;
+    const p = assetByteProgress[k];
+    anyStarted = true;
+    loadedAll += p.loaded;
+    if (p.total > 0) { loadedKnown += p.loaded; totalKnown += p.total; }
+    if (!p.done) allDone = false;
+  }
+  const mb = (loadedAll / 1048576).toFixed(1);
+  if (anyStarted && allDone && completedLoads < TOTAL_LOAD_TASKS) {
+    loadingPct.textContent = 'Processing models\u2026 (' + mb + ' MB)';
+    return;
   }
   let pct;
-  if (totalBytes > 0) {
-    pct = Math.round((loadedBytes / totalBytes) * 100);
+  if (totalKnown > 0) {
+    pct = Math.round((loadedKnown / totalKnown) * 100);
   } else {
     pct = Math.round((completedLoads / TOTAL_LOAD_TASKS) * 100); // pre-fetch fallback
   }
-  // Hold at 99 until the task system confirms everything parsed, since bytes
-  // finish slightly before GLTF parsing does.
   if (completedLoads < TOTAL_LOAD_TASKS) pct = Math.min(99, pct);
-  loadingPct.textContent = Math.min(100, pct) + '%';
+  loadingPct.textContent = Math.min(100, pct) + '% \u00b7 ' + mb + ' MB';
 }
 function maybeFinishLoading() {
   if (!allLoaded || !hasTappedStart) return;
