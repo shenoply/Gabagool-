@@ -3129,6 +3129,7 @@ function updateCarDriving(dt) {
   if (isBraking) playBrakeSound();
   updateCarLights(isBraking);
   updateReverseLight();
+  updateRoadNoise(Math.min(1, Math.abs(carState.speed) / CAR_MAX_SPEED), !!carState.offRoad);
   // Lay rubber when the car is genuinely sliding sideways or braking hard at speed.
   if ((Math.abs(carState.slip) > 0.30 || (isBraking && speedFrac > 0.5)) && performance.now() - lastSkidAt > 55) {
     lastSkidAt = performance.now();
@@ -3594,6 +3595,168 @@ function loadGameState() {
     if (typeof d.debts === 'number') debtsCollected = d.debts;
     if (typeof d.audioMode === 'number') { audioMode = d.audioMode; soundOn = audioMode === 0; sfxOn = audioMode !== 2; }
   } catch (e) { /* ignore corrupt saves rather than blocking startup */ }
+}
+
+/* ================= WEATHER AUDIO, PUDDLES, CONTACT SHADOW ================= */
+
+/* Contact shadow. The real shadow map is tuned for the whole yard, so it is too soft
+   under the feet to read as contact — which is why he has looked like he floats in
+   every screenshot. This is a cheap dark blob that follows him and tightens as he
+   gets closer to the ground. */
+let contactShadow = null;
+function ensureContactShadow() {
+  if (contactShadow || !character) return;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(0,0,0,0.55)');
+  g.addColorStop(0.55, 'rgba(0,0,0,0.22)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  contactShadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.25, 1.25),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0.85 })
+  );
+  contactShadow.rotation.x = -Math.PI / 2;
+  contactShadow.renderOrder = 2;
+  scene.add(contactShadow);
+}
+function updateContactShadow() {
+  ensureContactShadow();
+  if (!contactShadow || !character) return;
+  contactShadow.visible = character.visible && !drivingMode;
+  if (!contactShadow.visible) return;
+  contactShadow.position.set(character.position.x, (character.position.y || 0) + 0.015, character.position.z);
+  // fainter at night, when there is less light to cast one
+  contactShadow.material.opacity = 0.85 * (1 - nightLightLevel * 0.55);
+}
+
+/* Rain audio — filtered noise scaled by how wet it currently is, so it fades in and
+   out with the weather rather than switching on. Synthesized: no download. */
+let rainNoiseGain = null;
+function ensureRainAudio() {
+  if (rainNoiseGain || !ambientCtx) return;
+  const n = ambientCtx.sampleRate * 2;
+  const b = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * 0.7;
+  const src = ambientCtx.createBufferSource();
+  src.buffer = b; src.loop = true;
+  const hp = ambientCtx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 700;
+  const lp = ambientCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 6000;
+  rainNoiseGain = ambientCtx.createGain();
+  rainNoiseGain.gain.value = 0;
+  src.connect(hp); hp.connect(lp); lp.connect(rainNoiseGain);
+  rainNoiseGain.connect(ambientCtx.destination);
+  src.start();
+}
+function updateRainAudio() {
+  if (!ambientCtx) return;
+  ensureRainAudio();
+  if (!rainNoiseGain) return;
+  const target = sfxOn ? rainWet * 0.085 : 0;
+  rainNoiseGain.gain.setTargetAtTime(target, ambientCtx.currentTime, 0.5);
+}
+
+/* Thunder — only while it is actually raining. A light flash plus a low rumble that
+   arrives a moment later, the way distance actually works. */
+let thunderTimer = 20 + Math.random() * 30;
+let flashAmount = 0;
+function updateThunder(dt) {
+  if (flashAmount > 0) {
+    flashAmount *= Math.pow(0.02, dt);
+    key.intensity += flashAmount * 4.0;
+    hemi.intensity += flashAmount * 1.5;
+  }
+  if (rainWet < 0.45) return;
+  thunderTimer -= dt;
+  if (thunderTimer > 0) return;
+  thunderTimer = 14 + Math.random() * 34;
+  flashAmount = 0.8 + Math.random() * 0.5;
+  if (!ambientCtx || !sfxOn) return;
+  const delay = 0.4 + Math.random() * 1.8; // sound lags the flash
+  const now = ambientCtx.currentTime + delay;
+  const n = Math.floor(ambientCtx.sampleRate * 2.2);
+  const b = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) {
+    const k = 1 - i / n;
+    d[i] = (Math.random() * 2 - 1) * k * k * (0.5 + Math.sin(i * 0.0004) * 0.5);
+  }
+  const src = ambientCtx.createBufferSource(); src.buffer = b;
+  const lp = ambientCtx.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(320, now);
+  lp.frequency.exponentialRampToValueAtTime(90, now + 2.0);
+  const g = ambientCtx.createGain();
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(0.30, now + 0.12);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 2.2);
+  src.connect(lp); lp.connect(g); g.connect(ambientCtx.destination);
+  src.start(now);
+}
+
+/* Road noise — tyre roar rising with speed, and duller off the tarmac. Uses the
+   offRoad flag the free-roam change already sets. */
+let roadNoiseGain = null, roadNoiseFilter = null;
+function ensureRoadNoise() {
+  if (roadNoiseGain || !ambientCtx) return;
+  const n = ambientCtx.sampleRate * 2;
+  const b = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * 0.6;
+  const src = ambientCtx.createBufferSource(); src.buffer = b; src.loop = true;
+  roadNoiseFilter = ambientCtx.createBiquadFilter();
+  roadNoiseFilter.type = 'bandpass';
+  roadNoiseFilter.frequency.value = 1100;
+  roadNoiseFilter.Q.value = 0.6;
+  roadNoiseGain = ambientCtx.createGain();
+  roadNoiseGain.gain.value = 0;
+  src.connect(roadNoiseFilter); roadNoiseFilter.connect(roadNoiseGain);
+  roadNoiseGain.connect(ambientCtx.destination);
+  src.start();
+}
+function updateRoadNoise(speedFrac, offRoad) {
+  if (!ambientCtx) return;
+  ensureRoadNoise();
+  if (!roadNoiseGain) return;
+  const t = ambientCtx.currentTime;
+  const on = sfxOn && drivingMode;
+  roadNoiseGain.gain.setTargetAtTime(on ? speedFrac * (offRoad ? 0.075 : 0.055) : 0, t, 0.18);
+  // grass is duller and broader than tarmac
+  roadNoiseFilter.frequency.setTargetAtTime(offRoad ? 520 : 900 + speedFrac * 900, t, 0.25);
+}
+
+/* Puddles — appear on the road as rain accumulates and dry out after. Low roughness
+   and high metalness so the environment map shows in them. */
+let puddleGroup = null;
+function buildPuddles() {
+  puddleGroup = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x2a3138, roughness: 0.03, metalness: 0.85, transparent: true, opacity: 0,
+  });
+  for (let i = 0; i < 22; i++) {
+    const r = 0.8 + Math.random() * 2.4;
+    const p = new THREE.Mesh(new THREE.CircleGeometry(r, 12), mat);
+    p.rotation.x = -Math.PI / 2;
+    p.scale.z = 0.5 + Math.random() * 0.7; // squashed, so they aren't obvious discs
+    p.position.set(
+      ROAD_ZONE.centerX + (Math.random() * 2 - 1) * (ROAD_ZONE.halfW - 1.5),
+      0.025,
+      ROAD_ZONE.centerZ + (Math.random() * 2 - 1) * ROAD_ZONE.halfD
+    );
+    puddleGroup.add(p);
+  }
+  puddleGroup.children[0].material = mat; // one shared material: one opacity to drive
+  scene.add(puddleGroup);
+  puddleGroup.userData.mat = mat;
+}
+function updatePuddles() {
+  if (!puddleGroup) return;
+  const m = puddleGroup.userData.mat;
+  m.opacity = Math.max(0, rainWet - 0.25) * 1.1; // lag behind the rain, then linger
+  puddleGroup.visible = m.opacity > 0.02;
 }
 
 function laneX(index) {
@@ -4310,7 +4473,7 @@ function endLoad(name) {
     setTimeout(applyGroundGrassTexture, 1500);
     setTimeout(loadForest, 4000);
     setTimeout(() => { try { buildTallGrass(); } catch (e) { console.warn('tall grass failed:', e); } }, 5200);
-    setTimeout(() => { try { buildDust(); buildRain(); } catch (e) { console.warn('weather failed:', e); } }, 6200);
+    setTimeout(() => { try { buildDust(); buildRain(); buildPuddles(); } catch (e) { console.warn('weather failed:', e); } }, 6200);
     setTimeout(() => { if (window.__reportGPU) window.__reportGPU(); }, 9000); // one-shot resource report once scenery has settled
   }
 }
@@ -5194,6 +5357,10 @@ function tick() {
   updateSkids(dt);
   updateTallGrass(clock.elapsedTime);
   updateRain(dt);
+  updateRainAudio();
+  updateThunder(dt);
+  updatePuddles();
+  updateContactShadow();
   if (!drivingMode) updateDuckBehaviour(dt);
   { const sh = dustMesh && dustMesh.material.userData.shader; if (sh) sh.uniforms.uTime.value = clock.elapsedTime; }
   applyShake(dt);
