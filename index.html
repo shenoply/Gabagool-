@@ -699,12 +699,12 @@ function loadRealCityBackdrop() {
       // rotation/scale, so the horizon reads as a city rather than one lonely
       // block. Cost is negligible (~13K verts each, shared textures via clone).
       const flankL = city.clone();
-      flankL.position.x -= 95; flankL.position.z -= 30;
+      flankL.position.x -= 68; flankL.position.z -= 14; // pulled closer per feedback
       flankL.rotation.y += 0.9;
       flankL.scale.multiplyScalar(0.85);
       scene.add(flankL);
       const flankR = city.clone();
-      flankR.position.x += 95; flankR.position.z -= 25;
+      flankR.position.x += 68; flankR.position.z -= 12; // pulled closer per feedback
       flankR.rotation.y -= 1.2;
       flankR.scale.multiplyScalar(0.75);
       scene.add(flankR);
@@ -822,6 +822,60 @@ function updateGeorgeProximity() {
     openGeorgeDialog();
   }
   if (d > 5.5) georgeDialogDismissedUntilAway = false; // walked away — can trigger again next visit
+}
+
+/* ================= THE BOSS CALLS — global phone ringer =================
+   Missions are opt-in now: every few minutes the phone rings (walking or
+   driving). Answer -> the job starts, auto-entering drive mode if needed.
+   Decline -> he calls back later. */
+let nextPhoneRingAt = Infinity;
+let phoneRingPopupOpen = false;
+function scheduleNextPhoneRing(seconds) {
+  nextPhoneRingAt = performance.now() + seconds * 1000;
+}
+const phoneDialog = document.createElement('div');
+phoneDialog.id = 'phone-dialog';
+phoneDialog.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:75;background:var(--panel);border:1px solid var(--accent-dim);border-radius:16px;padding:14px 18px;max-width:86vw;backdrop-filter:blur(8px);box-shadow:0 12px 32px rgba(0,0,0,0.55);display:none;';
+phoneDialog.innerHTML =
+  '<div style="font-size:14px;font-weight:800;color:var(--accent);margin-bottom:8px;">📞 Incoming Call — The Boss</div>' +
+  '<div style="display:flex;gap:10px;">' +
+  '<button id="phone-answer-btn" style="flex:1;background:var(--accent);border:none;border-radius:10px;padding:10px 14px;font-weight:800;font-size:13px;color:#1a1208;">Answer</button>' +
+  '<button id="phone-decline-btn" style="flex:1;background:transparent;border:1px solid var(--accent-dim);border-radius:10px;padding:10px 14px;font-weight:700;font-size:13px;color:var(--text);">Decline</button>' +
+  '</div>';
+document.body.appendChild(phoneDialog);
+function openPhoneRing() {
+  phoneRingPopupOpen = true;
+  phoneDialog.style.display = 'block';
+  playPhoneRing();
+  // Keep ringing every few seconds until answered or declined
+  openPhoneRing._ringLoop = setInterval(() => { if (phoneRingPopupOpen) playPhoneRing(); }, 3500);
+}
+function closePhoneRing() {
+  phoneRingPopupOpen = false;
+  phoneDialog.style.display = 'none';
+  clearInterval(openPhoneRing._ringLoop);
+}
+document.getElementById('phone-answer-btn').addEventListener('click', () => {
+  closePhoneRing();
+  nextPhoneRingAt = Infinity; // next ring is scheduled when this mission resolves
+  if (drivingMode) {
+    startChaseAudio();
+    startDebtMission();
+  } else {
+    // Auto-enter the car with the mission armed — no need to touch the Drive toggle
+    driveToggle.classList.add('on');
+    enterDriveMode(true);
+  }
+});
+document.getElementById('phone-decline-btn').addEventListener('click', () => {
+  closePhoneRing();
+  showMissionPopup('📵', 'Declined', 'The Boss will call back.', 2500);
+  scheduleNextPhoneRing(120 + Math.random() * 60);
+});
+function updatePhoneRinger() {
+  if (phoneRingPopupOpen || missionState !== 'none' || !audioUnlocked) return;
+  if (gameState === 'passedout' || georgeDialogOpen) return;
+  if (performance.now() >= nextPhoneRingAt) openPhoneRing();
 }
 
 
@@ -2633,8 +2687,7 @@ function playPhoneRing() {
 
 function startDebtMission() {
   missionState = 'collect_debt';
-  playPhoneRing();
-  showMissionPopup('📞', 'Incoming Call', "\"Go collect what's owed. Don't let him drive off.\"", 4500);
+  showMissionPopup('📞', 'The Boss', "\"Go collect what's owed. Don't let him drive off.\"", 4500);
   if (!debtorCar) spawnDebtor();
   startChaseAudio(); // every chase gets its own play-through of the clip, and its own catch-gate
 }
@@ -2732,9 +2785,11 @@ function updateMilfieWaypoint(dt) {
   if (d < 4) {
     scene.remove(milfieWaypoint.group);
     milfieWaypoint = null;
-    showMissionPopup('✅', 'Mission Complete', "Dr. Milfie's seen to. Another debt just came in...", 4200);
+    showMissionPopup('✅', 'Mission Complete', "Dr. Milfie's seen to. The Boss will call when there's more work.", 4200);
     missionState = 'none';
-    setTimeout(() => { if (drivingMode) startDebtMission(); }, 4200);
+    stopChaseAudio();
+    if (soundOn) bgAudio.play().catch(() => {});
+    scheduleNextPhoneRing(90 + Math.random() * 60); // next job call in 1.5-2.5 min
   }
 }
 
@@ -2759,7 +2814,8 @@ function resolveCarCollisions(nextX, nextZ) {
   return { x: nextX, z: nextZ, hit: false };
 }
 
-function enterDriveMode() {
+function enterDriveMode(withMission) {
+  enterDriveMode._withMission = !!withMission;
   loadCarModel(() => {
     loadTrafficPack(() => {
       if (!roadZoneBuilt) { buildRoadZone(); roadZoneBuilt = true; }
@@ -2776,8 +2832,14 @@ function enterDriveMode() {
       car.visible = true;
       drivingMode = true;
       document.getElementById('status-panel').style.display = 'none'; // blocks too much screen while driving
-      startChaseAudio();
-      if (missionState === 'none') startDebtMission();
+      // Missions no longer auto-start with driving — free cruising is the default.
+      // A mission begins only by answering the phone (see the global ringer), which
+      // passes withMission=true here or starts the chase directly if already driving.
+      if (enterDriveMode._withMission) {
+        enterDriveMode._withMission = false;
+        startChaseAudio();
+        startDebtMission();
+      }
     });
   });
 }
@@ -2831,6 +2893,14 @@ function exitDriveMode() {
   document.getElementById('speed-lines').style.opacity = 0;
   stopChaseAudio();
   if (soundOn) bgAudio.play().catch(() => {}); // back to normal music once he's out of the car
+  if (missionState !== 'none') {
+    // Walked away from the job — cancel it and let the Boss call again later
+    missionState = 'none';
+    if (debtorCar) { scene.remove(debtorCar); debtorCar = null; }
+    if (milfieWaypoint) { scene.remove(milfieWaypoint.group); milfieWaypoint = null; }
+    showMissionPopup('📵', 'Job abandoned', 'The Boss is not thrilled. He\'ll call again.', 3500);
+    scheduleNextPhoneRing(100 + Math.random() * 60);
+  }
 }
 
 let roadZoneBuilt = false;
@@ -3083,6 +3153,9 @@ function maybeFinishLoading() {
   if (!maybeFinishLoading._georgeStarted) {
     maybeFinishLoading._georgeStarted = true;
     loadGeorgeCar();
+    // Build the road immediately too — it used to exist only after the first
+    // Drive toggle, which is why it was never visible from the house on foot.
+    if (!roadZoneBuilt) { buildRoadZone(); roadZoneBuilt = true; }
   }
 }
 
@@ -3094,6 +3167,7 @@ function maybeFinishLoading() {
 tapToPlayBtn.addEventListener('click', () => {
   if (hasTappedStart) return;
   hasTappedStart = true;
+  scheduleNextPhoneRing(75 + Math.random() * 30); // the Boss's first call
   tapToPlayBtn.style.display = 'none';
   loadingSpinner.style.display = '';
   loadingLabel.style.display = '';
@@ -3757,6 +3831,7 @@ function tick() {
   if (cameraShakeTime > 0) cameraShakeTime = Math.max(0, cameraShakeTime - dt);
   updateClouds(dt);
   updateGeorgeProximity();
+  updatePhoneRinger();
   if (georgeSongActive) {
     const gd = character ? Math.hypot(character.position.x - GEORGE_POS.x, character.position.z - GEORGE_POS.z) : 0;
     if (drivingMode || gd > 12) stopGeorgeSong(); // drive off or walk away — George stops singing
