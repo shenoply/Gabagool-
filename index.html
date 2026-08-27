@@ -741,8 +741,7 @@ let georgeSongActive = false;
 let georgeDialogOpen = false;
 let georgeDialogDismissedUntilAway = false;
 const GEORGE_POS = { x: 12.5, z: 5 };
-const georgeAudio = new Audio(ASSETS.GEORGE_SONG);
-georgeAudio.preload = 'none'; // 4.6MB, 8-minute song — only fetch when he actually sings
+const georgeAudio = new Audio(); // src set on first sing — a 4.6MB, 8-minute song shouldn't fetch a byte until asked for
 
 function loadGeorgeCar() {
   const loader = new GLTFLoader();
@@ -759,7 +758,8 @@ function loadGeorgeCar() {
     console.warn('George car failed to load (non-fatal):', err);
   });
 }
-loadGeorgeCar();
+// George's car loads AFTER the main assets finish (hooked into maybeFinishLoading)
+// so a decorative prop never competes for bandwidth with the critical path.
 
 const georgeDialog = document.createElement('div');
 georgeDialog.id = 'george-dialog';
@@ -795,6 +795,7 @@ function startGeorgeSong() {
   georgeSongActive = true;
   bgAudioWasPlayingBeforeGeorge = !bgAudio.paused;
   bgAudio.pause();
+  if (!georgeAudio.src) georgeAudio.src = ASSETS.GEORGE_SONG;
   georgeAudio.currentTime = 0;
   georgeAudio.play().catch((e) => {
     console.warn('George song failed to play:', e);
@@ -3077,6 +3078,12 @@ function maybeFinishLoading() {
   const elapsed = performance.now() - loadStartTime;
   const wait = Math.max(0, 500 - elapsed); // avoid an instant flash if everything loads very fast
   setTimeout(() => { loadingEl.style.display = 'none'; }, wait);
+  // Deferred decorative loads — kicked off only once the critical path is done so
+  // they never compete for bandwidth with it on slow connections.
+  if (!maybeFinishLoading._georgeStarted) {
+    maybeFinishLoading._georgeStarted = true;
+    loadGeorgeCar();
+  }
 }
 
 // The tap has to come FIRST, not after loading finishes — it's the only thing that can
@@ -3110,11 +3117,27 @@ tapToPlayBtn.addEventListener('click', () => {
 // surface that instead of leaving a spinner running forever. 25s was too tight now
 // that the payload includes the house/collision/duck/car system — this fires only
 // if it's genuinely stuck, not just taking a while on a slow connection.
-setTimeout(() => {
-  if (loadingEl.style.display !== 'none' && hasTappedStart) {
-    showFatalError('Still loading after 60 seconds — something is likely stuck (large model + slow connection, or a WebGL/memory limit on this device). This message means no JS error was thrown; it just never finished.\n\n' + completedLoads + ' of ' + TOTAL_LOAD_TASKS + ' load tasks finished.\nStill waiting on: ' + pendingTaskNames.join(', ') + '.');
+// Stall-based watchdog: the old fixed 60s clock made no sense once assets became
+// real downloads — on a slow connection it declared failure while bytes were still
+// arriving perfectly well. Now it only alarms if byte progress has genuinely
+// STOPPED for 30 seconds, no matter how long the total load takes.
+let lastWatchdogBytes = -1;
+let lastWatchdogProgressTime = performance.now();
+const loadWatchdog = setInterval(() => {
+  if (loadingEl.style.display === 'none') { clearInterval(loadWatchdog); return; }
+  if (!hasTappedStart) { lastWatchdogProgressTime = performance.now(); return; }
+  let bytesNow = 0;
+  for (const k in assetByteProgress) bytesNow += assetByteProgress[k].loaded;
+  if (bytesNow !== lastWatchdogBytes || completedLoads >= TOTAL_LOAD_TASKS) {
+    lastWatchdogBytes = bytesNow;
+    lastWatchdogProgressTime = performance.now();
+    return; // still moving (or downloads done and parsing) — no alarm
   }
-}, 60000);
+  if (performance.now() - lastWatchdogProgressTime > 30000) {
+    clearInterval(loadWatchdog);
+    showFatalError('Loading stalled — no download progress for 30 seconds (connection dropped, or a device memory/WebGL limit was hit).\n\n' + completedLoads + ' of ' + TOTAL_LOAD_TASKS + ' load tasks finished.\nStill waiting on: ' + pendingTaskNames.join(', ') + '.\nDownloaded so far: ' + (bytesNow / 1048576).toFixed(1) + ' MB.');
+  }
+}, 2000);
 const buffer = ASSETS.MODEL; // URL — fetched by the parse shim
 
 beginLoad();
