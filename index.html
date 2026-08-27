@@ -939,22 +939,27 @@ document.getElementById('phone-decline-btn').addEventListener('click', () => {
    take it for a spin — it becomes the active drive-mode vehicle, and returns
    to its spot when you get out. The Escalade stays the default for phone jobs
    started on foot. */
+// Moved off the old spot at x 11.5, z -4.5..-13.5. The house model is auto-centred
+// on the origin with its longest side scaled to 30 units, so it occupies roughly
+// +/-15 — the whole garage was sitting inside that footprint and the cars were
+// buried in the structure. The pad now sits on open lawn in front of it, clear of
+// the house, the road corridor and every forest patch.
 const GARAGE_DEFS = [
-  { key: 'e50',  file: ASSETS.GARAGE_E50,  name: 'Mercedes E50 AMG', slotZ: -4.5 },
-  { key: 'w201', file: ASSETS.GARAGE_W201, name: 'Mercedes 190E',    slotZ: -9 },
-  { key: 'pony', file: ASSETS.GARAGE_PONY, name: 'Hyundai Pony',     slotZ: -13.5 },
+  { key: 'e50',  file: ASSETS.GARAGE_E50,  name: 'Mercedes E50 AMG', slotX: -3.2 },
+  { key: 'w201', file: ASSETS.GARAGE_W201, name: 'Mercedes 190E',    slotX: 0 },
+  { key: 'pony', file: ASSETS.GARAGE_PONY, name: 'Hyundai Pony',     slotX: 3.2 },
 ];
-const GARAGE_X = 11.5;
+const GARAGE_Z = 26;
 const garageCars = []; // { group, name, home: {x,z,rotY}, dismissedUntilAway }
 let garageDialogFor = null;
 
 function buildGaragePad() {
   const pad = new THREE.Mesh(
-    new THREE.PlaneGeometry(9, 14),
+    new THREE.PlaneGeometry(14, 9), // rotated with the cars: they now sit side by side facing the house
     new THREE.MeshStandardMaterial({ color: 0x232126, roughness: 0.95 })
   );
   pad.rotation.x = -Math.PI / 2;
-  pad.position.set(GARAGE_X, 0.02, -9);
+  pad.position.set(0, 0.02, GARAGE_Z);
   pad.receiveShadow = true;
   scene.add(pad);
 }
@@ -983,7 +988,7 @@ function loadGarageCars() {
       const raw = gltf.scene;
       raw.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
       const group = normalizeVehicle(raw, 4.55);
-      const home = { x: GARAGE_X, z: def.slotZ, rotY: Math.PI / 2 }; // noses toward the road
+      const home = { x: def.slotX, z: GARAGE_Z, rotY: Math.PI }; // parked in a row, noses toward the house
       group.position.set(home.x, 0, home.z);
       group.rotation.y = home.rotY;
       group.userData.garageCar = true;
@@ -1230,6 +1235,11 @@ let character = null;
 let characterHeight = 1.75;
 let worldScaleFactor = 1;
 let worldBound = 22; // a much bigger yard to actually explore
+// The character clamp is kept separate from worldBound. worldBound is derived from
+// the house model's own footprint and also decides where gabagools spawn, so it has
+// to stay tied to the house — but that left the player unable to step off the model
+// onto the surrounding lawn at all, which is where the garage now lives.
+function walkBound() { return Math.max(worldBound, GARAGE_Z + 10); }
 let camTargetYOffset = 0.9;
 let mixer = null;
 let actions = {};
@@ -1383,8 +1393,9 @@ function randomSpawnPoint() {
   const dist = 3 + Math.random() * 9;
   let x = cx + Math.cos(angle) * dist;
   let z = cz + Math.sin(angle) * dist;
-  x = Math.max(-worldBound, Math.min(worldBound, x));
-  z = Math.max(-worldBound, Math.min(worldBound, z));
+  const wb = walkBound();
+  x = Math.max(-wb, Math.min(wb, x));
+  z = Math.max(-wb, Math.min(wb, z));
   return { x, z };
 }
 
@@ -3324,7 +3335,7 @@ const FOREST_PATCHES = [
   [-112, 61, 0.09],
   [-86,  61, 1.91],
   [-60,  61, 3.73],
-  [-34,  61, 5.55],
+  [-45,  70, 5.55], // shifted from (-34,61): its rotated footprint reached x 1.7, overlapping the garage pad
   [-112, 86, 3.34],
   [-86,  86, 5.16],
   [-60,  86, 0.70],
@@ -3687,8 +3698,9 @@ function handleMovement(dt) {
     const blocked = isBlockedAheadThrottled(character.position, moveDir, 0.55);
     if (!blocked) {
       character.position.addScaledVector(moveDir, speed * dt);
-      character.position.x = Math.max(-worldBound, Math.min(worldBound, character.position.x));
-      character.position.z = Math.max(-worldBound, Math.min(worldBound, character.position.z));
+      const wb2 = walkBound();
+      character.position.x = Math.max(-wb2, Math.min(wb2, character.position.x));
+      character.position.z = Math.max(-wb2, Math.min(wb2, character.position.z));
     }
 
     const targetHeading = Math.atan2(moveDir.x, moveDir.z);
