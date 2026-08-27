@@ -475,8 +475,31 @@ const assetByteProgress = {}; // url -> { loaded, total }
 function reportAssetProgress() {
   if (typeof updateLoadingPercent === 'function') updateLoadingPercent();
 }
-function fetchAssetBuffer(url, cb, onErr) {
-  fetch(url)
+/* Retry wrapper. The on-screen diagnostics showed every secondary asset (garage
+   cars, forest, grass) failing while the four tracked ones succeeded, on a scene
+   using 36 geometries and 11 draw calls — so this was never GPU pressure, it was
+   the connection dropping requests after the first batch. A single failed fetch
+   used to be permanent. Now each asset gets three attempts with backoff, and the
+   real reason is reported rather than a bare "failed". */
+function fetchAssetBuffer(url, cb, onErr, _attempt) {
+  const attempt = _attempt || 1;
+  const MAX_ATTEMPTS = 3;
+  const retryOrFail = (err) => {
+    const reason = (err && (err.message || err)) + '';
+    if (attempt < MAX_ATTEMPTS) {
+      const wait = 700 * attempt; // 0.7s, then 1.4s
+      if (window.__gameNote) window.__gameNote('RETRY ' + (attempt + 1) + '/' + MAX_ATTEMPTS + ' ' + url.split('/').pop() + ' (' + reason + ')');
+      setTimeout(() => fetchAssetBuffer(url, cb, onErr, attempt + 1), wait);
+      return;
+    }
+    if (window.__gameNote) window.__gameNote('GAVE UP: ' + url.split('/').pop() + ' — ' + reason);
+    (onErr || ((e) => showFatalError('Asset fetch failed: ' + url + '\n' + e)))(err);
+  };
+  _fetchAssetOnce(url, cb, retryOrFail);
+}
+
+function _fetchAssetOnce(url, cb, onErr) {
+  fetch(url, { cache: 'default' })
     .then(async (r) => {
       if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + url);
       const total = parseInt(r.headers.get('Content-Length') || '0', 10);
@@ -1109,7 +1132,10 @@ function normalizeVehicle(rawScene, targetLen) {
 
 function loadGarageCars() {
   buildGaragePad();
-  GARAGE_DEFS.forEach((def) => {
+  GARAGE_DEFS.forEach((def, i) => {
+   // Spaced out rather than three at once, for the same reason as the other
+   // secondary loads: simultaneous requests are what the connection drops.
+   setTimeout(() => {
     const loader = new GLTFLoader();
     loader.parse(def.file, '', (gltf) => {
       const raw = gltf.scene;
@@ -1125,6 +1151,7 @@ function loadGarageCars() {
       console.warn('Garage car failed to load (non-fatal):', def.name, err);
       if (window.__gameNote) window.__gameNote('GARAGE CAR failed: ' + def.name);
     });
+   }, i * 1200);
   });
 }
 
@@ -1373,7 +1400,15 @@ function applyGroundGrassTexture() {
       groundMat.normalScale = new THREE.Vector2(0.6, 0.6); // full strength reads as noise at this tiling density
       groundMat.needsUpdate = true;
     }, undefined, () => console.warn('grass normal map failed, colour only'));
-  }, undefined, () => { if (window.__gameNote) window.__gameNote('GRASS texture failed'); });
+  }, undefined, (err) => {
+    // TextureLoader gives no status code, so retry blind a couple of times.
+    if ((applyGroundGrassTexture._tries = (applyGroundGrassTexture._tries || 0) + 1) < 3) {
+      if (window.__gameNote) window.__gameNote('RETRY grass texture (' + applyGroundGrassTexture._tries + ')');
+      setTimeout(applyGroundGrassTexture, 900 * applyGroundGrassTexture._tries);
+    } else if (window.__gameNote) {
+      window.__gameNote('GAVE UP: grass texture — ' + (err && (err.message || err.type || err)));
+    }
+  });
 }
 
 const patioGeo = new THREE.PlaneGeometry(9, 7);
@@ -3612,7 +3647,10 @@ function endLoad(name) {
     maybeFinishLoading();
     // Scenery starts downloading only once the game is actually playable, so it
     // never competes with the critical assets or delays the start screen.
-    setTimeout(() => { applyGroundGrassTexture(); loadForest(); }, 1500);
+    // Staggered rather than simultaneous: firing every secondary request at once is
+    // what the connection appears to be choking on.
+    setTimeout(applyGroundGrassTexture, 1500);
+    setTimeout(loadForest, 4000);
     setTimeout(() => { if (window.__reportGPU) window.__reportGPU(); }, 9000); // one-shot resource report once scenery has settled
   }
 }
