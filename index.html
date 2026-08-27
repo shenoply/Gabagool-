@@ -3165,7 +3165,7 @@ function applyShake(dt) {
    the walk/run cadence. Walking has been silent until now. */
 let stepPhase = 0;
 function updateFootsteps(dt, moving, running) {
-  if (!ambientCtx || !soundOn || !moving) { stepPhase = 0; return; }
+  if (!ambientCtx || !sfxOn || !moving) { stepPhase = 0; return; }
   stepPhase += dt * (running ? 3.4 : 2.1); // steps per second
   if (stepPhase < 1) return;
   stepPhase = 0;
@@ -3182,6 +3182,121 @@ function updateFootsteps(dt, moving, running) {
   g.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
   src.connect(f); f.connect(g); g.connect(ambientCtx.destination);
   src.start(now);
+}
+
+/* ================= TALL GRASS =================
+   A transition band between the mown lawn and the treeline, so the forest edge
+   doesn't meet flat ground abruptly.
+
+   Procedural rather than modelled: I tried extracting the tufts from the uploaded
+   grass cluster, but they were alphaMode BLEND, which is what made the decimated
+   trees sort badly earlier. These use alphaTest instead — cut out, not blended, so
+   there is no depth-sorting problem and no draw-order cost.
+
+   One InstancedMesh: a single geometry and one draw call for the whole band,
+   regardless of how many tufts. Wind sway is done in the vertex shader via
+   onBeforeCompile, so it costs nothing per frame on the CPU. */
+function createBladeTexture() {
+  const w = 128, h = 128;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  for (let i = 0; i < 14; i++) {
+    const x = 6 + Math.random() * (w - 12);
+    const bw = 3 + Math.random() * 4;
+    const bh = h * (0.45 + Math.random() * 0.5);
+    const lean = (Math.random() * 2 - 1) * 14;
+    const g = ctx.createLinearGradient(0, h, 0, h - bh);
+    const dark = 42 + Math.random() * 22, lit = 92 + Math.random() * 55;
+    g.addColorStop(0, `rgb(${dark * 0.55 | 0},${dark | 0},${dark * 0.45 | 0})`);
+    g.addColorStop(1, `rgb(${lit * 0.62 | 0},${lit | 0},${lit * 0.42 | 0})`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(x - bw / 2, h);
+    ctx.quadraticCurveTo(x + lean * 0.4, h - bh * 0.6, x + lean, h - bh);
+    ctx.quadraticCurveTo(x + lean * 0.4 + bw * 0.6, h - bh * 0.6, x + bw / 2, h);
+    ctx.closePath();
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+let tallGrassMesh = null;
+function buildTallGrass() {
+  const tex = createBladeTexture();
+  tex.anisotropy = maxAniso;
+
+  // Three crossed quads per tuft, so it reads as volume from any angle.
+  const quads = [];
+  for (let k = 0; k < 3; k++) {
+    const g = new THREE.PlaneGeometry(1.5, 1.15);
+    g.translate(0, 0.575, 0);
+    g.rotateY((k / 3) * Math.PI);
+    quads.push(g);
+  }
+  const tuftGeo = mergeGeometries(quads);
+
+  const mat = new THREE.MeshStandardMaterial({
+    map: tex,
+    alphaTest: 0.45,      // cut out, not blended — no sorting artifacts
+    transparent: false,
+    side: THREE.DoubleSide,
+    roughness: 0.92,
+    metalness: 0,
+  });
+  // Wind: sway the top of each blade, phase-offset per instance so they don't move
+  // as one sheet. Vertex shader only, so there is no per-frame CPU cost at all.
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = { value: 0 };
+    shader.vertexShader = 'uniform float uTime;\n' + shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+       float sway = transformed.y * 0.18;
+       float ph = instanceMatrix[3][0] * 0.7 + instanceMatrix[3][2] * 0.9;
+       transformed.x += sin(uTime * 1.3 + ph) * sway;
+       transformed.z += cos(uTime * 1.1 + ph * 1.3) * sway * 0.6;`
+    );
+    mat.userData.shader = shader;
+  };
+
+  // Placement: a band around the play area, thickest near the treeline, skipping
+  // the road corridor, the yard, and the garage pad — the same exclusions the
+  // forest uses, so nothing grows through anything.
+  const placements = [];
+  const TARGET = 2600;
+  let guard = 0;
+  while (placements.length < TARGET && guard++ < TARGET * 12) {
+    const ang = Math.random() * Math.PI * 2;
+    // biased outward: sparse near the lawn, dense approaching the trees
+    const r = 26 + Math.pow(Math.random(), 0.55) * 120;
+    const x = Math.cos(ang) * r, z = Math.sin(ang) * r;
+    if (x > 5 && x < 49) continue;                          // road corridor
+    if (Math.abs(x) < 27 && Math.abs(z) < 27) continue;      // yard
+    if (x > -6 && x < 6 && z > 17 && z < 35) continue;        // garage pad
+    if (z < -40) continue;                                    // city backdrop
+    placements.push([x, z, Math.random() * Math.PI, 0.75 + Math.random() * 0.9]);
+  }
+
+  tallGrassMesh = new THREE.InstancedMesh(tuftGeo, mat, placements.length);
+  tallGrassMesh.castShadow = false;
+  tallGrassMesh.receiveShadow = false;
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  placements.forEach((p, i) => {
+    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p[2]);
+    v.set(p[0], 0, p[1]);
+    sc.set(p[3], p[3] * (0.85 + Math.random() * 0.5), p[3]);
+    m.compose(v, q, sc);
+    tallGrassMesh.setMatrixAt(i, m);
+  });
+  tallGrassMesh.instanceMatrix.needsUpdate = true;
+  scene.add(tallGrassMesh);
+}
+function updateTallGrass(t) {
+  const sh = tallGrassMesh && tallGrassMesh.material.userData.shader;
+  if (sh) sh.uniforms.uTime.value = t;
 }
 
 function laneX(index) {
@@ -3874,6 +3989,7 @@ function endLoad(name) {
     // what the connection appears to be choking on.
     setTimeout(applyGroundGrassTexture, 1500);
     setTimeout(loadForest, 4000);
+    setTimeout(() => { try { buildTallGrass(); } catch (e) { console.warn('tall grass failed:', e); } }, 5200);
     setTimeout(() => { if (window.__reportGPU) window.__reportGPU(); }, 9000); // one-shot resource report once scenery has settled
   }
 }
@@ -4288,22 +4404,50 @@ document.getElementById('chase-audio').src = "chase_audio.m4a";
 document.getElementById('cutscene-video').src = "cutscene.mp4";
 const soundToggle = document.getElementById('sound-toggle');
 if (!bgAudio) soundToggle.style.display = 'none';
-let soundOn = false;
+/* Audio has three states rather than two. Muting the music used to mute the engine,
+   crashes, footsteps and ambience with it, which is not what "mute the music" means.
+     0  everything on
+     1  music off, world still audible (engine, crashes, ambience, footsteps)
+     2  silent
+   soundOn is kept as the music flag so the existing bgAudio code is unchanged;
+   sfxOn is the new one that gates everything else. */
+let audioMode = 0;
+let soundOn = false;   // music
+let sfxOn = true;      // engine, impacts, ambience, footsteps
 if (bgAudio) bgAudio.src = BG_TRACKS[currentTrack];
 soundToggle.addEventListener('click', () => {
-  if (!bgAudio) { soundToggle.style.display = 'none'; return; }
-  soundOn = !soundOn;
-  if (soundOn) {
-    bgAudio.play().catch(() => { soundOn = false; updateSoundUI(); });
-  } else {
-    bgAudio.pause();
+  audioMode = (audioMode + 1) % 3;
+  soundOn = (audioMode === 0);
+  sfxOn = (audioMode !== 2);
+  if (bgAudio) {
+    if (soundOn) bgAudio.play().catch(() => { soundOn = false; updateSoundUI(); });
+    else bgAudio.pause();
+  }
+  if (!sfxOn) {
+    // Silence the continuous sources immediately rather than waiting for the next frame.
+    if (typeof engineNodes !== 'undefined' && engineNodes) {
+      try {
+        engineNodes.idle.el.pause();
+        engineNodes.rev.el.pause();
+        engineNodes.started = false;
+      } catch (e) { /* ignore */ }
+    }
+    if (typeof windGain !== 'undefined' && windGain && ambientCtx) {
+      windGain.gain.setTargetAtTime(0, ambientCtx.currentTime, 0.2);
+    }
+  } else if (typeof windGain !== 'undefined' && windGain && ambientCtx) {
+    windGain.gain.setTargetAtTime(0.035, ambientCtx.currentTime, 0.3);
   }
   updateSoundUI();
 });
 function updateSoundUI() {
-  document.getElementById('sound-icon-off').style.display = soundOn ? 'none' : '';
-  document.getElementById('sound-icon-on').style.display = soundOn ? '' : 'none';
-  soundToggle.classList.toggle('on', soundOn);
+  // Icon shows sound-on for modes 0 and 1; only full silence shows the muted icon.
+  const anyAudio = audioMode !== 2;
+  document.getElementById('sound-icon-off').style.display = anyAudio ? 'none' : '';
+  document.getElementById('sound-icon-on').style.display = anyAudio ? '' : 'none';
+  soundToggle.classList.toggle('on', audioMode === 0);
+  soundToggle.style.opacity = audioMode === 1 ? '0.62' : '1'; // half-lit: music off, world still audible
+  soundToggle.title = ['Sound: all on', 'Music muted (world audible)', 'All muted'][audioMode];
 }
 
 /* Track selector — pick which song plays as the background loop */
@@ -4426,7 +4570,7 @@ function updateEngineAudio(speedFrac, throttle, driving) {
   if (!engineNodes) return;
   const t = ambientCtx.currentTime;
 
-  if (!driving || !soundOn) {
+  if (!driving || !sfxOn) {
     engineNodes.idle.gain.gain.setTargetAtTime(0, t, 0.2);
     engineNodes.rev.gain.gain.setTargetAtTime(0, t, 0.2);
     if (engineNodes.started) {
@@ -4465,7 +4609,7 @@ function updateEngineAudio(speedFrac, throttle, driving) {
 /* One-shots: braking and impacts. Each gets its own short-lived element so repeats
    overlap instead of cutting each other off. */
 function playCarOneShot(url, volume) {
-  if (!soundOn) return;
+  if (!sfxOn) return;
   try {
     const el = new Audio(url);
     el.volume = volume;
@@ -4702,6 +4846,7 @@ function tick() {
   const dt = Math.min(clock.getDelta(), 0.05);
   updateDayNight(dt);
   updateSkids(dt);
+  updateTallGrass(clock.elapsedTime);
   applyShake(dt);
   if (!drivingMode) updateFootsteps(dt, LOCOMOTION.has(currentActionName), currentActionName === 'Running');
   if (drivingMode) {
