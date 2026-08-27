@@ -1277,12 +1277,12 @@ function createGrassTexture() {
   }
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(83, 83); // scaled with the ground plane (100 -> 320) to hold the same texel density
+  tex.repeat.set(234, 234); // scaled with the ground plane (now 900) to hold the same texel density
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
-const groundGeo = new THREE.PlaneGeometry(320, 320); // widened from 100x100 — the forest needs land to stand on, and the old edge was visible as a hard horizon line
+const groundGeo = new THREE.PlaneGeometry(900, 900); // 100 -> 320 -> 900. At 320 the edge sat at 160 units while fog does not finish until 420, so it was only ~13% fogged and met the sky as a hard line. At 900 the edge is at 450, past fog far, so it fades out instead of ending. It is one quad either way — the size costs nothing.
 const groundMat = new THREE.MeshStandardMaterial({ map: createGrassTexture(), roughness: 0.95, metalness: 0.0 });
 groundMat.map.anisotropy = maxAniso;
 const ground = new THREE.Mesh(groundGeo, groundMat);
@@ -1308,14 +1308,14 @@ function applyGroundGrassTexture() {
   const texLoader = new THREE.TextureLoader();
   texLoader.load(ASSETS.GRASS_COLOR, (tex) => {
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(64, 64);
+    tex.repeat.set(180, 180); // rescaled for the 900-unit plane, same ~5 units per tile as before
     tex.anisotropy = maxAniso;
     tex.colorSpace = THREE.SRGBColorSpace;
     groundMat.map = tex;
     groundMat.needsUpdate = true;
     texLoader.load(ASSETS.GRASS_NORMAL, (nrm) => {
       nrm.wrapS = nrm.wrapT = THREE.RepeatWrapping;
-      nrm.repeat.set(64, 64);
+      nrm.repeat.set(180, 180);
       nrm.anisotropy = maxAniso;
       groundMat.normalMap = nrm;
       groundMat.normalScale = new THREE.Vector2(0.6, 0.6); // full strength reads as noise at this tiling density
@@ -3465,30 +3465,81 @@ const pendingTaskNames = ['character', 'house', 'collision proxy', 'ducks'];
      city backdrop  sits at z -62                              -> nothing with z < -42
      ground plane   320 x 320                                  -> footprint within +/-160 */
 const FOREST_PATCHES = [
-  // [x, z, rotationY] — left side
-  [-86, -14, 4.72],
-  [-112, 11, 6.15],
-  [-86,  11, 1.69],
-  [-60,  11, 3.51],
-  [-112, 36, 3.12],
-  [-86,  36, 4.94],
-  [-112, 61, 0.09],
-  [-86,  61, 1.91],
-  [-60,  61, 3.73],
-  [-45,  70, 5.55], // shifted from (-34,61): its rotated footprint reached x 1.7, overlapping the garage pad
-  [-112, 86, 3.34],
-  [-86,  86, 5.16],
-  [-60,  86, 0.70],
-  [-34,  86, 2.52],
-  // right side — cannot start closer than x~74, since the road plus a 51-unit
-  // patch leaves no room between the tarmac and the tree line before that
-  [100,  11, 2.15],
-  [126,  11, 3.97],
-  [100,  36, 5.40],
-  [100,  61, 2.37],
-  [126,  61, 4.19],
-  [100,  86, 5.62],
-  [126,  86, 1.16],
+  // Solved on a grid, then thinned by distance: full density inside 140 units where
+  // you actually walk and drive, checkerboarded beyond that, quarter density past 240.
+  // 71 patches at 47,920 verts each is 3.4M total, but they are separate objects so
+  // frustum culling means only the handful in view is ever submitted.
+  [-110, -14, 3.04],
+  [-85, -14, 4.79],
+  [115, -14, 6.23],
+  [-185, 10, 0.91],
+  [-135, 10, 4.41],
+  [-110, 10, 6.16],
+  [-85, 10, 1.63],
+  [-60, 10, 3.38],
+  [90, 10, 1.32],
+  [115, 10, 3.07],
+  [165, 10, 0.29],
+  [-210, 34, 2.28],
+  [-160, 34, 5.78],
+  [-135, 34, 1.25],
+  [-110, 34, 3.0],
+  [-85, 34, 4.75],
+  [-60, 34, 0.22],
+  [90, 34, 4.44],
+  [115, 34, 6.19],
+  [140, 34, 1.66],
+  [190, 34, 5.16],
+  [-185, 58, 0.87],
+  [-135, 58, 4.37],
+  [-110, 58, 6.12],
+  [-85, 58, 1.59],
+  [-60, 58, 3.34],
+  [90, 58, 1.28],
+  [115, 58, 3.03],
+  [165, 58, 0.25],
+  [-210, 82, 2.24],
+  [-160, 82, 5.74],
+  [-110, 82, 2.96],
+  [-85, 82, 4.71],
+  [-60, 82, 0.18],
+  [-35, 82, 1.93],
+  [90, 82, 4.4],
+  [140, 82, 1.62],
+  [190, 82, 5.12],
+  [-185, 106, 0.83],
+  [-135, 106, 4.33],
+  [-85, 106, 1.55],
+  [-60, 106, 3.3],
+  [-35, 106, 5.05],
+  [90, 106, 1.24],
+  [115, 106, 2.99],
+  [165, 106, 0.21],
+  [-160, 130, 5.7],
+  [-110, 130, 2.92],
+  [-60, 130, 0.14],
+  [-35, 130, 1.89],
+  [90, 130, 4.36],
+  [140, 130, 1.58],
+  [190, 130, 5.08],
+  [-185, 154, 0.79],
+  [-135, 154, 4.29],
+  [-85, 154, 1.51],
+  [-35, 154, 5.01],
+  [115, 154, 2.95],
+  [165, 154, 0.17],
+  [-210, 178, 2.16],
+  [-160, 178, 5.66],
+  [-110, 178, 2.88],
+  [-60, 178, 0.1],
+  [90, 178, 4.32],
+  [140, 178, 1.54],
+  [190, 178, 5.04],
+  [-135, 202, 4.25],
+  [-85, 202, 1.47],
+  [-35, 202, 4.97],
+  [115, 202, 2.91],
+  [165, 202, 0.13],
 ];
 
 function placeForest(nearScene) {
