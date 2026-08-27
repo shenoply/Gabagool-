@@ -557,22 +557,80 @@ app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 
-function createSkyGradientTexture() {
+/* The sky was an 8x256 canvas assigned straight to scene.background. Three renders
+   a non-equirect texture as a full-screen quad, so the gradient was locked to SCREEN
+   space — the horizon band stayed at a fixed height on the display no matter where
+   the camera looked, which is what made it read as a flat backdrop rather than a sky
+   you're standing under. This is a proper equirectangular skybox instead, so it sits
+   in world space and the horizon stays where the horizon is.
+
+   Mapping follows three's equirectUv(): u = atan2(z,x)/2PI + 0.5, and v is flipped,
+   so canvas y=0 is the zenith and y=0.5 is exactly the horizon. Same convention as
+   the environment map below, which keeps the lighting and the visible sky agreeing
+   with each other.
+
+   Clouds are painted in rather than added as geometry: layered translucent ellipses
+   banded just above the horizon, where real cloud cover sits when you're looking out
+   across open ground. Costs one texture and no draw calls. */
+function createSkyEquirect() {
+  const w = 1024, h = 512;
   const c = document.createElement('canvas');
-  c.width = 8; c.height = 256;
+  c.width = w; c.height = h;
   const ctx = c.getContext('2d');
-  const grad = ctx.createLinearGradient(0, 0, 0, 256);
-  grad.addColorStop(0, '#241a3d');   // deep dusk purple (zenith)
-  grad.addColorStop(0.45, '#5a3a5e');
-  grad.addColorStop(0.72, '#c9683f'); // warm horizon orange
-  grad.addColorStop(1, '#e8965a');   // glow near horizon
+
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0.00, '#241a3d'); // deep dusk purple at the zenith
+  grad.addColorStop(0.30, '#3b2950');
+  grad.addColorStop(0.44, '#7a4358');
+  grad.addColorStop(0.49, '#c9683f'); // warm band just above the horizon
+  grad.addColorStop(0.50, '#e8965a'); // horizon glow
+  grad.addColorStop(0.53, '#4a3524'); // below the horizon: ground haze, only seen in reflections
+  grad.addColorStop(1.00, '#2a1e14');
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 8, 256);
+  ctx.fillRect(0, 0, w, h);
+
+  // Sun glow, placed to agree with the key light at (9, 5.5, 6) -> u 0.594, v 0.350
+  const sx = w * 0.594, sy = h * 0.350;
+  const sun = ctx.createRadialGradient(sx, sy, 0, sx, sy, w * 0.17);
+  sun.addColorStop(0.00, 'rgba(255,226,172,0.95)');
+  sun.addColorStop(0.30, 'rgba(255,176,105,0.45)');
+  sun.addColorStop(1.00, 'rgba(255,150,90,0)');
+  ctx.fillStyle = sun;
+  ctx.fillRect(0, 0, w, h);
+
+  // Cloud banks. Each is a cluster of soft ellipses so the silhouette is lumpy
+  // rather than a single circle, lit warmer on the sun side and left dusky elsewhere.
+  ctx.globalCompositeOperation = 'source-over';
+  for (let i = 0; i < 26; i++) {
+    const cx = Math.random() * w;
+    // Banded between the zenith and the horizon — nothing below v=0.5 (underground).
+    const cy = h * (0.16 + Math.pow(Math.random(), 1.6) * 0.30);
+    const near = 1 - Math.min(1, Math.abs(cx - sx) / (w * 0.35));
+    const warm = 0.35 + near * 0.55;
+    const scale = 40 + Math.random() * 90;
+    const puffs = 4 + Math.floor(Math.random() * 4);
+    for (let p = 0; p < puffs; p++) {
+      const ox = (Math.random() * 2 - 1) * scale * 0.9;
+      const oy = (Math.random() * 2 - 1) * scale * 0.22;
+      const rx = scale * (0.35 + Math.random() * 0.4);
+      const ry = rx * (0.30 + Math.random() * 0.2);
+      const g = ctx.createRadialGradient(cx + ox, cy + oy, 0, cx + ox, cy + oy, rx);
+      const r = Math.round(190 + warm * 60), gg = Math.round(150 + warm * 60), b = Math.round(150 + warm * 30);
+      g.addColorStop(0, `rgba(${r},${gg},${b},${0.30 + Math.random() * 0.18})`);
+      g.addColorStop(1, `rgba(${r},${gg},${b},0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.ellipse(cx + ox, cy + oy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   const tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
-scene.background = createSkyGradientTexture();
+scene.background = createSkyEquirect();
 scene.fog = new THREE.Fog(0xc9784a, 120, 420); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
 /* ---------- Image-based lighting ----------
@@ -701,42 +759,58 @@ function buildCitySkyline() {
 }
 
 function createCloudTexture() {
+  // Was a single radial gradient, which reads as an obvious soft disc. Overlapping
+  // puffs give an irregular silhouette, which is most of what sells a cloud shape.
   const size = 256;
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const ctx = c.getContext('2d');
-  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  grad.addColorStop(0, 'rgba(255,255,255,0.9)');
-  grad.addColorStop(0.5, 'rgba(255,255,255,0.45)');
-  grad.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
+  const puffs = [
+    [0.50, 0.55, 0.30], [0.32, 0.60, 0.22], [0.68, 0.60, 0.24],
+    [0.42, 0.45, 0.20], [0.60, 0.47, 0.18], [0.22, 0.63, 0.14], [0.80, 0.62, 0.13],
+  ];
+  for (const [px, py, pr] of puffs) {
+    const g = ctx.createRadialGradient(px * size, py * size, 0, px * size, py * size, pr * size);
+    g.addColorStop(0.0, 'rgba(255,255,255,0.62)');
+    g.addColorStop(0.55, 'rgba(255,255,255,0.26)');
+    g.addColorStop(1.0, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+  }
   const tex = new THREE.CanvasTexture(c);
   return tex;
 }
+const CLOUD_SPAN = 300; // clouds wrap within +/- this on X, so they never run out
 
 const cloudSprites = [];
 function buildClouds() {
   const tex = createCloudTexture();
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.55, depthWrite: false, color: 0xffe8d0 });
-  const count = 10;
+  // Spread around the play area rather than around the city backdrop, and lifted
+  // well above the treeline — the old band at y 14-24 sat lower than the pines.
+  const count = 16;
   for (let i = 0; i < count; i++) {
     const sprite = new THREE.Sprite(mat.clone());
-    const scale = 30 + Math.random() * 40;
-    sprite.scale.set(scale, scale * 0.5, 1);
+    const scale = 45 + Math.random() * 70;
+    sprite.scale.set(scale, scale * 0.42, 1);
     sprite.position.set(
-      CITY_BACKDROP_POS.x + (Math.random() * 2 - 1) * 140,
-      14 + Math.random() * 10,
-      CITY_BACKDROP_POS.z + (Math.random() * 2 - 1) * 140
+      (Math.random() * 2 - 1) * CLOUD_SPAN,
+      52 + Math.random() * 46,
+      (Math.random() * 2 - 1) * CLOUD_SPAN
     );
     scene.add(sprite);
-    cloudSprites.push({ sprite, driftSpeed: 0.15 + Math.random() * 0.2, phase: Math.random() * Math.PI * 2 });
+    cloudSprites.push({ sprite, driftSpeed: 0.5 + Math.random() * 0.9 });
   }
 }
 function updateClouds(dt) {
   for (const c of cloudSprites) {
-    c.phase += dt * 0.05;
     c.sprite.position.x += c.driftSpeed * dt;
+    // The old version drifted one way forever with no wrap, so after a few minutes
+    // of play every cloud had left the map and the sky was empty for good.
+    if (c.sprite.position.x > CLOUD_SPAN) {
+      c.sprite.position.x = -CLOUD_SPAN;
+      c.sprite.position.z = (Math.random() * 2 - 1) * CLOUD_SPAN; // re-scatter on wrap so the same file doesn't parade past
+    }
   }
 }
 // Trying an actual authored low-poly city asset (genuinely modeled low-poly, not a
