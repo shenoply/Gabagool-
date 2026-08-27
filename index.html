@@ -572,6 +572,57 @@ function createSkyGradientTexture() {
 scene.background = createSkyGradientTexture();
 scene.fog = new THREE.Fog(0xc9784a, 45, 170); // pushed out from (22,78) — things were vanishing far too close, especially noticeable now the car moves faster
 
+/* ---------- Image-based lighting ----------
+   scene.environment was never set, so every MeshStandardMaterial had nothing to
+   reflect and all the metalness values (car bodies 0.4-0.45, chrome, fence posts)
+   collapsed to flat diffuse colour. This builds a small equirectangular sky from
+   the same palette as the background gradient — warm sun lobe, horizon glow,
+   ground-bounce band — and PMREM-filters it into a real env map. No download, no
+   HDR asset, fully deterministic, and only a 512x256 source so GPU cost is small.
+
+   UV layout verified against three's equirectUv():
+     u = atan2(dir.z, dir.x) / 2PI + 0.5
+     v = 1 - (asin(dir.y) / PI + 0.5)
+   so canvas y=0 is the zenith and y=0.5 is exactly the horizon. The key light sits
+   at (9, 5.5, 6), which works out to u=0.594, v=0.350 — that's where the sun goes. */
+function createEnvEquirect() {
+  const w = 512, h = 256;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0.00, '#2a1f47'); // zenith
+  grad.addColorStop(0.34, '#5a3a5e');
+  grad.addColorStop(0.47, '#c9683f');
+  grad.addColorStop(0.50, '#f0a463'); // horizon glow
+  grad.addColorStop(0.53, '#5a4028'); // ground bounce
+  grad.addColorStop(1.00, '#2a1e14');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  const sunX = w * 0.594, sunY = h * 0.350;
+  const sun = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, w * 0.19);
+  sun.addColorStop(0.00, 'rgba(255,228,175,1)');
+  sun.addColorStop(0.32, 'rgba(255,182,112,0.5)');
+  sun.addColorStop(1.00, 'rgba(255,150,90,0)');
+  ctx.fillStyle = sun;
+  ctx.fillRect(0, 0, w, h);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+{
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+  const srcEnv = createEnvEquirect();
+  scene.environment = pmrem.fromEquirectangular(srcEnv).texture;
+  srcEnv.dispose();
+  pmrem.dispose();
+}
+
 /* ================= DISTANT CITY BACKDROP + CLOUDS =================
    A hazy skyline visible from both the yard and the road — deliberately left
    uncolored/flat since fog and distance mean the color wouldn't be visible anyway,
@@ -1077,7 +1128,7 @@ updateCamera();
 
 /* Lights — brightened for clarity (was tuned moody-dark for the old small yard;
    the house was reading muddy/underlit rather than genuinely low quality) */
-const hemi = new THREE.HemisphereLight(0x8a7ab0, 0x453324, 1.15); // brighter sky/ground fill, less purple-heavy
+const hemi = new THREE.HemisphereLight(0x8a7ab0, 0x453324, 0.55); // dropped from 1.15 — the new env map now supplies most of the ambient fill, and leaving both at full strength flattened contrast back out
 scene.add(hemi);
 const key = new THREE.DirectionalLight(0xffc487, 2.7); // brighter, slightly less orange-saturated
 key.position.set(9, 5.5, 6);
@@ -3335,22 +3386,40 @@ tapToPlayBtn.addEventListener('click', () => {
 // arriving perfectly well. Now it only alarms if byte progress has genuinely
 // STOPPED for 30 seconds, no matter how long the total load takes.
 let lastWatchdogBytes = -1;
+let lastWatchdogCompleted = -1;
+let lastWatchdogTick = performance.now();
 let lastWatchdogProgressTime = performance.now();
+const WATCHDOG_PERIOD = 2000;
 const loadWatchdog = setInterval(() => {
+  const now = performance.now();
+  // If the interval itself came back late, the main thread was blocked (large GLB
+  // parse / texture upload) rather than the network being dead. No fetch progress
+  // events can fire during that block, so the byte counter looks frozen and the old
+  // check would wrongly declare a stall. Forgive the blocked time instead of counting it.
+  const drift = now - lastWatchdogTick - WATCHDOG_PERIOD;
+  lastWatchdogTick = now;
+  if (drift > WATCHDOG_PERIOD) {
+    lastWatchdogProgressTime = now;
+    return;
+  }
   if (loadingEl.style.display === 'none') { clearInterval(loadWatchdog); return; }
-  if (!hasTappedStart) { lastWatchdogProgressTime = performance.now(); return; }
+  if (!hasTappedStart) { lastWatchdogProgressTime = now; return; }
   let bytesNow = 0;
   for (const k in assetByteProgress) bytesNow += assetByteProgress[k].loaded;
-  if (bytesNow !== lastWatchdogBytes || completedLoads >= TOTAL_LOAD_TASKS) {
+  // A task finishing is progress too — the old version only accepted byte movement
+  // or ALL tasks being done, so a build that parsed one big asset while two small
+  // ones waited could sit with a static byte count and trip the alarm.
+  if (bytesNow !== lastWatchdogBytes || completedLoads !== lastWatchdogCompleted) {
     lastWatchdogBytes = bytesNow;
-    lastWatchdogProgressTime = performance.now();
-    return; // still moving (or downloads done and parsing) — no alarm
+    lastWatchdogCompleted = completedLoads;
+    lastWatchdogProgressTime = now;
+    return; // still moving — no alarm
   }
-  if (performance.now() - lastWatchdogProgressTime > 30000) {
+  if (now - lastWatchdogProgressTime > 45000) {
     clearInterval(loadWatchdog);
-    showFatalError('Loading stalled — no download progress for 30 seconds (connection dropped, or a device memory/WebGL limit was hit).\n\n' + completedLoads + ' of ' + TOTAL_LOAD_TASKS + ' load tasks finished.\nStill waiting on: ' + pendingTaskNames.join(', ') + '.\nDownloaded so far: ' + (bytesNow / 1048576).toFixed(1) + ' MB.');
+    showFatalError('Loading stalled — no download progress for 45 seconds (connection dropped, or a device memory/WebGL limit was hit).\n\n' + completedLoads + ' of ' + TOTAL_LOAD_TASKS + ' load tasks finished.\nStill waiting on: ' + pendingTaskNames.join(', ') + '.\nDownloaded so far: ' + (bytesNow / 1048576).toFixed(1) + ' MB.');
   }
-}, 2000);
+}, WATCHDOG_PERIOD);
 const buffer = ASSETS.MODEL; // URL — fetched by the parse shim
 
 beginLoad();
