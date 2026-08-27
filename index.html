@@ -571,7 +571,7 @@ function createSkyGradientTexture() {
   return tex;
 }
 scene.background = createSkyGradientTexture();
-scene.fog = new THREE.Fog(0xc9784a, 45, 170); // pushed out from (22,78) — things were vanishing far too close, especially noticeable now the car moves faster
+scene.fog = new THREE.Fog(0xc9784a, 120, 420); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
 /* ---------- Image-based lighting ----------
    scene.environment was never set, so every MeshStandardMaterial had nothing to
@@ -1099,7 +1099,7 @@ function applySharpenToObject(root, strength) {
   });
 }
 
-const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.2, 220); // near plane raised from 0.05 — that ratio (4400:1) causes real depth-buffer precision problems (flickering/disappearing) on distant geometry like the city backdrop
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.2, 600); // far raised 220->600 to match the enlarged fog range. Near stays 0.2 (raised from 0.05 originally, since a 4400:1 ratio caused depth-buffer flicker on the city backdrop); 3000:1 is still comfortably safe.
 let camYaw = Math.PI * 0.25;
 let camPitch = 0.32;
 let camDist = 5.5;
@@ -3938,12 +3938,13 @@ let engineNodes = null;
 const ENGINE_GEARS = [0.28, 0.5, 0.72, 1.0];
 
 function initEngineAudio() {
+  if (!ambientCtx) initAmbientAudio(); // engine shouldn't depend on ambient having been started first
   if (engineNodes || !ambientCtx) return;
   try {
     const oscA = ambientCtx.createOscillator();
     const oscB = ambientCtx.createOscillator();
     oscA.type = 'sawtooth'; oscB.type = 'sawtooth';
-    oscA.frequency.value = 60; oscB.frequency.value = 30;
+    oscA.frequency.value = 120; oscB.frequency.value = 60;
     oscB.detune.value = 8; // slight detune — perfectly tuned octaves sound synthetic
 
     const bufSize = ambientCtx.sampleRate;
@@ -3957,7 +3958,7 @@ function initEngineAudio() {
 
     const filter = ambientCtx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 400;
+    filter.frequency.value = 1200;
     filter.Q.value = 3;
 
     const gain = ambientCtx.createGain();
@@ -3977,6 +3978,9 @@ function updateEngineAudio(speedFrac, throttle, driving) {
   if (!ambientCtx) return;
   if (!engineNodes) initEngineAudio();
   if (!engineNodes) return;
+  // A context left in 'suspended' state plays nothing and throws nothing — it has to
+  // be resumed from a user gesture, and drive mode is one.
+  if (ambientCtx.state === 'suspended') ambientCtx.resume().catch(() => {});
   const t = ambientCtx.currentTime;
   // Muted, or out of the car: fade out rather than cut, and stop there.
   if (!driving || !soundOn) {
@@ -3989,12 +3993,16 @@ function updateEngineAudio(speedFrac, throttle, driving) {
   const low = gear === 0 ? 0 : ENGINE_GEARS[gear - 1];
   const rev = Math.min(1, (speedFrac - low) / Math.max(0.01, ENGINE_GEARS[gear] - low));
 
-  const base = 48 + rev * 84 + gear * 5;
+  // Retuned upward. The first version ran the fundamental at 48-132 Hz behind a
+  // 320 Hz lowpass, which is inaudible on a phone speaker — they roll off hard below
+  // roughly 400 Hz. Fundamental now sits at 115-300 Hz and the filter stays open
+  // enough to pass the harmonics that actually carry the sound on a small speaker.
+  const base = 115 + rev * 165 + gear * 9;
   engineNodes.oscA.frequency.setTargetAtTime(base, t, 0.06);
   engineNodes.oscB.frequency.setTargetAtTime(base * 0.5, t, 0.06);
   // Filter opens under load — the difference between revving and cruising.
-  engineNodes.filter.frequency.setTargetAtTime(320 + rev * 900 + Math.abs(throttle) * 700, t, 0.08);
-  engineNodes.gain.gain.setTargetAtTime(0.035 + speedFrac * 0.05 + Math.abs(throttle) * 0.025, t, 0.1);
+  engineNodes.filter.frequency.setTargetAtTime(1100 + rev * 3200 + Math.abs(throttle) * 1400, t, 0.08);
+  engineNodes.gain.gain.setTargetAtTime(0.09 + speedFrac * 0.08 + Math.abs(throttle) * 0.04, t, 0.1);
 }
 
 function playBirdChirp() {
