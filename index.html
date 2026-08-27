@@ -2261,12 +2261,16 @@ let drivingMode = false;
 let car = null;
 let carLoading = false;
 let carReady = false;
-const carState = { x: 0, z: 0, heading: 0, speed: 0 };
+const carState = { x: 0, z: 0, heading: 0, speed: 0, vx: 0, vz: 0, slip: 0, roll: 0, pitch: 0 };
 let smoothedThrottle = 0, smoothedSteer = 0; // low-pass filtered input — smooths out raw touch/joystick noise
 const CAR_MAX_SPEED = 15; // bumped from 9 — was genuinely too slow, not just a perception issue
 const CAR_ACCEL = 10;
 const CAR_BRAKE = 16;
 const CAR_FRICTION = 4.5;
+const CAR_GRIP_BASE = 7.0; // how fast velocity realigns with the nose at a standstill — higher is tighter
+const CAR_GRIP_MIN = 2.4;  // grip at top speed; the gap between these two is what makes fast corners slide
+const CAR_ROLL_MAX = 0.13; // radians of body lean into a corner
+const CAR_PITCH_MAX = 0.05; // radians of squat under power / dive under braking
 const CAR_TURN_RATE = 1.25; // radians/sec at full speed fraction — reduced from 1.7, felt too twitchy/sensitive
 const roadGabagools = []; // separate from the yard's — { group, bobPhase }
 let roadRespawnTimer = 0;
@@ -2711,24 +2715,49 @@ function updateCarDriving(dt) {
     carState.heading -= steer * CAR_TURN_RATE * dt * Math.min(1, Math.abs(speedFrac) * 2.2) * dir;
   }
 
-  carState.x += Math.sin(carState.heading) * carState.speed * dt;
-  carState.z += Math.cos(carState.heading) * carState.speed * dt;
+  // Lateral grip. The car used to travel exactly along its heading, which is why it
+  // felt like it was on rails — turning the wheel teleported the direction of travel.
+  // Now velocity is its own vector that chases the facing direction rather than
+  // matching it instantly, so hard turns at speed produce a real slide. Grip falls
+  // off as speed rises, which is what makes fast corners loose and slow ones tidy.
+  const fwdX = Math.sin(carState.heading), fwdZ = Math.cos(carState.heading);
+  const spdFrac0 = Math.min(1, Math.abs(carState.speed) / CAR_MAX_SPEED);
+  const grip = CAR_GRIP_BASE - (CAR_GRIP_BASE - CAR_GRIP_MIN) * spdFrac0;
+  const wantVX = fwdX * carState.speed, wantVZ = fwdZ * carState.speed;
+  const blend = Math.min(1, grip * dt);
+  carState.vx += (wantVX - carState.vx) * blend;
+  carState.vz += (wantVZ - carState.vz) * blend;
+
+  carState.x += carState.vx * dt;
+  carState.z += carState.vz * dt;
   carState.x = Math.max(ROAD_ZONE.centerX - ROAD_ZONE.halfW + 1.2, Math.min(ROAD_ZONE.centerX + ROAD_ZONE.halfW - 1.2, carState.x));
   carState.z = Math.max(ROAD_ZONE.centerZ - ROAD_ZONE.halfD + 1.2, Math.min(ROAD_ZONE.centerZ + ROAD_ZONE.halfD - 1.2, carState.z));
+
+  // How far sideways the car is actually sliding, 0..1 — drives the body lean below.
+  carState.slip = Math.max(-1, Math.min(1, (-fwdZ * carState.vx + fwdX * carState.vz) / CAR_MAX_SPEED));
 
   const resolved = resolveCarCollisions(carState.x, carState.z);
   carState.x = resolved.x;
   carState.z = resolved.z;
-  if (resolved.hit) carState.speed *= 0.15; // solid impact — car stops dead, not a pass-through
+  if (resolved.hit) { carState.speed *= 0.15; carState.vx *= 0.15; carState.vz *= 0.15; } // solid impact — kill the slide vector too, or it drifts on through
+
+  // Weight transfer: lean into corners, squat under power, dive under braking. The
+  // car is a rigid box welded to y=0, so this is what stands in for suspension —
+  // both angles are eased rather than applied directly, or it reads as a twitch.
+  const rollTarget = -carState.slip * CAR_ROLL_MAX * 3.2;
+  const pitchTarget = -throttle * CAR_PITCH_MAX;
+  carState.roll += (Math.max(-CAR_ROLL_MAX, Math.min(CAR_ROLL_MAX, rollTarget)) - carState.roll) * Math.min(1, dt * 6);
+  carState.pitch += (pitchTarget - carState.pitch) * Math.min(1, dt * 5);
 
   car.position.set(carState.x, 0, carState.z);
-  car.rotation.y = carState.heading;
+  car.rotation.set(carState.pitch, carState.heading, carState.roll, 'YXZ'); // YXZ so heading stays clean and lean/dive apply in body space
 
   camTarget.lerp(new THREE.Vector3(carState.x, 1.2, carState.z), Math.min(1, dt * 4)); // eased from 6 — was reacting too sharply to small position changes
 
   // Speed sensation: widen FOV and darken the edges as he picks up speed — a cheap,
   // safe substitute for real motion blur (no custom shaders on the car models).
   const speedFrac = Math.min(1, Math.abs(carState.speed) / CAR_MAX_SPEED);
+  updateEngineAudio(speedFrac, throttle, true);
   camera.fov = 45 + speedFrac * 16;
   camera.updateProjectionMatrix();
   document.getElementById('speed-vignette').style.opacity = Math.max(0, speedFrac - 0.25) * 0.95;
@@ -3070,6 +3099,7 @@ function stopChaseAudio() {
 
 function exitDriveMode() {
   drivingMode = false;
+  updateEngineAudio(0, 0, false); // fade the engine out on foot rather than leaving it idling
   if (car && car.userData.garageCar) {
     // Park the classic back on its pad instead of hiding it
     const gc = garageCars.find((g) => g.group === car);
@@ -3892,6 +3922,79 @@ function initAmbientAudio() {
   windFilter.connect(windGain);
   windGain.connect(ambientCtx.destination);
   noiseSource.start();
+}
+
+/* ---------- Engine ----------
+   Synthesized rather than streamed: a real engine loop would be another download
+   on a payload that already fails on this device, and pitch-shifting a recording
+   convincingly is harder than generating the tone outright.
+
+   Two detuned sawtooths an octave apart give the harmonic body a single oscillator
+   lacks, a little filtered noise adds intake roughness, and a lowpass that opens
+   with throttle is what makes it sound like it's working rather than just louder.
+   Frequency follows speed with a fake gearbox, so revs climb and drop back on each
+   shift instead of sweeping in one long uninterrupted whine. */
+let engineNodes = null;
+const ENGINE_GEARS = [0.28, 0.5, 0.72, 1.0];
+
+function initEngineAudio() {
+  if (engineNodes || !ambientCtx) return;
+  try {
+    const oscA = ambientCtx.createOscillator();
+    const oscB = ambientCtx.createOscillator();
+    oscA.type = 'sawtooth'; oscB.type = 'sawtooth';
+    oscA.frequency.value = 60; oscB.frequency.value = 30;
+    oscB.detune.value = 8; // slight detune — perfectly tuned octaves sound synthetic
+
+    const bufSize = ambientCtx.sampleRate;
+    const nb = ambientCtx.createBuffer(1, bufSize, ambientCtx.sampleRate);
+    const nd = nb.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) nd[i] = (Math.random() * 2 - 1) * 0.5;
+    const noise = ambientCtx.createBufferSource();
+    noise.buffer = nb; noise.loop = true;
+    const noiseGain = ambientCtx.createGain();
+    noiseGain.gain.value = 0.06;
+
+    const filter = ambientCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 400;
+    filter.Q.value = 3;
+
+    const gain = ambientCtx.createGain();
+    gain.gain.value = 0; // silent until the car actually moves
+
+    oscA.connect(filter); oscB.connect(filter);
+    noise.connect(noiseGain); noiseGain.connect(filter);
+    filter.connect(gain);
+    gain.connect(ambientCtx.destination);
+    oscA.start(); oscB.start(); noise.start();
+
+    engineNodes = { oscA, oscB, filter, gain };
+  } catch (e) { engineNodes = null; }
+}
+
+function updateEngineAudio(speedFrac, throttle, driving) {
+  if (!ambientCtx) return;
+  if (!engineNodes) initEngineAudio();
+  if (!engineNodes) return;
+  const t = ambientCtx.currentTime;
+  // Muted, or out of the car: fade out rather than cut, and stop there.
+  if (!driving || !soundOn) {
+    engineNodes.gain.gain.setTargetAtTime(0, t, 0.15);
+    return;
+  }
+  // Fake gearbox — revs rise through each band then drop on the shift.
+  let gear = 0;
+  while (gear < ENGINE_GEARS.length - 1 && speedFrac > ENGINE_GEARS[gear]) gear++;
+  const low = gear === 0 ? 0 : ENGINE_GEARS[gear - 1];
+  const rev = Math.min(1, (speedFrac - low) / Math.max(0.01, ENGINE_GEARS[gear] - low));
+
+  const base = 48 + rev * 84 + gear * 5;
+  engineNodes.oscA.frequency.setTargetAtTime(base, t, 0.06);
+  engineNodes.oscB.frequency.setTargetAtTime(base * 0.5, t, 0.06);
+  // Filter opens under load — the difference between revving and cruising.
+  engineNodes.filter.frequency.setTargetAtTime(320 + rev * 900 + Math.abs(throttle) * 700, t, 0.08);
+  engineNodes.gain.gain.setTargetAtTime(0.035 + speedFrac * 0.05 + Math.abs(throttle) * 0.025, t, 0.1);
 }
 
 function playBirdChirp() {
