@@ -693,6 +693,19 @@ function loadRealCityBackdrop() {
       city.position.set(CITY_BACKDROP_POS.x, -1, CITY_BACKDROP_POS.z);
       city.rotation.y = Math.atan2(-CITY_BACKDROP_POS.x, -CITY_BACKDROP_POS.z);
       scene.add(city);
+      // Widen the skyline: two cloned blocks flanking the original at varied
+      // rotation/scale, so the horizon reads as a city rather than one lonely
+      // block. Cost is negligible (~13K verts each, shared textures via clone).
+      const flankL = city.clone();
+      flankL.position.x -= 95; flankL.position.z -= 30;
+      flankL.rotation.y += 0.9;
+      flankL.scale.multiplyScalar(0.85);
+      scene.add(flankL);
+      const flankR = city.clone();
+      flankR.position.x += 95; flankR.position.z -= 25;
+      flankR.rotation.y -= 1.2;
+      flankR.scale.multiplyScalar(0.75);
+      scene.add(flankR);
       // Visible, temporary confirmation that this path actually ran and added
       // something to the scene — the recurring "no city" reports despite fixes to
       // position/material suggest we need to actually verify this step completes,
