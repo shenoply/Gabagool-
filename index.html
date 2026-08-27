@@ -456,6 +456,8 @@ const ASSETS = {
   GARAGE_E50: 'mercedes_e50.glb',
   GARAGE_W201: 'mercedes_w201.glb',
   GARAGE_PONY: 'hyundai_pony.glb',
+  FOREST_NEAR: 'pine_near.glb', // full-detail pine patch (47,920 verts) — used on the edges you can walk up to
+  FOREST_FAR: 'pine_far.glb',   // decimated to 15,407 verts, textures stripped — reuses the near material at runtime
 };
 
 // Fetch an asset as an ArrayBuffer and hand it to cb — same shape the old
@@ -3291,6 +3293,73 @@ let hasTappedStart = false;
 let allLoaded = false;
 const loadStartTime = performance.now();
 const pendingTaskNames = ['character', 'house', 'collision proxy', 'ducks'];
+
+/* ================= FOREST =================
+   Loaded lazily AFTER the game is playable, and deliberately NOT added to
+   TOTAL_LOAD_TASKS. Memory is already tight on this device and a forest is
+   scenery — if it fails or never arrives, the game still runs, it just gets
+   greener a couple of seconds later. Every failure path here warns and returns
+   rather than surfacing a fatal error.
+
+   Detail is placed spatially instead of switched per frame: full-detail patches
+   sit where the player can actually walk up to them, and the decimated tier fills
+   the mass behind. Worth being precise about what this buys — clones share
+   geometry and textures in VRAM, so patch count costs vertex processing per
+   frame, not memory. It helps framerate; it does nothing for the memory pressure
+   behind the loading crashes.
+
+   Source patch is ~51 x 46 units. Positions avoid the yard (worldBound 22) and
+   the road corridor (ROAD_ZONE.centerX 27, halfW 10) so nothing lands on tarmac. */
+const FOREST_PATCHES = [
+  // [x, z, rotationY, tier]
+  [-46,  -8, 0.0, 'near'],
+  [-40,  40, 1.1, 'near'],
+  [-34, -48, 2.3, 'near'],
+  [  6, -52, 0.6, 'near'],
+  [-78,  10, 0.4, 'far'],
+  [-72, -46, 1.9, 'far'],
+  [-66,  56, 2.8, 'far'],
+  [-14, -92, 1.4, 'far'],
+  [ 30, -88, 0.2, 'far'],
+  [-96, -30, 2.1, 'far'],
+];
+
+function placeForest(nearScene, farScene) {
+  // The far tier shipped without textures (0.46 MB instead of 1.19 MB), so it
+  // borrows the near tier's material here.
+  let sharedMat = null;
+  nearScene.traverse((o) => { if (o.isMesh && o.material && !sharedMat) sharedMat = o.material; });
+  if (sharedMat) farScene.traverse((o) => { if (o.isMesh) o.material = sharedMat; });
+
+  const group = new THREE.Group();
+  for (const p of FOREST_PATCHES) {
+    const src = p[3] === 'near' ? nearScene : farScene;
+    const patch = src.clone(); // shares geometry + material — no extra VRAM per patch
+    patch.position.set(p[0], 0, p[1]);
+    patch.rotation.y = p[2];
+    patch.traverse((o) => {
+      if (o.isMesh) {
+        o.castShadow = false;    // ten shadow-casting patches would cost far more than distant scenery is worth
+        o.receiveShadow = false;
+        o.frustumCulled = true;  // off-screen patches cost nothing
+      }
+    });
+    group.add(patch);
+  }
+  scene.add(group);
+  console.log('forest placed:', FOREST_PATCHES.length, 'patches');
+}
+
+function loadForest() {
+  // loader.parse is shimmed to accept a URL, so this reuses the normal fetch path.
+  loader.parse(ASSETS.FOREST_NEAR, '', (nearGltf) => {
+    loader.parse(ASSETS.FOREST_FAR, '', (farGltf) => {
+      try { placeForest(nearGltf.scene, farGltf.scene); }
+      catch (e) { console.warn('forest placement failed, skipping:', e); }
+    }, (e) => console.warn('forest far tier failed, skipping:', e));
+  }, (e) => console.warn('forest near tier failed, skipping:', e));
+}
+
 function beginLoad() { pendingLoads++; }
 function endLoad(name) {
   pendingLoads = Math.max(0, pendingLoads - 1);
@@ -3303,6 +3372,9 @@ function endLoad(name) {
   if (pendingLoads === 0) {
     allLoaded = true;
     maybeFinishLoading();
+    // Scenery starts downloading only once the game is actually playable, so it
+    // never competes with the critical assets or delays the start screen.
+    setTimeout(loadForest, 1500);
   }
 }
 function updateLoadingPercent() {
