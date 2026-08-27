@@ -494,21 +494,39 @@ function reportAssetProgress() {
    the connection dropping requests after the first batch. A single failed fetch
    used to be permanent. Now each asset gets three attempts with backoff, and the
    real reason is reported rather than a bare "failed". */
+/* One request at a time. Staggering by a second or two still let requests overlap,
+   and the diagnostics showed "Failed to fetch" — a connection-level drop, not a 404
+   or a rate limit. On a link this unstable the reliable approach is a queue with a
+   concurrency of one: nothing else is in flight while an asset downloads, so a
+   failure is the connection dropping rather than requests competing. */
+const _assetQueue = [];
+let _assetBusy = false;
+function _pumpAssetQueue() {
+  if (_assetBusy || _assetQueue.length === 0) return;
+  _assetBusy = true;
+  const job = _assetQueue.shift();
+  job(() => { _assetBusy = false; _pumpAssetQueue(); });
+}
 function fetchAssetBuffer(url, cb, onErr, _attempt) {
+  _assetQueue.push((done) => _fetchAssetQueued(url, cb, onErr, _attempt, done));
+  _pumpAssetQueue();
+}
+function _fetchAssetQueued(url, cb, onErr, _attempt, done) {
   const attempt = _attempt || 1;
-  const MAX_ATTEMPTS = 3;
+  const MAX_ATTEMPTS = 5; // raised from 3 — most failures here are transient
   const retryOrFail = (err) => {
     const reason = (err && (err.message || err)) + '';
     if (attempt < MAX_ATTEMPTS) {
-      const wait = 700 * attempt; // 0.7s, then 1.4s
-      if (window.__gameNote) window.__gameNote('RETRY ' + (attempt + 1) + '/' + MAX_ATTEMPTS + ' ' + url.split('/').pop() + ' (' + reason + ')');
-      setTimeout(() => fetchAssetBuffer(url, cb, onErr, attempt + 1), wait);
-      return;
+      const wait = 800 * Math.pow(1.8, attempt - 1); // 0.8s, 1.4s, 2.6s, 4.7s
+      if (window.__gameNote) window.__gameNote('RETRY ' + (attempt + 1) + '/' + MAX_ATTEMPTS + ' ' + url.split('/').pop());
+      setTimeout(() => _fetchAssetQueued(url, cb, onErr, attempt + 1, done), wait);
+      return; // stays at the head of the queue; nothing else starts meanwhile
     }
     if (window.__gameNote) window.__gameNote('GAVE UP: ' + url.split('/').pop() + ' — ' + reason);
+    done();
     (onErr || ((e) => showFatalError('Asset fetch failed: ' + url + '\n' + e)))(err);
   };
-  _fetchAssetOnce(url, cb, retryOrFail);
+  _fetchAssetOnce(url, (buf) => { done(); cb(buf); }, retryOrFail);
 }
 
 function _fetchAssetOnce(url, cb, onErr) {
@@ -1480,7 +1498,15 @@ scene.add(ground);
    show it. */
 function applyGroundGrassTexture() {
   const texLoader = new THREE.TextureLoader();
-  texLoader.load(ASSETS.GRASS_COLOR, (tex) => {
+  // Routed through the same single-file queue as the models: TextureLoader would
+  // otherwise fire its own parallel request and compete with them.
+  const loadQueued = (url, onTex, onFail) => {
+    fetchAssetBuffer(url, (buf) => {
+      const blobUrl = URL.createObjectURL(new Blob([buf]));
+      texLoader.load(blobUrl, (t) => { URL.revokeObjectURL(blobUrl); onTex(t); }, undefined, onFail);
+    }, onFail);
+  };
+  loadQueued(ASSETS.GRASS_COLOR, (tex) => {
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(180, 180); // rescaled for the 900-unit plane, same ~5 units per tile as before
     tex.anisotropy = maxAniso;
@@ -1498,16 +1524,16 @@ function applyGroundGrassTexture() {
       s.mat.needsUpdate = true;
     }
     if (window.__gameNote && false) window.__gameNote('grass applied');
-    texLoader.load(ASSETS.GRASS_NORMAL, (nrm) => {
+    loadQueued(ASSETS.GRASS_NORMAL, (nrm) => {
       nrm.wrapS = nrm.wrapT = THREE.RepeatWrapping;
       nrm.repeat.set(180, 180);
       nrm.anisotropy = maxAniso;
       groundMat.normalMap = nrm;
       groundMat.normalScale = new THREE.Vector2(0.6, 0.6); // full strength reads as noise at this tiling density
       groundMat.needsUpdate = true;
-    }, undefined, () => console.warn('grass normal map failed, colour only'));
-  }, undefined, (err) => {
-    // TextureLoader gives no status code, so retry blind a couple of times.
+    }, () => console.warn('grass normal map failed, colour only'));
+  }, (err) => {
+    // The queue already retried; this is the final give-up path.
     if ((applyGroundGrassTexture._tries = (applyGroundGrassTexture._tries || 0) + 1) < 3) {
       if (window.__gameNote) window.__gameNote('RETRY grass texture (' + applyGroundGrassTexture._tries + ')');
       setTimeout(applyGroundGrassTexture, 900 * applyGroundGrassTexture._tries);
