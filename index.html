@@ -456,6 +456,8 @@ const ASSETS = {
   GARAGE_E50: 'mercedes_e50.glb',
   GARAGE_W201: 'mercedes_w201.glb',
   GARAGE_PONY: 'hyundai_pony.glb',
+  GRASS_COLOR: 'grass_color.webp',   // photoscanned ground grass, 1024 — replaces the procedural canvas texture
+  GRASS_NORMAL: 'grass_normal.webp', // 512 is plenty for a normal map at this viewing distance
   FOREST_NEAR: 'pine_near.glb', // pine patch, 47,920 verts, ~51 x 46 units — cloned across the map
 };
 
@@ -1213,6 +1215,40 @@ const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
+
+/* Swap the procedural canvas grass for the photoscanned texture once it arrives.
+   Deferred and non-fatal for the same reason as the forest: this device is tight
+   on memory, so scenery must never be able to block startup. If either file fails,
+   the canvas texture it replaces is already on screen and simply stays.
+
+   Downsized from the source's 2048 colour + 2048 normal, which together wanted
+   44.7 MB of VRAM — on their own more than enough to explain the load crashes.
+   At 1024/512 the pair costs about 6.7 MB.
+
+   Repeat is 64 across the 320-unit plane, i.e. one tile per 5 units. The source is
+   a photoscanned patch rather than a designed tile; its opposite edges measured
+   closer to each other than two random interior columns do, so it repeats without
+   an obvious grid, but it is not truly seamless and a lower repeat would start to
+   show it. */
+function applyGroundGrassTexture() {
+  const texLoader = new THREE.TextureLoader();
+  texLoader.load(ASSETS.GRASS_COLOR, (tex) => {
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(64, 64);
+    tex.anisotropy = maxAniso;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    groundMat.map = tex;
+    groundMat.needsUpdate = true;
+    texLoader.load(ASSETS.GRASS_NORMAL, (nrm) => {
+      nrm.wrapS = nrm.wrapT = THREE.RepeatWrapping;
+      nrm.repeat.set(64, 64);
+      nrm.anisotropy = maxAniso;
+      groundMat.normalMap = nrm;
+      groundMat.normalScale = new THREE.Vector2(0.6, 0.6); // full strength reads as noise at this tiling density
+      groundMat.needsUpdate = true;
+    }, undefined, () => console.warn('grass normal map failed, colour only'));
+  }, undefined, () => console.warn('grass texture failed, keeping procedural ground'));
+}
 
 const patioGeo = new THREE.PlaneGeometry(9, 7);
 const patioMat = new THREE.MeshStandardMaterial({ map: createPaverTexture(), roughness: 0.92, metalness: 0.0 });
@@ -3421,7 +3457,7 @@ function endLoad(name) {
     maybeFinishLoading();
     // Scenery starts downloading only once the game is actually playable, so it
     // never competes with the critical assets or delays the start screen.
-    setTimeout(loadForest, 1500);
+    setTimeout(() => { applyGroundGrassTexture(); loadForest(); }, 1500);
   }
 }
 function updateLoadingPercent() {
