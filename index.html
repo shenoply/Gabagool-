@@ -1526,7 +1526,13 @@ let worldBound = 22; // a much bigger yard to actually explore
 // the house model's own footprint and also decides where gabagools spawn, so it has
 // to stay tied to the house — but that left the player unable to step off the model
 // onto the surrounding lawn at all, which is where the garage now lives.
-function walkBound() { return Math.max(worldBound, GARAGE_Z + 10); }
+function walkBound() {
+  // Was just far enough to reach the garage pad. Now that the car can leave the road
+  // and you can get out wherever you stop, the walkable area has to cover the whole
+  // ground plane — otherwise stepping out of a car parked in a field snaps you back
+  // toward the house. worldBound is untouched and still governs gabagool spawning.
+  return 440;
+}
 let camTargetYOffset = 0.9;
 let mixer = null;
 let actions = {};
@@ -3033,8 +3039,24 @@ function updateCarDriving(dt) {
 
   carState.x += carState.vx * dt;
   carState.z += carState.vz * dt;
-  carState.x = Math.max(ROAD_ZONE.centerX - ROAD_ZONE.halfW + 1.2, Math.min(ROAD_ZONE.centerX + ROAD_ZONE.halfW - 1.2, carState.x));
-  carState.z = Math.max(ROAD_ZONE.centerZ - ROAD_ZONE.halfD + 1.2, Math.min(ROAD_ZONE.centerZ + ROAD_ZONE.halfD - 1.2, carState.z));
+  // Free roam. The car used to be clamped inside the road rectangle, which is why
+  // it could never leave the tarmac. Now the only limit is the ground plane itself,
+  // and leaving the road costs grip and speed instead of being forbidden.
+  const GROUND_HALF = 445; // just inside the 900-unit plane
+  carState.x = Math.max(-GROUND_HALF, Math.min(GROUND_HALF, carState.x));
+  carState.z = Math.max(-GROUND_HALF, Math.min(GROUND_HALF, carState.z));
+
+  const onRoad = carState.x > ROAD_ZONE.centerX - ROAD_ZONE.halfW &&
+                 carState.x < ROAD_ZONE.centerX + ROAD_ZONE.halfW &&
+                 carState.z > ROAD_ZONE.centerZ - ROAD_ZONE.halfD &&
+                 carState.z < ROAD_ZONE.centerZ + ROAD_ZONE.halfD;
+  if (!onRoad) {
+    // Grass drags and doesn't hold a line as well as tarmac.
+    carState.speed *= (1 - 0.55 * dt);
+    carState.vx *= (1 - 0.35 * dt);
+    carState.vz *= (1 - 0.35 * dt);
+  }
+  carState.offRoad = !onRoad;
 
   // How far sideways the car is actually sliding, 0..1 — drives the body lean below.
   carState.slip = Math.max(-1, Math.min(1, (-fwdZ * carState.vx + fwdX * carState.vz) / CAR_MAX_SPEED));
@@ -3067,7 +3089,7 @@ function updateCarDriving(dt) {
   // Lay rubber when the car is genuinely sliding sideways or braking hard at speed.
   if ((Math.abs(carState.slip) > 0.30 || (isBraking && speedFrac > 0.5)) && performance.now() - lastSkidAt > 55) {
     lastSkidAt = performance.now();
-    dropSkid(carState.x, carState.z, carState.heading);
+    dropSkid(carState.x, carState.z, carState.heading, carState.offRoad);
   }
   // Speedometer. CAR_MAX_SPEED is world units/sec, not a real speed — scaled to a
   // plausible-looking number rather than pretending it is calibrated.
@@ -3079,7 +3101,10 @@ function updateCarDriving(dt) {
     while (g < ENGINE_GEARS.length - 1 && speedFrac > ENGINE_GEARS[g]) g++;
     document.getElementById('speedo-gear').textContent = carState.speed < -0.2 ? 'REVERSE' : 'GEAR ' + (g + 1);
   }
-  camera.fov = 45 + speedFrac * 16;
+  // Speed used to add up to 16 degrees of FOV, which fought the +/- zoom buttons —
+  // pressing zoom did nothing visible while moving. The surge is now much smaller
+  // and applied on top of the user's own zoom rather than overriding it.
+  camera.fov = 45 + speedFrac * 5;
   camera.updateProjectionMatrix();
   document.getElementById('speed-vignette').style.opacity = Math.max(0, speedFrac - 0.25) * 0.95;
   document.getElementById('speed-lines').style.opacity = Math.max(0, speedFrac - 0.55) * 0.55; // much more subtle — was reading as cartoonish, not a speed cue
@@ -3124,7 +3149,7 @@ const skidMarks = [];
 const SKID_LIMIT = 40; // oldest is recycled rather than growing without bound
 let skidGeo = null, skidMat = null;
 let lastSkidAt = 0;
-function dropSkid(x, z, heading) {
+function dropSkid(x, z, heading, offRoad) {
   if (!skidGeo) {
     skidGeo = new THREE.PlaneGeometry(1.9, 0.9);
     skidMat = new THREE.MeshBasicMaterial({ color: 0x0d0b0a, transparent: true, opacity: 0.5, depthWrite: false });
@@ -3138,7 +3163,8 @@ function dropSkid(x, z, heading) {
   }
   m.position.set(x, 0.03, z);
   m.rotation.set(-Math.PI / 2, 0, -heading);
-  m.material.opacity = 0.5;
+  m.material.opacity = offRoad ? 0.28 : 0.5;
+  m.material.color.setHex(offRoad ? 0x2a2415 : 0x0d0b0a); // flattened grass, not rubber
   m.userData.life = 14;
   skidMarks.push(m);
 }
@@ -3583,10 +3609,21 @@ function enterDriveMode(withMission, overrideCar) {
       if (trafficCars.length === 0) spawnTrafficCars();
       savedCharacterPos = character ? character.position.clone() : null;
       if (character) character.visible = false;
-      carState.x = ROAD_ZONE.centerX;
-      carState.z = ROAD_ZONE.centerZ - ROAD_ZONE.halfD + 75; // same absolute spawn point as before, but now ~75 units of paved road visible behind it instead of ~5
-      carState.heading = 0; // facing away from the house, out along the highway
+      if (enterDriveMode._inPlace && car) {
+        // Taking a car you walked up to: drive it from where it is parked rather
+        // than teleporting it to the top of the highway. Getting in should not
+        // move the car.
+        carState.x = car.position.x;
+        carState.z = car.position.z;
+        carState.heading = car.rotation.y;
+        enterDriveMode._inPlace = false;
+      } else {
+        carState.x = ROAD_ZONE.centerX;
+        carState.z = ROAD_ZONE.centerZ - ROAD_ZONE.halfD + 75; // same absolute spawn point as before, but now ~75 units of paved road visible behind it instead of ~5
+        carState.heading = 0; // facing away from the house, out along the highway
+      }
       carState.speed = 0;
+      carState.vx = 0; carState.vz = 0; carState.slip = 0;
       car.position.set(carState.x, 0, carState.z);
       car.rotation.y = carState.heading;
       car.visible = true;
@@ -3603,6 +3640,7 @@ function enterDriveMode(withMission, overrideCar) {
     });
   };
   if (overrideCar) {
+    enterDriveMode._inPlace = true; // start from where it's parked, don't teleport it
     // Driving a garage classic: it becomes the active vehicle. Remember the
     // Escalade (if loaded) so getting out restores it as the default.
     if (car && !car.userData.garageCar) enterDriveMode._escaladeRef = car;
@@ -3653,18 +3691,25 @@ function exitDriveMode() {
   drivingMode = false;
   updateEngineAudio(0, 0, false);
   { const el = document.getElementById('speedo'); if (el) el.style.display = 'none'; } // fade the engine out on foot rather than leaving it idling
+  // Getting out leaves the car where you stopped it, and puts the player on the
+  // ground beside it — previously the classic teleported back to its pad and the
+  // player was returned to wherever they had been standing before driving.
+  const exitX = car ? car.position.x : 0;
+  const exitZ = car ? car.position.z : 0;
+  const exitHeading = car ? car.rotation.y : 0;
   if (car && car.userData.garageCar) {
-    // Park the classic back on its pad instead of hiding it
     const gc = garageCars.find((g) => g.group === car);
-    if (gc) {
-      car.position.set(gc.home.x, 0, gc.home.z);
-      car.rotation.y = gc.home.rotY;
-      gc.dismissedUntilAway = true; // don't instantly reopen the dialog standing beside it
-    }
+    if (gc) gc.dismissedUntilAway = true; // don't reopen the dialog while standing beside it
+    car.rotation.set(0, exitHeading, 0); // drop any body roll/pitch so it sits level when parked
     if (enterDriveMode._escaladeRef) car = enterDriveMode._escaladeRef;
   } else if (car) {
-    car.visible = false;
+    car.rotation.set(0, exitHeading, 0);
+    car.visible = true; // the Escalade stays parked and visible rather than vanishing
   }
+  // step out on the driver's side
+  const sideX = exitX + Math.cos(exitHeading) * 2.4;
+  const sideZ = exitZ - Math.sin(exitHeading) * 2.4;
+  savedCharacterPos = new THREE.Vector3(sideX, 0, sideZ);
   document.getElementById('status-panel').style.display = '';
   if (character) {
     character.visible = true;
