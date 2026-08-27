@@ -329,6 +329,10 @@
 
   <div id="hint">Joystick or keys to move · Drag to orbit · Pinch/±/scroll to zoom · Tap ground to drop gabagool</div>
 
+  <div id="speedo" style="position:fixed;right:12px;bottom:calc(96px + env(safe-area-inset-bottom,0px));z-index:12;display:none;text-align:right;font:700 11px/1.1 ui-monospace,Menlo,Consolas,monospace;color:var(--text-dim);background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:8px 12px;backdrop-filter:blur(6px);">
+    <div><span id="speedo-val" style="font-size:22px;color:var(--accent);">0</span> <span style="font-size:10px;">MPH</span></div>
+    <div id="speedo-gear" style="margin-top:2px;opacity:0.75;">GEAR 1</div>
+  </div>
   <div id="status-panel">
     <div class="row"><span class="lbl">Status</span><span class="state-text" id="state-text">Searching</span></div>
     <div class="row" style="flex-direction: column; align-items: stretch;">
@@ -583,7 +587,10 @@ function base64ToArrayBuffer(b64) {
       document.body.appendChild(panel);
     }
     panel.style.display = '';
-    panel.textContent = 'ISSUES (tap to hide)\n\n' + log.slice(-12).join('\n');
+    const bad = log.some((l) => !l.startsWith('GPU:'));
+    panel.style.borderColor = bad ? '#a33' : '#556';
+    panel.style.background = bad ? 'rgba(20,6,6,0.94)' : 'rgba(10,12,16,0.92)';
+    panel.textContent = (bad ? 'ISSUES' : 'DIAGNOSTICS') + ' (tap to hide)\n\n' + log.slice(-12).join('\n');
   }
   function note(msg) {
     log.push(msg.length > 220 ? msg.slice(0, 220) + '...' : msg);
@@ -646,18 +653,20 @@ const scene = new THREE.Scene();
    Clouds are painted in rather than added as geometry: layered translucent ellipses
    banded just above the horizon, where real cloud cover sits when you're looking out
    across open ground. Costs one texture and no draw calls. */
-function createSkyEquirect() {
+function createSkyEquirect(pal) {
   const w = 1024, h = 512;
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const ctx = c.getContext('2d');
 
   const grad = ctx.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0.00, '#241a3d'); // deep dusk purple at the zenith
-  grad.addColorStop(0.30, '#3b2950');
-  grad.addColorStop(0.44, '#7a4358');
-  grad.addColorStop(0.49, '#c9683f'); // warm band just above the horizon
-  grad.addColorStop(0.50, '#e8965a'); // horizon glow
+  const hex = (n) => '#' + n.toString(16).padStart(6, '0');
+  const P = pal || { zenith: 0x241a3d, mid: 0x7a4358, horizon: 0xe8965a, sun: 0xffe2ac };
+  grad.addColorStop(0.00, hex(P.zenith));
+  grad.addColorStop(0.30, hex(P.zenith));
+  grad.addColorStop(0.44, hex(P.mid));
+  grad.addColorStop(0.49, hex(P.mid));
+  grad.addColorStop(0.50, hex(P.horizon));
   grad.addColorStop(0.53, '#4a3524'); // below the horizon: ground haze, only seen in reflections
   grad.addColorStop(1.00, '#2a1e14');
   ctx.fillStyle = grad;
@@ -666,7 +675,8 @@ function createSkyEquirect() {
   // Sun glow, placed to agree with the key light at (9, 5.5, 6) -> u 0.594, v 0.350
   const sx = w * 0.594, sy = h * 0.350;
   const sun = ctx.createRadialGradient(sx, sy, 0, sx, sy, w * 0.17);
-  sun.addColorStop(0.00, 'rgba(255,226,172,0.95)');
+  const sc = new THREE.Color(P.sun);
+  sun.addColorStop(0.00, `rgba(${Math.round(sc.r*255)},${Math.round(sc.g*255)},${Math.round(sc.b*255)},0.95)`);
   sun.addColorStop(0.30, 'rgba(255,176,105,0.45)');
   sun.addColorStop(1.00, 'rgba(255,150,90,0)');
   ctx.fillStyle = sun;
@@ -705,6 +715,74 @@ function createSkyEquirect() {
   return tex;
 }
 scene.background = createSkyEquirect();
+/* ================= DAY / NIGHT CYCLE =================
+   The scene was locked to one dusk palette, which is why grass read olive and the
+   house was permanently half-lit. This drives a single 0..1 time value through the
+   light colours, fog tint and sky, so the hour actually moves.
+
+   The sky texture is regenerated only when the phase has moved enough to be worth
+   it, not every frame — repainting a 1024x512 canvas per frame would be absurd for
+   something that changes this slowly. Lights and fog lerp continuously, since those
+   are just number assignments and cost nothing. */
+const DAY_LENGTH = 480; // seconds for a full cycle — 8 real minutes
+let dayTime = 0.62;     // start at dusk, where the game has always been
+let lastSkyPhase = -1;
+
+const SKY_KEYS = [
+  // t,    zenith,   mid,      horizon,  sun,      key light, hemi sky, fog,      keyI, hemiI
+  [0.00, 0x0a0d1c, 0x141a30, 0x2a2a44, 0x30304a, 0x6f7fb0, 0x2a3050, 0x1a2038, 0.35, 0.30], // night
+  [0.22, 0x1b2340, 0x4a3a58, 0xd9784a, 0xffc07a, 0xffb27a, 0x7a6a9a, 0x8a6a5a, 1.60, 0.55], // dawn
+  [0.38, 0x2f6bb5, 0x74a6d8, 0xbcd8ea, 0xfff3d0, 0xfff0d8, 0x9fc4e8, 0xa8c4d8, 2.90, 0.85], // morning
+  [0.50, 0x2e74c8, 0x7fb2e0, 0xd6e8f2, 0xffffff, 0xfffaf0, 0xaed4f5, 0xc2d8e6, 3.20, 0.95], // midday
+  [0.68, 0x241a3d, 0x7a4358, 0xe8965a, 0xffe2ac, 0xffc487, 0x8a7ab0, 0xc9784a, 2.70, 0.55], // dusk (the original look)
+  [0.80, 0x141033, 0x2e2148, 0x6a3a52, 0x8a5a6a, 0xa88ac0, 0x4a4470, 0x4a3550, 0.90, 0.40], // late dusk
+  [1.00, 0x0a0d1c, 0x141a30, 0x2a2a44, 0x30304a, 0x6f7fb0, 0x2a3050, 0x1a2038, 0.35, 0.30], // back to night
+];
+
+const _cA = new THREE.Color(), _cB = new THREE.Color(), _cOut = new THREE.Color();
+function sampleSky(t) {
+  let i = 0;
+  while (i < SKY_KEYS.length - 2 && t > SKY_KEYS[i + 1][0]) i++;
+  const a = SKY_KEYS[i], b = SKY_KEYS[i + 1];
+  const f = Math.min(1, Math.max(0, (t - a[0]) / Math.max(0.0001, b[0] - a[0])));
+  const mix = (ca, cb) => { _cA.setHex(ca); _cB.setHex(cb); return _cOut.copy(_cA).lerp(_cB, f).getHex(); };
+  return {
+    zenith: mix(a[1], b[1]), mid: mix(a[2], b[2]), horizon: mix(a[3], b[3]), sun: mix(a[4], b[4]),
+    keyColor: mix(a[5], b[5]), hemiSky: mix(a[6], b[6]), fog: mix(a[7], b[7]),
+    keyI: a[8] + (b[8] - a[8]) * f, hemiI: a[9] + (b[9] - a[9]) * f,
+  };
+}
+
+function updateDayNight(dt) {
+  dayTime = (dayTime + dt / DAY_LENGTH) % 1;
+  const s = sampleSky(dayTime);
+
+  key.color.setHex(s.keyColor);
+  key.intensity = s.keyI;
+  hemi.color.setHex(s.hemiSky);
+  hemi.intensity = s.hemiI;
+  if (scene.fog) scene.fog.color.setHex(s.fog);
+  scene.background && scene.background.isColor && scene.background.setHex(s.zenith);
+
+  // Sun arcs across the sky rather than sitting in one place all day.
+  const ang = (dayTime - 0.25) * Math.PI * 2;
+  key.position.set(Math.cos(ang) * 11, Math.max(-3, Math.sin(ang) * 9), 6);
+
+  // Street lamps and window lights come on after dark.
+  const dark = dayTime < 0.20 || dayTime > 0.78 ? 1 : (dayTime < 0.30 ? (0.30 - dayTime) / 0.10 : (dayTime > 0.70 ? (dayTime - 0.70) / 0.08 : 0));
+  nightLightLevel = Math.min(1, Math.max(0, dark));
+
+  // Repaint the sky only when the phase has moved enough to see.
+  const phase = Math.round(dayTime * 48);
+  if (phase !== lastSkyPhase) {
+    lastSkyPhase = phase;
+    const old = scene.background;
+    scene.background = createSkyEquirect(s);
+    if (old && old.dispose) old.dispose(); // don't leak a texture every repaint
+  }
+}
+let nightLightLevel = 0;
+
 scene.fog = new THREE.Fog(0xc9784a, 120, 420); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
 /* ---------- Image-based lighting ----------
@@ -1340,6 +1418,7 @@ function createPaverTexture() {
   return tex;
 }
 
+const shoulderGrassMats = []; // materials that also want the photoscanned grass once it loads
 function createGrassTexture() {
   const size = 512;
   const c = document.createElement('canvas');
@@ -1392,6 +1471,17 @@ function applyGroundGrassTexture() {
     tex.colorSpace = THREE.SRGBColorSpace;
     groundMat.map = tex;
     groundMat.needsUpdate = true;
+    for (const s of shoulderGrassMats) {
+      const t = tex.clone();
+      t.needsUpdate = true;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(s.repeatX, s.repeatY); // shoulders are a different size, so they need their own repeat
+      t.anisotropy = maxAniso;
+      t.colorSpace = THREE.SRGBColorSpace;
+      s.mat.map = t;
+      s.mat.needsUpdate = true;
+    }
+    if (window.__gameNote && false) window.__gameNote('grass applied');
     texLoader.load(ASSETS.GRASS_NORMAL, (nrm) => {
       nrm.wrapS = nrm.wrapT = THREE.RepeatWrapping;
       nrm.repeat.set(180, 180);
@@ -2112,7 +2202,7 @@ function buildPool(x, z, scale) {
   const water = new THREE.Mesh(
     new THREE.PlaneGeometry(w - 0.15, d - 0.15),
     new THREE.MeshStandardMaterial({
-      color: 0x1670c4, roughness: 0.1, metalness: 0.15, transparent: true, opacity: 0.82,
+      color: 0x1670c4, roughness: 0.04, metalness: 0.55, transparent: true, opacity: 0.82, // roughness down / metalness up so the env map actually shows as a reflection
       emissive: 0x0b3d78, emissiveIntensity: 0.35,
     })
   );
@@ -2539,6 +2629,10 @@ function buildRoadZone() {
   const shoulderW = 30;
   grassTex.repeat.set(shoulderW / 3, d / 3);
   const grassMat = new THREE.MeshStandardMaterial({ map: grassTex, roughness: 0.95 });
+  // The shoulders build their own material, so the photoscanned ground texture never
+  // reached them — this is the flat green strip either side of the road. Register it
+  // so the swap covers these too once the texture lands.
+  shoulderGrassMats.push({ mat: grassMat, repeatX: shoulderW / 5, repeatY: d / 5 });
   [-1, 1].forEach((side) => {
     const shoulder = new THREE.Mesh(new THREE.PlaneGeometry(shoulderW, d), grassMat);
     shoulder.rotation.x = -Math.PI / 2;
@@ -2773,6 +2867,18 @@ function loadCarModel(onReady) {
     // merge step is what's causing the "morphAttributes" crash, or something in
     // the source file itself. If the car loads fine without it, the bug is here.
 
+    // Brake lights: two emissive strips at the rear rather than trying to find the
+    // model's own tail-light material, which differs per vehicle and may not exist.
+    {
+      const bl = new THREE.Mesh(
+        new THREE.BoxGeometry(1.55, 0.13, 0.06),
+        new THREE.MeshStandardMaterial({ color: 0x5a0d0d, emissive: 0xff2a1a, emissiveIntensity: 0.15 })
+      );
+      const cbox = new THREE.Box3().setFromObject(car);
+      bl.position.set(0, (cbox.max.y - cbox.min.y) * 0.42, cbox.min.z + 0.04);
+      root.add(bl);
+      brakeLightMesh = bl;
+    }
     car = root;
     addTaillights(car, targetLength); // cloned onto traffic/debtor automatically since they clone this car
     car.visible = false;
@@ -2936,7 +3042,7 @@ function updateCarDriving(dt) {
   const resolved = resolveCarCollisions(carState.x, carState.z);
   carState.x = resolved.x;
   carState.z = resolved.z;
-  if (resolved.hit) { if (Math.abs(carState.speed) > 3) playCrashSound(); carState.speed *= 0.15; carState.vx *= 0.15; carState.vz *= 0.15; } // solid impact — kill the slide vector too, or it drifts on through
+  if (resolved.hit) { if (Math.abs(carState.speed) > 3) { playCrashSound(); addShake(0.5 + speedFracForShake(carState.speed)); } carState.speed *= 0.15; carState.vx *= 0.15; carState.vz *= 0.15; } // solid impact — kill the slide vector too, or it drifts on through
 
   // Weight transfer: lean into corners, squat under power, dive under braking. The
   // car is a rigid box welded to y=0, so this is what stands in for suspension —
@@ -2955,11 +3061,127 @@ function updateCarDriving(dt) {
   // safe substitute for real motion blur (no custom shaders on the car models).
   const speedFrac = Math.min(1, Math.abs(carState.speed) / CAR_MAX_SPEED);
   updateEngineAudio(speedFrac, throttle, true);
-  if (throttle < -0.4 && carState.speed > CAR_MAX_SPEED * 0.35) playBrakeSound();
+  const isBraking = throttle < -0.4 && carState.speed > CAR_MAX_SPEED * 0.35;
+  if (isBraking) playBrakeSound();
+  updateCarLights(isBraking);
+  // Lay rubber when the car is genuinely sliding sideways or braking hard at speed.
+  if ((Math.abs(carState.slip) > 0.30 || (isBraking && speedFrac > 0.5)) && performance.now() - lastSkidAt > 55) {
+    lastSkidAt = performance.now();
+    dropSkid(carState.x, carState.z, carState.heading);
+  }
+  // Speedometer. CAR_MAX_SPEED is world units/sec, not a real speed — scaled to a
+  // plausible-looking number rather than pretending it is calibrated.
+  const speedoEl = document.getElementById('speedo');
+  if (speedoEl) {
+    speedoEl.style.display = '';
+    document.getElementById('speedo-val').textContent = Math.round(Math.abs(carState.speed) * 7.5);
+    let g = 0;
+    while (g < ENGINE_GEARS.length - 1 && speedFrac > ENGINE_GEARS[g]) g++;
+    document.getElementById('speedo-gear').textContent = carState.speed < -0.2 ? 'REVERSE' : 'GEAR ' + (g + 1);
+  }
   camera.fov = 45 + speedFrac * 16;
   camera.updateProjectionMatrix();
   document.getElementById('speed-vignette').style.opacity = Math.max(0, speedFrac - 0.25) * 0.95;
   document.getElementById('speed-lines').style.opacity = Math.max(0, speedFrac - 0.55) * 0.55; // much more subtle — was reading as cartoonish, not a speed cue
+}
+
+
+function speedFracForShake(sp) { return Math.min(0.7, Math.abs(sp) / CAR_MAX_SPEED); }
+/* ================= CAR LIGHTS, SKIDS, SHAKE ================= */
+let headlights = null, brakeLightMesh = null;
+function ensureCarLights() {
+  if (!car) return;
+  if (!headlights) {
+    // Two narrow spots parented to the car. No shadow casting — shadow-casting
+    // spotlights are one of the most expensive things you can add, and at night
+    // the pool of light on the road is the whole point, not the shadows.
+    headlights = new THREE.Group();
+    for (const side of [-0.7, 0.7]) {
+      const sp = new THREE.SpotLight(0xfff0d0, 0, 55, Math.PI / 7, 0.45, 1.2);
+      sp.position.set(side, 0.75, 2.0);
+      sp.target.position.set(side * 1.5, -0.2, 26);
+      headlights.add(sp);
+      headlights.add(sp.target);
+    }
+    car.add(headlights);
+  }
+  if (headlights.parent !== car) { headlights.parent && headlights.parent.remove(headlights); car.add(headlights); }
+}
+function updateCarLights(braking) {
+  ensureCarLights();
+  if (!headlights) return;
+  for (const c of headlights.children) {
+    if (c.isSpotLight) c.intensity = nightLightLevel * 3.2;
+  }
+  if (brakeLightMesh) {
+    brakeLightMesh.material.emissiveIntensity = braking ? 2.6 : 0.15;
+  }
+}
+
+/* Skid marks. carState.slip is already computed by the driving model and was
+   otherwise unused — when the car is sliding hard, drop a dark quad and fade it. */
+const skidMarks = [];
+const SKID_LIMIT = 40; // oldest is recycled rather than growing without bound
+let skidGeo = null, skidMat = null;
+let lastSkidAt = 0;
+function dropSkid(x, z, heading) {
+  if (!skidGeo) {
+    skidGeo = new THREE.PlaneGeometry(1.9, 0.9);
+    skidMat = new THREE.MeshBasicMaterial({ color: 0x0d0b0a, transparent: true, opacity: 0.5, depthWrite: false });
+  }
+  let m;
+  if (skidMarks.length >= SKID_LIMIT) {
+    m = skidMarks.shift();
+  } else {
+    m = new THREE.Mesh(skidGeo, skidMat.clone()); // own material so they fade independently
+    scene.add(m);
+  }
+  m.position.set(x, 0.03, z);
+  m.rotation.set(-Math.PI / 2, 0, -heading);
+  m.material.opacity = 0.5;
+  m.userData.life = 14;
+  skidMarks.push(m);
+}
+function updateSkids(dt) {
+  for (const m of skidMarks) {
+    m.userData.life -= dt;
+    m.material.opacity = Math.max(0, Math.min(0.5, m.userData.life / 14 * 0.5));
+  }
+}
+
+/* Camera shake — decaying random offset, applied to the look target. */
+let shakeAmount = 0;
+function addShake(a) { shakeAmount = Math.min(1.2, shakeAmount + a); }
+function applyShake(dt) {
+  if (shakeAmount <= 0.001) return;
+  shakeAmount *= Math.pow(0.12, dt); // fast decay
+  const k = shakeAmount * 0.35;
+  camTarget.x += (Math.random() * 2 - 1) * k;
+  camTarget.y += (Math.random() * 2 - 1) * k;
+  camTarget.z += (Math.random() * 2 - 1) * k;
+}
+
+/* Footsteps — synthesized, so no download. A short filtered noise burst timed to
+   the walk/run cadence. Walking has been silent until now. */
+let stepPhase = 0;
+function updateFootsteps(dt, moving, running) {
+  if (!ambientCtx || !soundOn || !moving) { stepPhase = 0; return; }
+  stepPhase += dt * (running ? 3.4 : 2.1); // steps per second
+  if (stepPhase < 1) return;
+  stepPhase = 0;
+  const now = ambientCtx.currentTime;
+  const n = Math.floor(ambientCtx.sampleRate * 0.09);
+  const buf = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) { const k = 1 - i / n; d[i] = (Math.random() * 2 - 1) * k * k; }
+  const src = ambientCtx.createBufferSource(); src.buffer = buf;
+  const f = ambientCtx.createBiquadFilter();
+  f.type = 'lowpass'; f.frequency.value = 900 + Math.random() * 400;
+  const g = ambientCtx.createGain();
+  g.gain.setValueAtTime(running ? 0.10 : 0.06, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+  src.connect(f); f.connect(g); g.connect(ambientCtx.destination);
+  src.start(now);
 }
 
 function laneX(index) {
@@ -3314,7 +3536,8 @@ function stopChaseAudio() {
 
 function exitDriveMode() {
   drivingMode = false;
-  updateEngineAudio(0, 0, false); // fade the engine out on foot rather than leaving it idling
+  updateEngineAudio(0, 0, false);
+  { const el = document.getElementById('speedo'); if (el) el.style.display = 'none'; } // fade the engine out on foot rather than leaving it idling
   if (car && car.userData.garageCar) {
     // Park the classic back on its pad instead of hiding it
     const gc = garageCars.find((g) => g.group === car);
@@ -4477,6 +4700,10 @@ window.addEventListener('resize', () => {
 const clock = new THREE.Clock();
 function tick() {
   const dt = Math.min(clock.getDelta(), 0.05);
+  updateDayNight(dt);
+  updateSkids(dt);
+  applyShake(dt);
+  if (!drivingMode) updateFootsteps(dt, LOCOMOTION.has(currentActionName), currentActionName === 'Running');
   if (drivingMode) {
     updateCarDriving(dt);
   } else {
