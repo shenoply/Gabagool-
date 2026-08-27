@@ -333,6 +333,7 @@
     <div><span id="speedo-val" style="font-size:22px;color:var(--accent);">0</span> <span style="font-size:10px;">MPH</span></div>
     <div id="speedo-gear" style="margin-top:2px;opacity:0.75;">GEAR 1</div>
   </div>
+  <div id="game-clock" style="position:fixed;left:12px;top:62px;z-index:12;font:700 12px/1 ui-monospace,Menlo,Consolas,monospace;color:var(--text-dim);background:var(--panel);border:1px solid var(--panel-border);border-radius:999px;padding:7px 12px;backdrop-filter:blur(6px);">12:00 AM</div>
   <div id="status-panel">
     <div class="row"><span class="lbl">Status</span><span class="state-text" id="state-text">Searching</span></div>
     <div class="row" style="flex-direction: column; align-items: stretch;">
@@ -3131,7 +3132,8 @@ function updateCarDriving(dt) {
   updateReverseLight();
   updateRoadNoise(Math.min(1, Math.abs(carState.speed) / CAR_MAX_SPEED), !!carState.offRoad);
   // Lay rubber when the car is genuinely sliding sideways or braking hard at speed.
-  if ((Math.abs(carState.slip) > 0.30 || (isBraking && speedFrac > 0.5)) && performance.now() - lastSkidAt > 55) {
+  const wheelspin = throttle > 0.75 && speedFrac < 0.22; // hard on the power from near standstill
+  if ((Math.abs(carState.slip) > 0.30 || wheelspin || (isBraking && speedFrac > 0.5)) && performance.now() - lastSkidAt > 55) {
     lastSkidAt = performance.now();
     dropSkid(carState.x, carState.z, carState.heading, carState.offRoad);
   }
@@ -3179,8 +3181,10 @@ function ensureCarLights() {
 function updateCarLights(braking) {
   ensureCarLights();
   if (!headlights) return;
+  const flashing = performance.now() < hornFlashUntil;
   for (const c of headlights.children) {
-    if (c.isSpotLight) c.intensity = nightLightLevel * 3.2;
+    // the flash works in daylight too, when the night level alone would leave them off
+    if (c.isSpotLight) c.intensity = flashing ? 5.5 : nightLightLevel * 3.2;
   }
   if (brakeLightMesh) {
     brakeLightMesh.material.emissiveIntensity = braking ? 2.6 : 0.15;
@@ -3490,6 +3494,7 @@ function playHorn() {
   if (now - lastHornAt < 700) return;
   lastHornAt = now;
   playCarOneShot(ASSETS.CAR_HORN, 0.45);
+  flashHeadlights();
 }
 
 /* 2. Reversing lights — same trick as the brake strip, white, on negative speed. */
@@ -3757,6 +3762,85 @@ function updatePuddles() {
   const m = puddleGroup.userData.mat;
   m.opacity = Math.max(0, rainWet - 0.25) * 1.1; // lag behind the rain, then linger
   puddleGroup.visible = m.opacity > 0.02;
+}
+
+/* ================= ENGINE START/STOP, CLOCK, LIGHT FLASH, BIRD SCATTER ================= */
+
+/* Engine crank and shutdown. Reuses the rev loop already in memory rather than
+   adding files: pitched right down it reads as a starter turning over, and a short
+   descending pass reads as switching off. */
+function playEngineCrank(up) {
+  if (!ambientCtx || !sfxOn || !engineNodes) return;
+  try {
+    const el = new Audio(ASSETS.ENGINE_REV);
+    el.volume = 0.5;
+    el.playbackRate = up ? 0.62 : 0.5;
+    el.play().catch(() => {});
+    if (up) {
+      // brief rise as it catches
+      let r = 0.62;
+      const iv = setInterval(() => {
+        r += 0.06;
+        if (r >= 1.05) { clearInterval(iv); el.pause(); return; }
+        try { el.playbackRate = r; } catch (e) { clearInterval(iv); }
+      }, 70);
+    } else {
+      let r = 0.5;
+      const iv = setInterval(() => {
+        r -= 0.05;
+        if (r <= 0.25) { clearInterval(iv); el.pause(); return; }
+        try { el.playbackRate = r; el.volume = Math.max(0, el.volume - 0.06); } catch (e) { clearInterval(iv); }
+      }, 80);
+    }
+  } catch (e) { /* non-fatal */ }
+}
+
+/* Headlight flash on the horn — one of those details that reads as care. */
+let hornFlashUntil = 0;
+function flashHeadlights() { hornFlashUntil = performance.now() + 380; }
+
+/* In-game clock. The day/night cycle has always known the hour but never showed it,
+   so the world just "got dark" for no visible reason. dayTime 0 is midnight. */
+function updateClock() {
+  const el = document.getElementById('game-clock');
+  if (!el) return;
+  const mins = Math.floor(dayTime * 24 * 60);
+  const h = Math.floor(mins / 60), m = mins % 60;
+  const h12 = ((h + 11) % 12) + 1;
+  el.textContent = h12 + ':' + String(m).padStart(2, '0') + (h < 12 ? ' AM' : ' PM');
+}
+
+/* Birds scatter when the car comes near — a flap burst instead of a chirp, and the
+   chirping goes quiet for a while afterwards. */
+let birdScatterCooldown = 0;
+function playBirdFlap() {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  for (let i = 0; i < 7; i++) {
+    const t = now + i * (0.055 + Math.random() * 0.04);
+    const n = Math.floor(ambientCtx.sampleRate * 0.07);
+    const b = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+    const d = b.getChannelData(0);
+    for (let k = 0; k < n; k++) { const f = 1 - k / n; d[k] = (Math.random() * 2 - 1) * f * f; }
+    const src = ambientCtx.createBufferSource(); src.buffer = b;
+    const bp = ambientCtx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = 380 + Math.random() * 260; bp.Q.value = 1.1;
+    const g = ambientCtx.createGain();
+    g.gain.setValueAtTime(0.075, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+    src.connect(bp); bp.connect(g); g.connect(ambientCtx.destination);
+    src.start(t);
+  }
+}
+function updateBirdScatter(dt) {
+  if (birdScatterCooldown > 0) birdScatterCooldown -= dt;
+  if (!drivingMode || birdScatterCooldown > 0) return;
+  // only when moving with some pace, and only near the yard where the birds are
+  if (Math.abs(carState.speed) < CAR_MAX_SPEED * 0.35) return;
+  if (Math.hypot(carState.x, carState.z) > 70) return;
+  birdScatterCooldown = 12 + Math.random() * 14;
+  birdTimer = 9 + Math.random() * 8; // chirping stays quiet after they clear out
+  playBirdFlap();
 }
 
 function laneX(index) {
@@ -5086,6 +5170,7 @@ function updateEngineAudio(speedFrac, throttle, driving) {
       engineNodes.idle.el.pause();
       engineNodes.rev.el.pause();
       engineNodes.started = false;
+      playEngineCrank(false);
     }
     return;
   }
@@ -5096,6 +5181,7 @@ function updateEngineAudio(speedFrac, throttle, driving) {
     engineNodes.idle.el.play().catch(() => {});
     engineNodes.rev.el.play().catch(() => {});
     engineNodes.started = true;
+    playEngineCrank(true);
   }
 
   // Fake gearbox so revs climb and drop on each shift rather than sweeping once.
@@ -5361,6 +5447,8 @@ function tick() {
   updateThunder(dt);
   updatePuddles();
   updateContactShadow();
+  updateClock();
+  updateBirdScatter(dt);
   if (!drivingMode) updateDuckBehaviour(dt);
   { const sh = dustMesh && dustMesh.material.userData.shader; if (sh) sh.uniforms.uTime.value = clock.elapsedTime; }
   applyShake(dt);
