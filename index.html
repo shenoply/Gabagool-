@@ -453,6 +453,9 @@ const ASSETS = {
   BG_AUDIO_2: 'bg2.m4a',
   GEORGE_CAR: 'george_car.glb',
   GEORGE_SONG: 'george_song.m4a',
+  GARAGE_E50: 'mercedes_e50.glb',
+  GARAGE_W201: 'mercedes_w201.glb',
+  GARAGE_PONY: 'hyundai_pony.glb',
 };
 
 // Fetch an asset as an ArrayBuffer and hand it to cb — same shape the old
@@ -872,6 +875,106 @@ document.getElementById('phone-decline-btn').addEventListener('click', () => {
   showMissionPopup('📵', 'Declined', 'The Boss will call back.', 2500);
   scheduleNextPhoneRing(120 + Math.random() * 60);
 });
+
+/* ================= THE GARAGE — three classics you can actually drive =================
+   A parking pad by the road edge with three cars. Walk up to any of them and
+   take it for a spin — it becomes the active drive-mode vehicle, and returns
+   to its spot when you get out. The Escalade stays the default for phone jobs
+   started on foot. */
+const GARAGE_DEFS = [
+  { key: 'e50',  file: ASSETS.GARAGE_E50,  name: 'Mercedes E50 AMG', slotZ: -4.5 },
+  { key: 'w201', file: ASSETS.GARAGE_W201, name: 'Mercedes 190E',    slotZ: -9 },
+  { key: 'pony', file: ASSETS.GARAGE_PONY, name: 'Hyundai Pony',     slotZ: -13.5 },
+];
+const GARAGE_X = 11.5;
+const garageCars = []; // { group, name, home: {x,z,rotY}, dismissedUntilAway }
+let garageDialogFor = null;
+
+function buildGaragePad() {
+  const pad = new THREE.Mesh(
+    new THREE.PlaneGeometry(9, 14),
+    new THREE.MeshStandardMaterial({ color: 0x232126, roughness: 0.95 })
+  );
+  pad.rotation.x = -Math.PI / 2;
+  pad.position.set(GARAGE_X, 0.02, -9);
+  pad.receiveShadow = true;
+  scene.add(pad);
+}
+
+function normalizeVehicle(rawScene, targetLen) {
+  // Wrap in a group the game can move freely; inside, scale to a real-car
+  // length, center on X/Z, and sit the wheels on y=0.
+  const group = new THREE.Group();
+  group.add(rawScene);
+  let box = new THREE.Box3().setFromObject(rawScene);
+  const len = box.max.z - box.min.z;
+  const s = targetLen / Math.max(0.001, len);
+  rawScene.scale.setScalar(s);
+  box = new THREE.Box3().setFromObject(rawScene);
+  rawScene.position.x -= (box.min.x + box.max.x) / 2;
+  rawScene.position.z -= (box.min.z + box.max.z) / 2;
+  rawScene.position.y -= box.min.y;
+  return group;
+}
+
+function loadGarageCars() {
+  buildGaragePad();
+  GARAGE_DEFS.forEach((def) => {
+    const loader = new GLTFLoader();
+    loader.parse(def.file, '', (gltf) => {
+      const raw = gltf.scene;
+      raw.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
+      const group = normalizeVehicle(raw, 4.55);
+      const home = { x: GARAGE_X, z: def.slotZ, rotY: Math.PI / 2 }; // noses toward the road
+      group.position.set(home.x, 0, home.z);
+      group.rotation.y = home.rotY;
+      group.userData.garageCar = true;
+      scene.add(group);
+      garageCars.push({ group, name: def.name, home, dismissedUntilAway: false });
+    }, (err) => {
+      console.warn('Garage car failed to load (non-fatal):', def.name, err);
+    });
+  });
+}
+
+const garageDialog = document.createElement('div');
+garageDialog.id = 'garage-dialog';
+garageDialog.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:70;background:var(--panel);border:1px solid var(--accent-dim);border-radius:16px;padding:18px 22px;max-width:86vw;backdrop-filter:blur(8px);box-shadow:0 12px 32px rgba(0,0,0,0.55);display:none;';
+garageDialog.innerHTML =
+  '<div id="garage-dialog-name" style="font-size:14px;font-weight:800;color:var(--accent);margin-bottom:12px;"></div>' +
+  '<div style="display:flex;gap:10px;">' +
+  '<button id="garage-drive-btn" style="flex:1;background:var(--accent);border:none;border-radius:10px;padding:10px 14px;font-weight:800;font-size:13px;color:#1a1208;">🚗 Take it for a spin</button>' +
+  '<button id="garage-later-btn" style="flex:1;background:transparent;border:1px solid var(--accent-dim);border-radius:10px;padding:10px 14px;font-weight:700;font-size:13px;color:var(--text);">Not now</button>' +
+  '</div>';
+document.body.appendChild(garageDialog);
+
+function closeGarageDialog() {
+  if (garageDialogFor) garageDialogFor.dismissedUntilAway = true;
+  garageDialogFor = null;
+  garageDialog.style.display = 'none';
+}
+document.getElementById('garage-later-btn').addEventListener('click', closeGarageDialog);
+document.getElementById('garage-drive-btn').addEventListener('click', () => {
+  const chosen = garageDialogFor;
+  closeGarageDialog();
+  if (!chosen) return;
+  driveToggle.classList.add('on');
+  enterDriveMode(false, chosen.group);
+});
+
+function updateGarageProximity() {
+  if (!character || drivingMode || georgeDialogOpen || phoneRingPopupOpen) return;
+  for (const gc of garageCars) {
+    const d = Math.hypot(character.position.x - gc.home.x, character.position.z - gc.home.z);
+    if (d > 6) gc.dismissedUntilAway = false;
+    if (d < 3.4 && !garageDialogFor && !gc.dismissedUntilAway) {
+      garageDialogFor = gc;
+      document.getElementById('garage-dialog-name').textContent = '🔑 ' + gc.name;
+      garageDialog.style.display = 'block';
+    }
+  }
+}
+
 function updatePhoneRinger() {
   if (phoneRingPopupOpen || missionState !== 'none' || !audioUnlocked) return;
   if (gameState === 'passedout' || georgeDialogOpen) return;
@@ -2814,9 +2917,9 @@ function resolveCarCollisions(nextX, nextZ) {
   return { x: nextX, z: nextZ, hit: false };
 }
 
-function enterDriveMode(withMission) {
+function enterDriveMode(withMission, overrideCar) {
   enterDriveMode._withMission = !!withMission;
-  loadCarModel(() => {
+  const proceed = () => {
     loadTrafficPack(() => {
       if (!roadZoneBuilt) { buildRoadZone(); roadZoneBuilt = true; }
       if (roadGabagools.length === 0) { spawnRoadGabagool(); spawnRoadGabagool(); }
@@ -2841,7 +2944,18 @@ function enterDriveMode(withMission) {
         startDebtMission();
       }
     });
-  });
+  };
+  if (overrideCar) {
+    // Driving a garage classic: it becomes the active vehicle. Remember the
+    // Escalade (if loaded) so getting out restores it as the default.
+    if (car && !car.userData.garageCar) enterDriveMode._escaladeRef = car;
+    if (car && car !== overrideCar) car.visible = false;
+    car = overrideCar;
+    proceed();
+  } else {
+    if (enterDriveMode._escaladeRef && car && car.userData.garageCar) car = enterDriveMode._escaladeRef;
+    loadCarModel(proceed);
+  }
 }
 
 function startChaseAudio() {
@@ -2880,7 +2994,18 @@ function stopChaseAudio() {
 
 function exitDriveMode() {
   drivingMode = false;
-  if (car) car.visible = false;
+  if (car && car.userData.garageCar) {
+    // Park the classic back on its pad instead of hiding it
+    const gc = garageCars.find((g) => g.group === car);
+    if (gc) {
+      car.position.set(gc.home.x, 0, gc.home.z);
+      car.rotation.y = gc.home.rotY;
+      gc.dismissedUntilAway = true; // don't instantly reopen the dialog standing beside it
+    }
+    if (enterDriveMode._escaladeRef) car = enterDriveMode._escaladeRef;
+  } else if (car) {
+    car.visible = false;
+  }
   document.getElementById('status-panel').style.display = '';
   if (character) {
     character.visible = true;
@@ -3153,6 +3278,7 @@ function maybeFinishLoading() {
   if (!maybeFinishLoading._georgeStarted) {
     maybeFinishLoading._georgeStarted = true;
     loadGeorgeCar();
+    loadGarageCars();
     // Build the road immediately too — it used to exist only after the first
     // Drive toggle, which is why it was never visible from the house on foot.
     if (!roadZoneBuilt) { buildRoadZone(); roadZoneBuilt = true; }
@@ -3832,6 +3958,7 @@ function tick() {
   updateClouds(dt);
   updateGeorgeProximity();
   updatePhoneRinger();
+  updateGarageProximity();
   if (georgeSongActive) {
     const gd = character ? Math.hypot(character.position.x - GEORGE_POS.x, character.position.z - GEORGE_POS.z) : 0;
     if (drivingMode || gd > 12) stopGeorgeSong(); // drive off or walk away — George stops singing
