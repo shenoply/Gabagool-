@@ -329,7 +329,7 @@
 
   <div id="hint">Joystick or keys to move · Drag to orbit · Pinch/±/scroll to zoom · Tap ground to drop gabagool</div>
 
-  <div id="speedo" style="position:fixed;right:12px;bottom:calc(96px + env(safe-area-inset-bottom,0px));z-index:12;display:none;text-align:right;font:700 11px/1.1 ui-monospace,Menlo,Consolas,monospace;color:var(--text-dim);background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:8px 12px;backdrop-filter:blur(6px);">
+  <div id="speedo" style="position:fixed;right:12px;top:62px;z-index:12;display:none;text-align:right;font:700 11px/1.1 ui-monospace,Menlo,Consolas,monospace;color:var(--text-dim);background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:8px 12px;backdrop-filter:blur(6px);">
     <div><span id="speedo-val" style="font-size:22px;color:var(--accent);">0</span> <span style="font-size:10px;">MPH</span></div>
     <div id="speedo-gear" style="margin-top:2px;opacity:0.75;">GEAR 1</div>
   </div>
@@ -393,6 +393,14 @@
     </button>
     <button id="zoom-in">+</button>
     <button id="zoom-out">−</button>
+    <button id="horn-btn" title="Horn" style="display:none;">📢</button>
+    <button id="photo-btn" title="Photo mode">📷</button>
+  </div>
+
+  <div id="radio" style="position:fixed;left:50%;transform:translateX(-50%);top:62px;z-index:12;display:none;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--panel-border);border-radius:999px;padding:6px 10px;backdrop-filter:blur(6px);">
+    <button id="radio-prev" style="background:none;border:none;color:var(--text-dim);font-size:14px;padding:2px 6px;">◀</button>
+    <span id="radio-name" style="font:700 11px/1 -apple-system,sans-serif;color:var(--accent);min-width:96px;text-align:center;">RADIO</span>
+    <button id="radio-next" style="background:none;border:none;color:var(--text-dim);font-size:14px;padding:2px 6px;">▶</button>
   </div>
 
   <audio id="bg-audio" loop preload="auto"></audio>
@@ -464,6 +472,7 @@ const ASSETS = {
   ENGINE_REV: 'engine_rev.mp3',
   CAR_BRAKE: 'car_brake.mp3',
   CAR_CRASH: 'car_crash.mp3',
+  CAR_HORN: 'car_horn.mp3',
   GRASS_COLOR: 'grass_color.webp',   // photoscanned ground grass, 1024 — replaces the procedural canvas texture
   GRASS_NORMAL: 'grass_normal.webp', // 512 is plenty for a normal map at this viewing distance
   FOREST_NEAR: 'pine_near.glb', // pine patch, 47,920 verts, ~51 x 46 units — cloned across the map
@@ -709,6 +718,7 @@ function createSkyEquirect(pal) {
     }
   }
 
+  paintStars(ctx, w, h, (typeof nightLightLevel !== 'undefined') ? nightLightLevel : 0);
   const tex = new THREE.CanvasTexture(c);
   tex.mapping = THREE.EquirectangularReflectionMapping;
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -822,6 +832,7 @@ function createEnvEquirect() {
   ctx.fillStyle = sun;
   ctx.fillRect(0, 0, w, h);
 
+  paintStars(ctx, w, h, (typeof nightLightLevel !== 'undefined') ? nightLightLevel : 0);
   const tex = new THREE.CanvasTexture(c);
   tex.mapping = THREE.EquirectangularReflectionMapping;
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -3086,6 +3097,7 @@ function updateCarDriving(dt) {
   const isBraking = throttle < -0.4 && carState.speed > CAR_MAX_SPEED * 0.35;
   if (isBraking) playBrakeSound();
   updateCarLights(isBraking);
+  updateReverseLight();
   // Lay rubber when the car is genuinely sliding sideways or braking hard at speed.
   if ((Math.abs(carState.slip) > 0.30 || (isBraking && speedFrac > 0.5)) && performance.now() - lastSkidAt > 55) {
     lastSkidAt = performance.now();
@@ -3323,6 +3335,234 @@ function buildTallGrass() {
 function updateTallGrass(t) {
   const sh = tallGrassMesh && tallGrassMesh.material.userData.shader;
   if (sh) sh.uniforms.uTime.value = t;
+}
+
+/* ================= WEATHER, SKY DETAIL, PARTICLES ================= */
+
+/* 5. Dust / pollen drifting in the light. One InstancedMesh of tiny quads, moved on
+   the GPU by a time uniform — no per-particle CPU work at all. */
+let dustMesh = null;
+function buildDust() {
+  const COUNT = 420;
+  const g = new THREE.PlaneGeometry(0.055, 0.055);
+  const m = new THREE.MeshBasicMaterial({ color: 0xffe6c0, transparent: true, opacity: 0.42, depthWrite: false });
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uTime = { value: 0 };
+    sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+      `#include <begin_vertex>
+       float ph = instanceMatrix[3][0] + instanceMatrix[3][2];
+       transformed.x += sin(uTime * 0.35 + ph) * 0.9;
+       transformed.y += sin(uTime * 0.22 + ph * 1.7) * 0.55;
+       transformed.z += cos(uTime * 0.3 + ph * 0.8) * 0.9;`);
+    m.userData.shader = sh;
+  };
+  dustMesh = new THREE.InstancedMesh(g, m, COUNT);
+  const mx = new THREE.Matrix4(), v = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(1,1,1);
+  for (let i = 0; i < COUNT; i++) {
+    v.set((Math.random()*2-1)*45, 0.4 + Math.random()*7, (Math.random()*2-1)*45);
+    mx.compose(v, q, sc);
+    dustMesh.setMatrixAt(i, mx);
+  }
+  dustMesh.instanceMatrix.needsUpdate = true;
+  dustMesh.frustumCulled = false;
+  scene.add(dustMesh);
+}
+
+/* 6. Stars. Painted into the sky canvas, so they cost nothing and are correctly
+   placed in world space like the rest of the sky. Density follows nightLightLevel. */
+function paintStars(ctx, w, h, amount) {
+  if (amount <= 0.01) return;
+  const n = Math.floor(320 * amount);
+  for (let i = 0; i < n; i++) {
+    const x = Math.random() * w;
+    const y = Math.random() * h * 0.46; // above the horizon only
+    const r = Math.random() < 0.9 ? 0.6 : 1.3;
+    ctx.fillStyle = `rgba(255,252,240,${(0.25 + Math.random() * 0.6) * amount})`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+/* 7. Rain. Instanced streaks falling in a column that follows the camera, plus a
+   roughness drop on the ground so the world looks wet. Toggles itself on and off
+   on a slow random schedule. */
+let rainMesh = null, rainOn = false, rainTimer = 90 + Math.random() * 180, rainWet = 0;
+function buildRain() {
+  const COUNT = 900;
+  const g = new THREE.PlaneGeometry(0.015, 0.75);
+  const m = new THREE.MeshBasicMaterial({ color: 0xbcd4e6, transparent: true, opacity: 0.34, depthWrite: false });
+  rainMesh = new THREE.InstancedMesh(g, m, COUNT);
+  rainMesh.frustumCulled = false;
+  rainMesh.visible = false;
+  const mx = new THREE.Matrix4(), v = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(1,1,1);
+  rainMesh.userData.drops = [];
+  for (let i = 0; i < COUNT; i++) {
+    const d = { x: (Math.random()*2-1)*26, y: Math.random()*22, z: (Math.random()*2-1)*26, s: 16 + Math.random()*10 };
+    rainMesh.userData.drops.push(d);
+    v.set(d.x, d.y, d.z); mx.compose(v, q, sc); rainMesh.setMatrixAt(i, mx);
+  }
+  scene.add(rainMesh);
+}
+function updateRain(dt) {
+  if (!rainMesh) return;
+  rainTimer -= dt;
+  if (rainTimer <= 0) {
+    rainOn = !rainOn;
+    rainTimer = rainOn ? 45 + Math.random() * 70 : 120 + Math.random() * 240;
+  }
+  rainWet += ((rainOn ? 1 : 0) - rainWet) * Math.min(1, dt * 0.25); // wetness lags the rain
+  rainMesh.visible = rainWet > 0.02;
+  groundMat.roughness = 0.95 - rainWet * 0.55;
+  groundMat.metalness = rainWet * 0.25;
+  if (!rainMesh.visible) return;
+  rainMesh.material.opacity = 0.34 * Math.min(1, rainWet * 1.4);
+  const cx = camTarget.x, cz = camTarget.z;
+  const mx = new THREE.Matrix4(), v = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(1,1,1);
+  const drops = rainMesh.userData.drops;
+  for (let i = 0; i < drops.length; i++) {
+    const d = drops[i];
+    d.y -= d.s * dt;
+    if (d.y < 0) { d.y = 20 + Math.random() * 6; d.x = (Math.random()*2-1)*26; d.z = (Math.random()*2-1)*26; }
+    v.set(cx + d.x, d.y, cz + d.z);
+    mx.compose(v, q, sc);
+    rainMesh.setMatrixAt(i, mx);
+  }
+  rainMesh.instanceMatrix.needsUpdate = true;
+}
+
+/* 8. Duck behaviour. They circled on fixed rails; now they wander, and scatter away
+   from the player when he gets close — faster if he's running. */
+function updateDuckBehaviour(dt) {
+  if (!character || typeof allDucks === 'undefined') return;
+  const px = character.position.x, pz = character.position.z;
+  for (const d of allDucks) {
+    if (d.wanderT === undefined) { d.wanderT = Math.random() * 3; d.flee = 0; }
+    const dx = d.mesh.position.x - px, dz = d.mesh.position.z - pz;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 3.2) {
+      d.flee = Math.min(1, d.flee + dt * 2.5);
+      d.phase += dt * d.speed * (1 + d.flee * 3.5); // paddle away faster
+    } else {
+      d.flee = Math.max(0, d.flee - dt * 0.8);
+      d.wanderT -= dt;
+      if (d.wanderT <= 0) { d.wanderT = 2 + Math.random() * 4; d.speed = 0.25 + Math.random() * 0.5; }
+    }
+  }
+}
+
+/* ================= HORN, REVERSE LIGHTS, RADIO, PHOTO MODE, SAVE ================= */
+
+/* 1. Horn — car_horn.mp3 was uploaded but never wired to anything. */
+let lastHornAt = 0;
+function playHorn() {
+  const now = performance.now();
+  if (now - lastHornAt < 700) return;
+  lastHornAt = now;
+  playCarOneShot(ASSETS.CAR_HORN, 0.45);
+}
+
+/* 2. Reversing lights — same trick as the brake strip, white, on negative speed. */
+let reverseLightMesh = null;
+function ensureReverseLight() {
+  if (reverseLightMesh || !car || !brakeLightMesh) return;
+  const rl = new THREE.Mesh(
+    new THREE.BoxGeometry(0.6, 0.1, 0.05),
+    new THREE.MeshStandardMaterial({ color: 0x3a3a3a, emissive: 0xffffff, emissiveIntensity: 0 })
+  );
+  rl.position.copy(brakeLightMesh.position);
+  rl.position.y -= 0.16;
+  brakeLightMesh.parent.add(rl);
+  reverseLightMesh = rl;
+}
+function updateReverseLight() {
+  ensureReverseLight();
+  if (reverseLightMesh) reverseLightMesh.material.emissiveIntensity = carState.speed < -0.4 ? 2.2 : 0;
+}
+
+/* 3. Radio — local tracks for now, cycled with a burst of static between stations.
+   Live internet streams are the eventual plan; those need HTTPS-only station URLs
+   and must stay off the Web Audio graph to avoid CORS tainting, so they are a
+   separate job. This is the shell they will slot into. */
+const RADIO_STATIONS = [
+  { name: 'WGAB 101.7', src: null },   // filled from BG_TRACKS below
+  { name: 'THE POCKET', src: null },
+  { name: 'GEORGE FM', src: null },
+];
+let radioIndex = 0, radioActive = false;
+function playStatic() {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  const n = Math.floor(ambientCtx.sampleRate * 0.28);
+  const b = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) { const k = 1 - i / n; d[i] = (Math.random() * 2 - 1) * k * 0.8; }
+  const src = ambientCtx.createBufferSource(); src.buffer = b;
+  const f = ambientCtx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1800; f.Q.value = 0.7;
+  const g = ambientCtx.createGain();
+  g.gain.setValueAtTime(0.16, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+  src.connect(f); f.connect(g); g.connect(ambientCtx.destination);
+  src.start(now);
+}
+function setRadioStation(i) {
+  radioIndex = (i + RADIO_STATIONS.length) % RADIO_STATIONS.length;
+  const st = RADIO_STATIONS[radioIndex];
+  document.getElementById('radio-name').textContent = st.name;
+  playStatic();
+  if (bgAudio && st.src) {
+    const wasOn = soundOn;
+    bgAudio.src = st.src;
+    if (wasOn) setTimeout(() => bgAudio.play().catch(() => {}), 260); // let the static land first
+  }
+}
+function showRadio(show) {
+  const el = document.getElementById('radio');
+  if (el) el.style.display = show ? 'flex' : 'none';
+  radioActive = show;
+}
+
+/* 9. Photo mode — hide the interface, free the camera, tap anywhere to leave. */
+let photoMode = false;
+function togglePhotoMode() {
+  photoMode = !photoMode;
+  const hide = ['topbar','anim-panel','joystick-zone','run-toggle','autohunt-toggle','drive-toggle','status-panel','speedo','radio','hint','zoom-controls'];
+  for (const id of hide) {
+    const el = document.getElementById(id);
+    if (el) el.style.visibility = photoMode ? 'hidden' : '';
+  }
+  const tip = document.getElementById('photo-tip');
+  if (photoMode) {
+    const t = document.createElement('div');
+    t.id = 'photo-tip';
+    t.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;color:#fff;opacity:0.55;font:600 12px sans-serif;pointer-events:none;text-shadow:0 1px 4px #000;';
+    t.textContent = 'photo mode — double-tap to exit';
+    document.body.appendChild(t);
+  } else if (tip) {
+    tip.remove();
+  }
+}
+
+/* 10. Persistence. Small enough to keep in localStorage, and only things worth
+   restoring — not positions, which would be confusing to reload into. */
+const SAVE_KEY = 'gabagool_save_v1';
+function saveGameState() {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      debts: (typeof debtsCollected !== 'undefined') ? debtsCollected : 0,
+      dayTime: dayTime,
+      audioMode: audioMode,
+      track: (typeof currentTrack !== 'undefined') ? currentTrack : 0,
+    }));
+  } catch (e) { /* private mode or quota — not worth surfacing */ }
+}
+function loadGameState() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (typeof d.dayTime === 'number') dayTime = d.dayTime;   // resume at the hour you left
+    if (typeof d.debts === 'number') debtsCollected = d.debts;
+    if (typeof d.audioMode === 'number') { audioMode = d.audioMode; soundOn = audioMode === 0; sfxOn = audioMode !== 2; }
+  } catch (e) { /* ignore corrupt saves rather than blocking startup */ }
 }
 
 function laneX(index) {
@@ -3629,6 +3869,8 @@ function enterDriveMode(withMission, overrideCar) {
       car.visible = true;
       drivingMode = true;
       document.getElementById('status-panel').style.display = 'none'; // blocks too much screen while driving
+      document.getElementById('horn-btn').style.display = '';
+      showRadio(true);
       // Missions no longer auto-start with driving — free cruising is the default.
       // A mission begins only by answering the phone (see the global ringer), which
       // passes withMission=true here or starts the chase directly if already driving.
@@ -3711,6 +3953,8 @@ function exitDriveMode() {
   const sideZ = exitZ - Math.sin(exitHeading) * 2.4;
   savedCharacterPos = new THREE.Vector3(sideX, 0, sideZ);
   document.getElementById('status-panel').style.display = '';
+  document.getElementById('horn-btn').style.display = 'none';
+  showRadio(false);
   if (character) {
     character.visible = true;
     if (savedCharacterPos) character.position.copy(savedCharacterPos);
@@ -4035,6 +4279,7 @@ function endLoad(name) {
     setTimeout(applyGroundGrassTexture, 1500);
     setTimeout(loadForest, 4000);
     setTimeout(() => { try { buildTallGrass(); } catch (e) { console.warn('tall grass failed:', e); } }, 5200);
+    setTimeout(() => { try { buildDust(); buildRain(); } catch (e) { console.warn('weather failed:', e); } }, 6200);
     setTimeout(() => { if (window.__reportGPU) window.__reportGPU(); }, 9000); // one-shot resource report once scenery has settled
   }
 }
@@ -4485,6 +4730,31 @@ soundToggle.addEventListener('click', () => {
   }
   updateSoundUI();
 });
+// ---- wiring for horn, photo mode, radio and save (added late so bgAudio, car and
+// the audio flags above are all already defined) ----
+RADIO_STATIONS[0].src = BG_TRACKS[0];
+RADIO_STATIONS[1].src = BG_TRACKS[1];
+RADIO_STATIONS[2].src = ASSETS.GEORGE_SONG;
+
+document.getElementById('horn-btn').addEventListener('click', (e) => { e.stopPropagation(); playHorn(); });
+document.getElementById('radio-prev').addEventListener('click', (e) => { e.stopPropagation(); setRadioStation(radioIndex - 1); });
+document.getElementById('radio-next').addEventListener('click', (e) => { e.stopPropagation(); setRadioStation(radioIndex + 1); });
+
+const photoBtn = document.getElementById('photo-btn');
+photoBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePhotoMode(); });
+// Photo mode hides its own button, so it needs its own way out.
+let lastTapAt = 0;
+window.addEventListener('pointerdown', () => {
+  if (!photoMode) return;
+  const now = performance.now();
+  if (now - lastTapAt < 320) togglePhotoMode();
+  lastTapAt = now;
+});
+
+loadGameState();
+setInterval(saveGameState, 15000);       // periodic, so a crash loses at most 15s
+window.addEventListener('pagehide', saveGameState);
+
 function updateSoundUI() {
   // Icon shows sound-on for modes 0 and 1; only full silence shows the muted icon.
   const anyAudio = audioMode !== 2;
@@ -4892,6 +5162,9 @@ function tick() {
   updateDayNight(dt);
   updateSkids(dt);
   updateTallGrass(clock.elapsedTime);
+  updateRain(dt);
+  if (!drivingMode) updateDuckBehaviour(dt);
+  { const sh = dustMesh && dustMesh.material.userData.shader; if (sh) sh.uniforms.uTime.value = clock.elapsedTime; }
   applyShake(dt);
   if (!drivingMode) updateFootsteps(dt, LOCOMOTION.has(currentActionName), currentActionName === 'Running');
   if (drivingMode) {
