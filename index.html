@@ -646,6 +646,12 @@ renderer.toneMappingExposure = 1.05;
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
+// Declared up here deliberately. It was a `let` further down, but createSkyEquirect()
+// runs at module top level and reads it — and `typeof` does NOT protect a let in its
+// temporal dead zone, it throws. That killed module execution at the sky line, so
+// everything defined below it (day/night, rain, stars, ducks, photo mode, save)
+// never existed at all.
+let nightLightLevel = 0;
 
 /* The sky was an 8x256 canvas assigned straight to scene.background. Three renders
    a non-equirect texture as a full-screen quad, so the gradient was locked to SCREEN
@@ -718,7 +724,7 @@ function createSkyEquirect(pal) {
     }
   }
 
-  paintStars(ctx, w, h, (typeof nightLightLevel !== 'undefined') ? nightLightLevel : 0);
+  paintStars(ctx, w, h, nightLightLevel);
   const tex = new THREE.CanvasTexture(c);
   tex.mapping = THREE.EquirectangularReflectionMapping;
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -791,7 +797,6 @@ function updateDayNight(dt) {
     if (old && old.dispose) old.dispose(); // don't leak a texture every repaint
   }
 }
-let nightLightLevel = 0;
 
 scene.fog = new THREE.Fog(0xc9784a, 120, 420); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
@@ -832,7 +837,7 @@ function createEnvEquirect() {
   ctx.fillStyle = sun;
   ctx.fillRect(0, 0, w, h);
 
-  paintStars(ctx, w, h, (typeof nightLightLevel !== 'undefined') ? nightLightLevel : 0);
+  paintStars(ctx, w, h, nightLightLevel);
   const tex = new THREE.CanvasTexture(c);
   tex.mapping = THREE.EquirectangularReflectionMapping;
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -3385,7 +3390,7 @@ function paintStars(ctx, w, h, amount) {
 /* 7. Rain. Instanced streaks falling in a column that follows the camera, plus a
    roughness drop on the ground so the world looks wet. Toggles itself on and off
    on a slow random schedule. */
-let rainMesh = null, rainOn = false, rainTimer = 90 + Math.random() * 180, rainWet = 0;
+let rainMesh = null, rainOn = false, rainTimer = 25 + Math.random() * 40, rainWet = 0; // first shower within ~25-65s, not 90-270
 function buildRain() {
   const COUNT = 900;
   const g = new THREE.PlaneGeometry(0.015, 0.75);
