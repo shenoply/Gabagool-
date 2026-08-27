@@ -537,7 +537,13 @@ function base64ToArrayBuffer(b64) {
 /* ---------- Scene setup ---------- */
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // capped harder — 2x on a 3x phone screen was a huge framebuffer; 1.5 halves that GPU memory for barely-visible softness
+// If the GPU gives out mid-game (context lost), say so clearly instead of freezing —
+// and tell the player the actual fix (full browser restart clears the refused state).
+renderer.domElement.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();
+  showFatalError('Graphics context lost — the phone GPU ran out of resources.\n\nFix: fully close the browser app (swipe it away in recents), reopen, and load the game again.');
+}, false);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
