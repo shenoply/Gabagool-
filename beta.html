@@ -6387,12 +6387,15 @@ function updateTraffic(dt) {
   if (!drivingMode || !car) return;
   for (const t of trafficCars) {
     t.mesh.position.z += t.speed * dt;
-    // Keep it roughly around the player rather than driving off into the distance
-    // forever or lagging permanently behind — recycles it back into a fresh gap.
-    if (t.mesh.position.z > car.position.z + 90) {
-      t.mesh.position.z = car.position.z - (60 + Math.random() * 40);
-    } else if (t.mesh.position.z < car.position.z - 90) {
-      t.mesh.position.z = car.position.z + 60 + Math.random() * 40;
+    /* Recycle FAR outside the fog, not at 90 units. At 90 the car vanished and
+       reappeared in completely clear air — fog does not begin until 160 — which is
+       the popping you could see while driving. Now it recycles past 620, where fog
+       has removed ~85% of it, and reappears at 560+ rather than 60 behind you.
+       Same trick as the building LOD: put the seam where nothing is legible. */
+    if (t.mesh.position.z > car.position.z + 620) {
+      t.mesh.position.z = car.position.z - (560 + Math.random() * 60);
+    } else if (t.mesh.position.z < car.position.z - 620) {
+      t.mesh.position.z = car.position.z + 560 + Math.random() * 60;
     }
   }
 }
