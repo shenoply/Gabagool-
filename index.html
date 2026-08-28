@@ -372,6 +372,7 @@
   <div id="run-toggle"><span class="sw"></span> Run</div>
   <div id="autohunt-toggle"><span class="sw"></span> Auto-hunt</div>
   <div id="drive-toggle"><span class="sw"></span> Drive</div>
+  <div id="handbrake-btn" style="display:none;position:fixed;right:16px;bottom:calc(210px + env(safe-area-inset-bottom,0px));z-index:11;width:62px;height:62px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/62px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;touch-action:none;">HAND<br>BRAKE</div>
 
   <div id="joystick-zone">
     <div id="joystick-base">
@@ -3074,7 +3075,11 @@ function updateCarDriving(dt) {
   // off as speed rises, which is what makes fast corners loose and slow ones tidy.
   const fwdX = Math.sin(carState.heading), fwdZ = Math.cos(carState.heading);
   const spdFrac0 = Math.min(1, Math.abs(carState.speed) / CAR_MAX_SPEED);
-  const grip = CAR_GRIP_BASE - (CAR_GRIP_BASE - CAR_GRIP_MIN) * spdFrac0;
+  let grip = CAR_GRIP_BASE - (CAR_GRIP_BASE - CAR_GRIP_MIN) * spdFrac0;
+  if (handbrakeDown) {
+    grip *= 0.10;                      // rear lets go: velocity keeps its old direction
+    carState.speed *= (1 - 1.15 * dt); // and it scrubs off speed
+  }
   const wantVX = fwdX * carState.speed, wantVZ = fwdZ * carState.speed;
   const blend = Math.min(1, grip * dt);
   carState.vx += (wantVX - carState.vx) * blend;
@@ -3130,9 +3135,11 @@ function updateCarDriving(dt) {
   if (isBraking) playBrakeSound();
   updateCarLights(isBraking);
   updateReverseLight();
+  updateReverseBeep();
+  updateIndicators(steer);
   updateRoadNoise(Math.min(1, Math.abs(carState.speed) / CAR_MAX_SPEED), !!carState.offRoad);
   // Lay rubber when the car is genuinely sliding sideways or braking hard at speed.
-  const wheelspin = throttle > 0.75 && speedFrac < 0.22; // hard on the power from near standstill
+  const wheelspin = (throttle > 0.75 && speedFrac < 0.22) || (handbrakeDown && speedFrac > 0.15); // hard on the power from near standstill
   if ((Math.abs(carState.slip) > 0.30 || wheelspin || (isBraking && speedFrac > 0.5)) && performance.now() - lastSkidAt > 55) {
     lastSkidAt = performance.now();
     dropSkid(carState.x, carState.z, carState.heading, carState.offRoad);
@@ -3843,6 +3850,88 @@ function updateBirdScatter(dt) {
   playBirdFlap();
 }
 
+/* ================= HANDBRAKE, REV LIMITER, REVERSE BEEP, INDICATORS, SUN GLARE ================= */
+
+/* Handbrake. Rather than a new physics path, this leans on the grip model already
+   there: it locks the rear by collapsing grip toward zero, so the existing velocity
+   vector keeps carrying the car in its old direction while the nose turns. That is
+   what a slide is, and the skid marks and body roll come along for free. */
+let handbrakeDown = false;
+
+/* Rev limiter — the engine used to just stop climbing at max speed. Now it flutters
+   against the limit, which is what actually tells you you're there. */
+let limiterPhase = 0;
+function applyRevLimiter(dt, speedFrac) {
+  if (!engineNodes || !engineNodes.started) return 0;
+  if (speedFrac < 0.985) { limiterPhase = 0; return 0; }
+  limiterPhase += dt * 34;
+  return Math.sin(limiterPhase) * 0.09; // small pitch flutter on top of the normal rate
+}
+
+/* Reverse beeping. */
+let lastBeepAt = 0;
+function updateReverseBeep() {
+  if (!ambientCtx || !sfxOn || carState.speed > -0.6) return;
+  const now = performance.now();
+  if (now - lastBeepAt < 750) return;
+  lastBeepAt = now;
+  const t = ambientCtx.currentTime;
+  const o = ambientCtx.createOscillator();
+  o.type = 'square'; o.frequency.value = 1050;
+  const g = ambientCtx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.06, t + 0.01);
+  g.gain.setValueAtTime(0.06, t + 0.16);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  o.connect(g); g.connect(ambientCtx.destination);
+  o.start(t); o.stop(t + 0.22);
+}
+
+/* Indicators — flash the side you're turning toward, once the steering is decisive. */
+let indicatorL = null, indicatorR = null;
+function ensureIndicators() {
+  if (indicatorL || !car || !brakeLightMesh) return;
+  const mk = (x) => {
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 0.11, 0.05),
+      new THREE.MeshStandardMaterial({ color: 0x4a2a05, emissive: 0xff9500, emissiveIntensity: 0 })
+    );
+    m.position.copy(brakeLightMesh.position);
+    m.position.x = x;
+    brakeLightMesh.parent.add(m);
+    return m;
+  };
+  indicatorL = mk(-0.95);
+  indicatorR = mk(0.95);
+}
+function updateIndicators(steer) {
+  ensureIndicators();
+  if (!indicatorL) return;
+  const blink = (Math.floor(performance.now() / 380) % 2) === 0 ? 2.4 : 0;
+  indicatorL.material.emissiveIntensity = steer < -0.55 ? blink : 0;
+  indicatorR.material.emissiveIntensity = steer > 0.55 ? blink : 0;
+}
+
+/* Sun glare — a screen-space wash when driving toward the sun. The sky already knows
+   where the sun is, so this is just a dot product against the view direction. */
+let glareEl = null;
+function updateSunGlare() {
+  if (!glareEl) {
+    glareEl = document.createElement('div');
+    glareEl.style.cssText = 'position:fixed;inset:0;z-index:5;pointer-events:none;opacity:0;' +
+      'background:radial-gradient(circle at 50% 42%, rgba(255,224,170,0.85), rgba(255,190,120,0.25) 38%, rgba(255,180,110,0) 65%);';
+    document.body.appendChild(glareEl);
+  }
+  if (!drivingMode || nightLightLevel > 0.6) { glareEl.style.opacity = '0'; return; }
+  const sunDir = key.position.clone().normalize();
+  const viewDir = new THREE.Vector3();
+  camera.getWorldDirection(viewDir);
+  const facing = Math.max(0, viewDir.dot(sunDir));
+  // only bites when looking close to straight at it, and fades as the sun sets
+  const strength = Math.pow(facing, 7) * (1 - nightLightLevel) * 0.75;
+  glareEl.style.opacity = strength.toFixed(3);
+}
+
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
   const lanes = [-ROAD_ZONE.halfW * 0.55, -ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.55];
@@ -4148,6 +4237,7 @@ function enterDriveMode(withMission, overrideCar) {
       drivingMode = true;
       document.getElementById('status-panel').style.display = 'none'; // blocks too much screen while driving
       document.getElementById('horn-btn').style.display = '';
+      document.getElementById('handbrake-btn').style.display = '';
       showRadio(true);
       // Missions no longer auto-start with driving — free cruising is the default.
       // A mission begins only by answering the phone (see the global ringer), which
@@ -4232,6 +4322,8 @@ function exitDriveMode() {
   savedCharacterPos = new THREE.Vector3(sideX, 0, sideZ);
   document.getElementById('status-panel').style.display = '';
   document.getElementById('horn-btn').style.display = 'none';
+  { const hb = document.getElementById('handbrake-btn'); if (hb) hb.style.display = 'none'; }
+  handbrakeDown = false;
   showRadio(false);
   if (character) {
     character.visible = true;
@@ -5015,6 +5107,16 @@ RADIO_STATIONS[1].src = BG_TRACKS[1];
 RADIO_STATIONS[2].src = ASSETS.GEORGE_SONG;
 
 document.getElementById('horn-btn').addEventListener('click', (e) => { e.stopPropagation(); playHorn(); });
+
+const hbBtn = document.getElementById('handbrake-btn');
+// pointer events rather than click: it has to be held, not tapped
+const hbDown = (e) => { e.preventDefault(); e.stopPropagation(); handbrakeDown = true; hbBtn.style.background = 'var(--accent)'; hbBtn.style.color = '#111'; };
+const hbUp = (e) => { if (e) e.stopPropagation(); handbrakeDown = false; hbBtn.style.background = 'var(--panel)'; hbBtn.style.color = 'var(--accent)'; };
+hbBtn.addEventListener('pointerdown', hbDown);
+hbBtn.addEventListener('pointerup', hbUp);
+hbBtn.addEventListener('pointercancel', hbUp);
+hbBtn.addEventListener('pointerleave', hbUp);
+window.addEventListener('blur', () => hbUp()); // don't leave it stuck on if the app loses focus
 document.getElementById('radio-prev').addEventListener('click', (e) => { e.stopPropagation(); setRadioStation(radioIndex - 1); });
 document.getElementById('radio-next').addEventListener('click', (e) => { e.stopPropagation(); setRadioStation(radioIndex + 1); });
 
@@ -5192,8 +5294,9 @@ function updateEngineAudio(speedFrac, throttle, driving) {
 
   // Pitch: playbackRate is clamped well inside the range where MP3 resampling still
   // sounds like an engine rather than a chipmunk or a tractor.
-  engineNodes.idle.el.playbackRate = 0.85 + rev * 0.5;
-  engineNodes.rev.el.playbackRate = 0.8 + rev * 0.55;
+  const lim = applyRevLimiter(1 / 60, speedFrac);
+  engineNodes.idle.el.playbackRate = 0.85 + rev * 0.5 + lim;
+  engineNodes.rev.el.playbackRate = 0.8 + rev * 0.55 + lim;
 
   // Crossfade: idle carries the bottom end, the rev layer takes over under load.
   const blend = Math.min(1, speedFrac * 1.5 + Math.max(0, throttle) * 0.35);
@@ -5448,6 +5551,7 @@ function tick() {
   updatePuddles();
   updateContactShadow();
   updateClock();
+  updateSunGlare();
   updateBirdScatter(dt);
   if (!drivingMode) updateDuckBehaviour(dt);
   { const sh = dustMesh && dustMesh.material.userData.shader; if (sh) sh.uniforms.uTime.value = clock.elapsedTime; }
