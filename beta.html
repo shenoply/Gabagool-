@@ -208,8 +208,11 @@
 
   /* Zoom buttons (bottom-right, above anim panel) */
   #zoom-controls {
-    position: fixed; right: 12px; bottom: 128px; z-index: 10;
-    display: flex; flex-direction: column; gap: 6px;
+    /* Moved off the right edge: the action pad (SHOOT/JUMP/KNEE) and the sound,
+       camera and cigar buttons all live there now and were sitting on top of these.
+       Left side, above the toggles, is clear. */
+    position: fixed; left: 20px; bottom: 330px; z-index: 10;
+    display: flex; flex-direction: row; gap: 8px;
   }
   #zoom-controls button {
     width: 34px; height: 34px; border-radius: 50%; background: var(--panel); border: 1px solid var(--panel-border);
@@ -1419,7 +1422,8 @@ let interiorRoot = null, interiorReady = false, inInterior = false, savedBackgro
    pool decor, and the view felt permanently cramped. Indoors it is the opposite — a
    room without it is unusable. So it runs only inside, and only against structure.
    The model names its shell meshes "Level_..." which makes that easy to filter. */
-const interiorColliders = [];
+const interiorColliders = []; // structure, for the camera
+const interiorSolids = [];    // everything the player can bump into
 let camPullIn = 0; // eased distance reduction, so it doesn't snap
 
 function updateCamera() {
@@ -2512,12 +2516,21 @@ function updateGroundHeight() {
 // Looks a short distance ahead in the given direction; true if a mostly-vertical
 // surface (a wall, not a ramp or floor) is in the way.
 function isBlockedAhead(fromPos, dir, lookahead) {
-  if (houseColliders.length === 0 || dir.lengthSq() < 0.0001) return false;
-  wallRaycaster.set(new THREE.Vector3(fromPos.x, fromPos.y + 0.9, fromPos.z), dir);
-  wallRaycaster.far = lookahead;
-  const hits = wallRaycaster.intersectObjects(houseColliders, false);
-  for (const h of hits) {
-    if (h.face && Math.abs(h.face.normal.y) < 0.55) return true;
+  if (dir.lengthSq() < 0.0001) return false;
+  // Indoors, everything solid counts — walls AND furniture. Two heights are tested:
+  // waist for walls and tall objects, ankle for low things like sofas and beds that a
+  // single waist-height ray would pass straight over.
+  const targets = inInterior ? interiorSolids : houseColliders;
+  if (targets.length === 0) return false;
+  const heights = inInterior ? [0.9, 0.35] : [0.9];
+  for (const h of heights) {
+    wallRaycaster.set(new THREE.Vector3(fromPos.x, fromPos.y + h, fromPos.z), dir);
+    wallRaycaster.far = lookahead;
+    const hits = wallRaycaster.intersectObjects(targets, false);
+    for (const hit of hits) {
+      // ignore floors and ceilings; only near-vertical surfaces block movement
+      if (hit.face && Math.abs(hit.face.normal.y) < 0.55) return true;
+    }
   }
   return false;
 }
@@ -2525,8 +2538,8 @@ function isBlockedAhead(fromPos, dir, lookahead) {
 let lastBlockedState = false;
 let wallCheckSkip = 0;
 function isBlockedAheadThrottled(fromPos, dir, lookahead) {
-  wallCheckSkip = (wallCheckSkip + 1) % 2; // every other frame — still catches walls well before contact
-  if (wallCheckSkip === 0) {
+  wallCheckSkip = (wallCheckSkip + 1) % 2;
+  if (inInterior || wallCheckSkip === 0) { // indoors check every frame — furniture is small enough to slip past otherwise
     lastBlockedState = isBlockedAhead(fromPos, dir, lookahead);
   }
   return lastBlockedState;
@@ -4860,14 +4873,23 @@ function loadInterior() {
       interiorRoot = gltf.scene;
       interiorRoot.position.set(INTERIOR_ORIGIN.x, INTERIOR_ORIGIN.y, INTERIOR_ORIGIN.z);
       interiorColliders.length = 0;
+      interiorSolids.length = 0;
+      let doorsHidden = 0;
       interiorRoot.traverse((o) => {
         if (!o.isMesh) return;
         o.castShadow = false; o.receiveShadow = true; o.frustumCulled = true;
-        // shell only: walls, floors, ceilings, roof. Furniture is deliberately excluded
-        // so the camera doesn't jam itself on a sofa.
         const n = (o.name || '') + '|' + ((o.material && o.material.name) || '');
+        // Door leaves are hidden so every doorway is a clear opening — there is no
+        // door-opening interaction, and a closed door is just a wall you can see through.
+        if (/^door|_door/i.test(o.name || '') && !/frame|jamb/i.test(o.name || '')) {
+          o.visible = false; doorsHidden++; return;
+        }
+        // camera collides with structure only, so it can't jam on a sofa
         if (/level|wall|floor|ceil|roof|stair/i.test(n)) interiorColliders.push(o);
+        // the player collides with everything solid — glass and rugs excepted
+        if (!/glass|mirror|rug|carpet|picture|frame/i.test(n)) interiorSolids.push(o);
       });
+      if (window.__gameNote) window.__gameNote('interior: ' + interiorColliders.length + ' wall meshes, ' + interiorSolids.length + ' solids, ' + doorsHidden + ' doors opened');
       if (window.__gameNote) window.__gameNote('interior colliders: ' + interiorColliders.length);
       interiorRoot.visible = false;
       scene.add(interiorRoot);
@@ -6034,7 +6056,7 @@ function handleMovement(dt) {
     const analogScale = joyManual && !keyManual ? Math.max(0.35, joyMag) : 1;
     let speed = (manual && running) ? runSpeed : walkSpeed * analogScale;
   if (crouching) speed *= 0.45; // crouch-walking is slower, as the clip implies
-    const blocked = isBlockedAheadThrottled(character.position, moveDir, 0.55);
+    const blocked = isBlockedAheadThrottled(character.position, moveDir, inInterior ? 0.75 : 0.55);
     if (!blocked) {
       character.position.addScaledVector(moveDir, speed * dt);
       if (inInterior) {
