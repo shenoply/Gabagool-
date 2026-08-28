@@ -4206,11 +4206,17 @@ function updateLeaves(t) {
    The jump clip still has no vertical translation in it, so this drives real height
    under it. Idle uses the actual idle clip with a little breathing on top. */
 
-let jumpVel = 0, jumpY = 0, isJumping = false;
+let jumpVel = 0, jumpY = 0, isJumping = false, jumpDirX = 0, jumpDirZ = 0, jumpFwd = 0;
 function startJump() {
   if (isJumping || !character || drivingMode) return;
   isJumping = true;
-  jumpVel = 5.2;
+  jumpVel = 5.0;
+  // Jump_Run is a running jump — that's the only jump clip in the model, which is why
+  // it reads as one. Rather than fight it, carry him forward through the arc so the
+  // motion matches the animation instead of hovering in place.
+  jumpDirX = Math.sin(character.rotation.y);
+  jumpDirZ = Math.cos(character.rotation.y);
+  jumpFwd = characterMoving ? 6.2 : 3.4;
   playAction(CLIP.jump, { loop: false, manual: true });
   if (ambientCtx && sfxOn) {
     // a small effort grunt: short filtered noise, nothing fancy
@@ -4231,9 +4237,14 @@ function updateJump(dt) {
   if (isJumping) {
     jumpVel -= 14 * dt;          // gravity
     jumpY += jumpVel * dt;
+    // travel forward through the arc, decaying so he lands rather than skating on
+    const wb = walkBound();
+    character.position.x = Math.max(-wb, Math.min(wb, character.position.x + jumpDirX * jumpFwd * dt));
+    character.position.z = Math.max(-wb, Math.min(wb, character.position.z + jumpDirZ * jumpFwd * dt));
+    jumpFwd *= (1 - 1.1 * dt);
     if (jumpY <= 0) {
-      jumpY = 0; jumpVel = 0; isJumping = false;
-      playAction(currentActionName === CLIP.run ? CLIP.run : CLIP.walk);
+      jumpY = 0; jumpVel = 0; jumpFwd = 0; isJumping = false;
+      playAction(characterMoving ? (running ? CLIP.run : CLIP.walk) : CLIP.idle, { fade: 0.2 });
       // landing thud on whatever surface he's on
       playCarOneShot && playDoorSlam();
     }
@@ -4247,15 +4258,18 @@ function updateJump(dt) {
 let idleTime = 0, nextFidgetAt = 6 + Math.random() * 8;
 const IDLE_GESTURES = [CLIP.idleTurn, CLIP.alert, 'Boxing_Practice', 'golf_drive'];
 function updateIdleMotion(dt) {
-  if (!character || drivingMode || isJumping) { idleTime = 0; return; }
-  const moving = LOCOMOTION.has(currentActionName);
-  if (moving) { idleTime = 0; nextFidgetAt = 6 + Math.random() * 8; return; }
+  if (!character || drivingMode || isJumping || crouching) { idleTime = 0; return; }
+  // Was testing LOCOMOTION.has(currentActionName) — but on stopping, the walk clip
+  // stays loaded and merely paused, so this always read as "still moving" and idle
+  // never triggered. Use the actual movement flag instead.
+  if (characterMoving) { idleTime = 0; nextFidgetAt = 6 + Math.random() * 8; return; }
   idleTime += dt;
   // There is a proper Idle clip in this model now, so drop into it rather than
   // leaving him frozen on the last walk frame.
-  if (idleTime > 0.35 && currentActionName !== CLIP.idle && manualOverrideTimer <= 0
-      && !IDLE_GESTURES.includes(currentActionName)) {
-    playAction(CLIP.idle);
+  if (idleTime > 0.3 && currentActionName !== CLIP.idle && manualOverrideTimer <= 0
+      && !IDLE_GESTURES.includes(currentActionName)
+      && currentActionName !== CLIP.shoot && !isJumping) {
+    playAction(CLIP.idle, { fade: 0.3, loop: true });
   }
   // breathing on top, kept small now that the clip does most of the work
   const breath = Math.sin(idleTime * 1.6) * 0.006;
@@ -4592,6 +4606,7 @@ function fireShot() {
   if (now - lastShotAt < 1100) return; // the clip needs room to play
   lastShotAt = now;
   playAction(CLIP.shoot, { loop: false, manual: true });
+  showPistol(2200); // in hand for the draw, holstered shortly after the shot
   setTimeout(() => { spawnMuzzleFlash(); playGunshot(); }, 420); // after the draw
 }
 function spawnMuzzleFlash() {
@@ -4600,13 +4615,16 @@ function spawnMuzzleFlash() {
     muzzleFlash = new THREE.PointLight(0xffd08a, 0, 9, 2);
     scene.add(muzzleFlash);
   }
-  // roughly at hand height, ahead of where he's facing
-  const fx = Math.sin(character.rotation.y), fz = Math.cos(character.rotation.y);
-  muzzleFlash.position.set(
-    character.position.x + fx * 0.75,
-    (character.position.y || 0) + 1.25,
-    character.position.z + fz * 0.75
-  );
+  // Anchor the flash to the actual barrel tip when the pistol exists, so it tracks
+  // the hand through the animation instead of floating in front of his chest.
+  if (pistol && pistol.userData.muzzle) {
+    const p = new THREE.Vector3();
+    pistol.userData.muzzle.getWorldPosition(p);
+    muzzleFlash.position.copy(p);
+  } else {
+    const fx = Math.sin(character.rotation.y), fz = Math.cos(character.rotation.y);
+    muzzleFlash.position.set(character.position.x + fx * 0.75, (character.position.y || 0) + 1.25, character.position.z + fz * 0.75);
+  }
   muzzleFlash.intensity = 14;
   addShake(0.28);
 }
@@ -4640,6 +4658,53 @@ function playGunshot() {
   og.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
   o.connect(og); og.connect(ambientCtx.destination);
   o.start(t); o.stop(t + 0.22);
+}
+
+/* Pistol. The character has no weapon in the model, so Draw_and_Shoot_Left was
+   miming an empty hand — which is most of why the shot looked odd. This builds one
+   from primitives and parents it to the hand bone, so it follows the draw. It stays
+   hidden until he draws and holsters a moment after firing. */
+let pistol = null, pistolHideAt = 0;
+function ensurePistol() {
+  if (pistol || !character) return;
+  const bone = findHandBone();
+  if (!bone) { if (window.__gameNote) window.__gameNote('No hand bone found for the pistol'); return; }
+  const g = new THREE.Group();
+  const steel = new THREE.MeshStandardMaterial({ color: 0x2b2e33, roughness: 0.35, metalness: 0.9 });
+  const grip = new THREE.MeshStandardMaterial({ color: 0x241a14, roughness: 0.8, metalness: 0.1 });
+
+  const slide = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.05, 0.045), steel);
+  slide.position.set(0.055, 0.015, 0);
+  g.add(slide);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.06, 6), steel);
+  barrel.rotation.z = Math.PI / 2;
+  barrel.position.set(0.165, 0.012, 0);
+  g.add(barrel);
+  const handle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.11, 0.038), grip);
+  handle.position.set(0.0, -0.055, 0);
+  handle.rotation.z = -0.22;
+  g.add(handle);
+  const guard = new THREE.Mesh(new THREE.TorusGeometry(0.026, 0.006, 4, 8, Math.PI), steel);
+  guard.rotation.set(Math.PI / 2, 0, Math.PI);
+  guard.position.set(0.045, -0.022, 0);
+  g.add(guard);
+
+  g.scale.setScalar(1 / (character.scale.x || 1)); // cancel the character's own scale
+  g.position.set(0.05, 0.01, 0.01);
+  g.rotation.set(0, 0, -0.15);
+  g.visible = false;
+  bone.add(g);
+  pistol = g;
+  pistol.userData.muzzle = barrel;
+}
+function showPistol(ms) {
+  ensurePistol();
+  if (!pistol) return;
+  pistol.visible = true;
+  pistolHideAt = performance.now() + ms;
+}
+function updatePistol() {
+  if (pistol && pistol.visible && performance.now() > pistolHideAt) pistol.visible = false;
 }
 
 function laneX(index) {
@@ -5623,6 +5688,7 @@ let autoHuntEnabled = false;
 const moveDir = new THREE.Vector3();
 let currentHeading = 0; // rotation.y that makes the mesh's own local-forward axis point along moveDir
 let wasMoving = false;
+let characterMoving = false; // true only while the joystick/keys are actually driving him
 let stopEaseTimer = 0;
 const STOP_EASE_DURATION = 0.28; // seconds to ease the stride to a stop instead of freezing instantly
 
@@ -5697,14 +5763,18 @@ function handleMovement(dt) {
 
     camTarget.lerp(character.position.clone().add(new THREE.Vector3(0, camTargetYOffset, 0)), Math.min(1, dt * 6));
 
-    const wanted = (manual && running) ? CLIP.run : CLIP.walk;
+    // Crouch has to win here, or the locomotion selector overwrites it every frame —
+    // which is exactly why holding CROUCH did nothing while moving.
+    const wanted = crouching ? CLIP.crouch : ((manual && running) ? CLIP.run : CLIP.walk);
     if (actions[wanted] && currentActionName !== wanted) {
       playAction(wanted, { fade: 0.2, loop: true });
     }
     if (currentAction) { currentAction.paused = false; currentAction.timeScale = 1; }
     manualOverrideTimer = 0;
     wasMoving = true;
+    characterMoving = true;
   } else if (currentAction && LOCOMOTION.has(currentActionName)) {
+    characterMoving = false;
     // Ease the stride to a stop over a short window instead of freezing wherever it happened to be.
     if (wasMoving) { stopEaseTimer = STOP_EASE_DURATION; wasMoving = false; }
     if (stopEaseTimer > 0) {
@@ -6328,6 +6398,7 @@ function tick() {
   updateIdleMotion(dt);
   updateCigar(dt);
   updateMuzzleFlash(dt);
+  updatePistol();
   updateBirdScatter(dt);
   if (!drivingMode) updateDuckBehaviour(dt);
   { const sh = dustMesh && dustMesh.material.userData.shader; if (sh) sh.uniforms.uTime.value = clock.elapsedTime; }
