@@ -293,6 +293,27 @@
 </style>
 </head>
 <body>
+  <script>
+    /* Recovery switch. The service worker serves assets cache-first, so a bad or
+       partial cached response would persist across reloads and could stop the game
+       from starting at all. Loading with ?nosw=1 unregisters every worker, deletes
+       every cache, and reloads clean. */
+    (function () {
+      var p = new URLSearchParams(location.search);
+      if (!p.has('nosw')) return;
+      Promise.all([
+        navigator.serviceWorker ? navigator.serviceWorker.getRegistrations().then(function (rs) {
+          return Promise.all(rs.map(function (r) { return r.unregister(); }));
+        }) : Promise.resolve(),
+        window.caches ? caches.keys().then(function (ks) {
+          return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+        }) : Promise.resolve(),
+      ]).then(function () {
+        location.replace(location.pathname + '?cleared=' + Date.now());
+      });
+    })();
+  </script>
+
 <div id="app">
   <div id="loading">
     <div id="loading-title">Chasing the <span>Gabagool</span></div>
@@ -6802,6 +6823,7 @@ tick();
        downloads as before. */
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
+        if (new URLSearchParams(location.search).has('nosw')) return;
         navigator.serviceWorker.register('sw.js').catch((e) => console.warn('sw registration failed:', e));
       });
     }
