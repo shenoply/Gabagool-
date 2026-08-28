@@ -365,7 +365,7 @@
     <div id="speedo-gear" style="margin-top:2px;opacity:0.75;">GEAR 1</div>
   </div>
   <div id="compass" style="position:fixed;left:50%;transform:translateX(-50%);top:106px;z-index:11;display:none;font:700 10px/1.4 ui-monospace,Menlo,Consolas,monospace;color:var(--text-dim);background:var(--panel);border:1px solid var(--panel-border);border-radius:10px;padding:6px 12px;backdrop-filter:blur(6px);text-align:center;"></div>
-  <div id="pos-readout" style="position:fixed;left:50%;transform:translateX(-50%);top:150px;z-index:30;font:800 13px/1 ui-monospace,Menlo,Consolas,monospace;color:#ffd166;background:rgba(10,12,16,0.9);border:1px solid #665;border-radius:8px;padding:8px 14px;">X 0.0   Z 0.0</div>
+  <div id="pos-readout" style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:150px;z-index:30;font:800 13px/1 ui-monospace,Menlo,Consolas,monospace;color:#ffd166;background:rgba(10,12,16,0.9);border:1px solid #665;border-radius:8px;padding:8px 14px;">X 0.0   Z 0.0</div>
   <div id="game-clock" style="position:fixed;left:12px;top:62px;z-index:12;font:700 12px/1 ui-monospace,Menlo,Consolas,monospace;color:var(--text-dim);background:var(--panel);border:1px solid var(--panel-border);border-radius:999px;padding:7px 12px;backdrop-filter:blur(6px);">12:00 AM</div>
   <div id="status-panel">
     <div class="row"><span class="lbl">Status</span><span class="state-text" id="state-text">Searching</span></div>
@@ -688,11 +688,13 @@ function base64ToArrayBuffer(b64) {
      the front door cannot be found by reading the model — it has to be measured in
      game. Walk to the door and read these numbers off. */
   window.__posLine = null;
-  window.__showPos = true; // on from the start for this measuring pass
+  window.__showPos = new URLSearchParams(location.search).has('pos'); // measuring done; ?pos=1 to re-enable
   setInterval(() => {
     try {
       const el = document.getElementById('pos-readout');
       if (!el) return;
+      el.style.display = window.__showPos ? '' : 'none';
+      if (!window.__showPos) return;
       // `character` is a module-scope let; reading it from here is safe once the
       // module has finished, but wrap anyway so a throw can never kill the timer.
       const c = (window.__charRef && window.__charRef.position) || null;
@@ -701,12 +703,15 @@ function base64ToArrayBuffer(b64) {
     } catch (e) { /* never let the readout break anything */ }
   }, 200);
   // Repeat the position into the panel every few seconds during this measuring pass.
-  setInterval(() => {
-    try {
-      const c = window.__charRef && window.__charRef.position;
-      if (c && window.__gameNote) window.__gameNote('POS  X ' + c.x.toFixed(1) + '  Z ' + c.z.toFixed(1));
-    } catch (e) {}
-  }, 4000);
+  // Position spam into the diagnostics panel was for the door-measuring pass only.
+  if (new URLSearchParams(location.search).has('pos')) {
+    setInterval(() => {
+      try {
+        const c = window.__charRef && window.__charRef.position;
+        if (c && window.__gameNote) window.__gameNote('POS  X ' + c.x.toFixed(1) + '  Z ' + c.z.toFixed(1));
+      } catch (e) {}
+    }, 4000);
+  }
   window.__reportGPU = () => {
     try {
       const i = renderer.info;
@@ -4923,7 +4928,11 @@ function updateEngineDistance() {
    it means walking in doesn't teleport you: the compass still reads sensibly and
    stepping back out puts you where you were. */
 const INTERIOR_ORIGIN = { x: -5, y: 0, z: 2 };
-const DOOR_POS = { x: 0, z: 14 };      // outside, on the house's garage-facing edge
+/* Measured in game, not guessed. Walking in from the patio the trail ran
+   (9.9,6.8) -> (3.3,6.9) -> (-0.6,5.6) -> (-2.9,2.1) -> (-5.0,-2.1), so the
+   threshold of the house shell is around x -2, z 4.5. The first guess of (0,14)
+   was roughly ten metres out into the lawn. */
+const DOOR_POS = { x: -2, z: 4.5 };
 /* Measured from the model's true world bounds (x -2.5..12.5, z -10.5..6.5, 8.2m
    tall). The first attempt spawned at local z=8, which is past the z=6.5 wall —
    outside the building entirely, which is why you had to walk through a wall. This
@@ -5040,7 +5049,8 @@ function exitInterior() {
     interiorRoot.visible = false;
     setOutdoorsVisible(true);
     if (doorMarker) doorMarker.position.set(DOOR_POS.x, 0, DOOR_POS.z);
-    character.position.set(DOOR_POS.x, 0, DOOR_POS.z + 2.5);
+    character.position.set(DOOR_POS.x + 1.2, 0, DOOR_POS.z + 2.2);
+    character.rotation.y = Math.atan2(1.2, 2.2); // facing out, away from the door
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
     if (scene.fog) { scene.fog.near = 120; scene.fog.far = 420; }
     camDist = 7.5;
