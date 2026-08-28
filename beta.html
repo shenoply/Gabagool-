@@ -1258,10 +1258,11 @@ function updateGeorgeProximity() {
    driving). Answer -> the job starts, auto-entering drive mode if needed.
    Decline -> he calls back later. */
 let nextPhoneRingAt = Infinity;
+let callRotation = 0; // fixed caller rotation, see openPhoneRing
 let phoneRingPopupOpen = false;
 function scheduleNextPhoneRing(seconds) {
   // A second call must never interrupt one in progress.
-  if (typeof onCall !== 'undefined' && onCall) seconds = Math.max(seconds, 60);
+  if (typeof onCall !== 'undefined' && onCall) seconds = Math.max(seconds, 10);
   nextPhoneRingAt = performance.now() + seconds * 1000;
 }
 const phoneDialog = document.createElement('div');
@@ -1275,14 +1276,17 @@ phoneDialog.innerHTML =
   '</div>';
 document.body.appendChild(phoneDialog);
 function openPhoneRing() {
-  if (typeof onCall !== 'undefined' && onCall) { scheduleNextPhoneRing(45); return; }
+  if (typeof onCall !== 'undefined' && onCall) { scheduleNextPhoneRing(10); return; }
   phoneRingPopupOpen = true;
   // Handset first; the old popup only appears if the phone UI is missing.
   if (typeof showIncomingOnPhone === 'function') {
-    // Carmine and Junior are the ones with real recordings, so weight toward them:
-    // 35% Carmine, 30% Junior, 35% the Boss.
-    const r = Math.random();
-    showIncomingOnPhone(r < 0.35 ? 'carmine' : r < 0.65 ? 'junior' : 'boss');
+    /* Fixed rotation rather than random: Junior first, then Carmine, then the Boss,
+       repeating. That guarantees you actually hear each recording instead of
+       waiting on a dice roll. */
+    const order = ['junior', 'carmine', 'boss'];
+    const who = order[callRotation % order.length];
+    callRotation++;
+    showIncomingOnPhone(who);
     // The handset path used to return before this, so incoming calls were silent.
     playPhoneRing();
     openPhoneRing._ringLoop = setInterval(() => { if (phoneRingPopupOpen) playPhoneRing(); }, 3500);
@@ -1311,7 +1315,7 @@ document.getElementById('phone-answer-btn').addEventListener('click', () => {
      abandoning one debt chase silenced the phone forever, Carmine and Junior
      included. A long fallback still lets the mission reschedule normally, but
      guarantees the phone comes back. */
-  scheduleNextPhoneRing(420);
+  scheduleNextPhoneRing(10); // next caller 10s later whether or not this one was answered
   if (drivingMode) {
     startChaseAudio();
     startDebtMission();
@@ -1324,7 +1328,7 @@ document.getElementById('phone-answer-btn').addEventListener('click', () => {
 document.getElementById('phone-decline-btn').addEventListener('click', () => {
   closePhoneRing();
   showMissionPopup('📵', 'Declined', 'The Boss will call back.', 2500);
-  scheduleNextPhoneRing(120 + Math.random() * 60);
+  scheduleNextPhoneRing(10);
 });
 
 /* ================= THE GARAGE — three classics you can actually drive =================
@@ -1439,7 +1443,7 @@ function updateGarageProximity() {
 function updatePhoneRinger() {
   if (phoneRingPopupOpen || missionState !== 'none' || !audioUnlocked) return;
   if (gameState === 'passedout' || georgeDialogOpen) return;
-  if (nextPhoneRingAt === Infinity) scheduleNextPhoneRing(420); // never stranded
+  if (nextPhoneRingAt === Infinity) scheduleNextPhoneRing(10); // never stranded
   if (performance.now() >= nextPhoneRingAt) openPhoneRing();
 }
 
@@ -5527,8 +5531,8 @@ function bossQuizCall() {
 /* ---- video playback on the handset ----
    cutscene.mp4 was already in the repo and only used for the TV in the interior;
    this makes it playable from the phone too. Adding more clips is one line each. */
+/* cutscene.mp4 removed from the phone — it's still used by the TV in the interior. */
 const PHONE_VIDEOS = [
-  { name: 'The Job', src: 'cutscene.mp4' },
   { name: 'Clip 2', src: 'phone_clip2.mp4' },
 ];
 let phoneVideoEl = null, currentPhoneVideo = null;
@@ -5761,7 +5765,7 @@ function showIncomingOnPhone(callerKey) {
         // Voice callers: hand control straight back, and only now start the audio.
         closePhoneRing();
         if (answer) startVoiceCall(key);
-        else scheduleNextPhoneRing(70 + Math.random() * 80); // declined: try again sooner
+        else scheduleNextPhoneRing(10); // declined: next caller in 10s anyway
         return;
       }
       if (answer) document.getElementById('phone-answer-btn').click();
@@ -5917,7 +5921,7 @@ function endVoiceCall() {
     bgAudio.volume = 1;
     if (soundOn) bgAudio.play().catch(() => {}); // music back on, if it was on before
   }
-  scheduleNextPhoneRing(150 + Math.random() * 200);
+  scheduleNextPhoneRing(10); // call over: next one 10s later
 }
 function updateCallStrip() {
   if (!onCall || !currentCaller) return;
@@ -6179,7 +6183,7 @@ function updateMilfieWaypoint(dt) {
     missionState = 'none';
     stopChaseAudio();
     if (soundOn) bgAudio.play().catch(() => {});
-    scheduleNextPhoneRing(90 + Math.random() * 60); // next job call in 1.5-2.5 min
+    scheduleNextPhoneRing(10);
   }
 }
 
@@ -6344,7 +6348,7 @@ function exitDriveMode() {
     if (debtorCar) { scene.remove(debtorCar); debtorCar = null; }
     if (milfieWaypoint) { scene.remove(milfieWaypoint.group); milfieWaypoint = null; }
     showMissionPopup('📵', 'Job abandoned', 'The Boss is not thrilled. He\'ll call again.', 3500);
-    scheduleNextPhoneRing(100 + Math.random() * 60);
+    scheduleNextPhoneRing(10);
   }
 }
 
@@ -6714,7 +6718,7 @@ function maybeFinishLoading() {
 tapToPlayBtn.addEventListener('click', () => {
   if (hasTappedStart) return;
   hasTappedStart = true;
-  scheduleNextPhoneRing(75 + Math.random() * 30); // the Boss's first call
+  scheduleNextPhoneRing(10); // first call 10s in — Uncle Junior, per the rotation
   tapToPlayBtn.style.display = 'none';
   loadingSpinner.style.display = '';
   loadingLabel.style.display = '';
