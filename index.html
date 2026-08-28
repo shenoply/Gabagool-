@@ -298,8 +298,8 @@
     <div class="pct" id="loading-pct" style="display:none;"></div>
     <button id="tap-to-play">Tap to Start</button>
     <div id="loading-tips" style="margin-top:22px;max-width:300px;text-align:left;font:400 12px/1.65 -apple-system,BlinkMacSystemFont,sans-serif;color:rgba(255,255,255,0.5);">
-      <div style="font-weight:700;color:rgba(255,255,255,0.72);margin-bottom:7px;letter-spacing:0.4px;">FOR BEST RESULTS</div>
-      <div id="tip-line" style="min-height:34px;"></div>
+      <div id="tips-head" style="font-weight:700;color:rgba(255,255,255,0.72);margin-bottom:7px;letter-spacing:0.4px;">FOR BEST RESULTS</div>
+      <div id="tip-line" style="min-height:52px;"></div>
     </div>
   </div>
 
@@ -4153,35 +4153,47 @@ function updateAntenna(dt, steer) {
    testing traced back to device conditions rather than the code — low battery
    throttling, other tabs holding memory, a flaky connection dropping asset
    downloads. Worth telling people that up front instead of letting it look broken. */
-const LOADING_TIPS = [
-  'Close other browser tabs — each one holds memory this game needs.',
-  'Charge above 30%. Phones throttle the GPU hard in battery saver, which can stall loading.',
-  'Wi-Fi beats mobile data here — around 50 MB of models and textures load in.',
-  'If loading stalls, reload. Assets retry automatically, but a fresh start is faster.',
-  'Turn your phone sideways for a wider view of the road.',
-  'Tap the speaker to cycle: all sound, music muted, silent.',
+/* Loading tips, in two pools shown in order rather than at random. The device advice
+   comes first and is the point of this: most failures in testing traced to device
+   conditions rather than code — battery throttling, other tabs holding memory, a
+   flaky connection dropping asset downloads. The gameplay tips only appear once
+   those have all been shown, since they're no help while you're waiting to load. */
+const DEVICE_TIPS = [
+  'Close your other browser tabs. Each one holds memory this game needs, and that is the most common cause of a stalled load.',
+  'Charge above 30%. Phones throttle the GPU hard in battery saver, which can stall loading entirely.',
+  'Use Wi-Fi if you can. Around 50 MB of models and textures download on first load.',
+  'If it stalls, just reload. Assets retry on their own, but a fresh start is usually quicker.',
+  'First load is the slow one. After that your browser caches most of it.',
+];
+const GAMEPLAY_TIPS = [
   'Walk up to George and ask him to sing.',
-  'A full day passes in about 8 minutes — wait for nightfall.',
   'Hold HANDBRAKE while turning to slide the back end out.',
+  'A full day passes in about 8 minutes. Wait for nightfall.',
+  'Tap the speaker to cycle: all sound, music muted, silent.',
   'The camera button hides the interface for screenshots. Double-tap to exit.',
+  'You can drive off the road now. Grass is slower and looser than tarmac.',
 ];
 (function cycleLoadingTips() {
   const el = document.getElementById('tip-line');
+  const head = document.getElementById('tips-head');
   if (!el) return;
-  let i = Math.floor(Math.random() * LOADING_TIPS.length);
-  const show = () => {
-    el.style.opacity = '0';
-    setTimeout(() => {
-      el.textContent = LOADING_TIPS[i % LOADING_TIPS.length];
-      i++;
-      el.style.opacity = '1';
-    }, 320);
-  };
+  let i = 0;
   el.style.transition = 'opacity 0.32s ease';
-  el.textContent = LOADING_TIPS[i % LOADING_TIPS.length];
-  i++;
-  setInterval(show, 5200);
+  const render = () => {
+    const onDevice = i < DEVICE_TIPS.length;
+    const list = onDevice ? DEVICE_TIPS : GAMEPLAY_TIPS;
+    const idx = onDevice ? i : (i - DEVICE_TIPS.length) % GAMEPLAY_TIPS.length;
+    if (head) head.textContent = onDevice ? 'FOR BEST RESULTS' : 'WHILE YOU WAIT';
+    el.textContent = list[idx];
+    i++;
+  };
+  render(); // device tip #1 immediately, not a random one
+  setInterval(() => {
+    el.style.opacity = '0';
+    setTimeout(() => { render(); el.style.opacity = '1'; }, 320);
+  }, 5600);
 })();
+
 
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
