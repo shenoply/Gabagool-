@@ -1409,17 +1409,44 @@ const camTarget = new THREE.Vector3(0, 0.9, 0);
 let cameraShakeTime = 0; // seconds remaining — decays to 0
 const houseColliders = []; // house meshes used for ground-following + wall/camera collision — populated once the house/collision proxy loads
 const camCollisionRay = new THREE.Raycaster();
+/* Interior state lives up here, not down with the rest of the interior code.
+   updateCamera() runs once at module top level and reads inInterior; a `let`
+   declared further down would be in its temporal dead zone at that moment and
+   throw, stopping the whole module. */
+let interiorRoot = null, interiorReady = false, inInterior = false, savedBackground = null;
+/* Interior wall/floor/ceiling meshes only. Camera collision was tried outdoors once
+   before and reverted: in the yard it fired constantly on patio furniture, plants and
+   pool decor, and the view felt permanently cramped. Indoors it is the opposite — a
+   room without it is unusable. So it runs only inside, and only against structure.
+   The model names its shell meshes "Level_..." which makes that easy to filter. */
+const interiorColliders = [];
+let camPullIn = 0; // eased distance reduction, so it doesn't snap
+
 function updateCamera() {
-  // Camera-vs-house collision reverted entirely — even eased and threshold-limited,
-  // it was still triggering constantly in the cluttered yard (patio furniture, plants,
-  // pool decor), making the view feel cramped and close all the time. That's a worse
-  // everyday experience than the rare case of the camera clipping into a wall, so back
-  // to the plain, unclamped orbit this was before.
   camPitch = Math.max(0.1, Math.min(1.4, camPitch));
   camDist = Math.max(camDistMin, Math.min(camDistMax, camDist));
-  let x = camTarget.x + camDist * Math.sin(camYaw) * Math.cos(camPitch);
-  let y = camTarget.y + camDist * Math.sin(camPitch);
-  let z = camTarget.z + camDist * Math.cos(camYaw) * Math.cos(camPitch);
+
+  let want = camDist;
+  if (inInterior && interiorColliders.length) {
+    const dir = new THREE.Vector3(
+      Math.sin(camYaw) * Math.cos(camPitch),
+      Math.sin(camPitch),
+      Math.cos(camYaw) * Math.cos(camPitch)
+    ).normalize();
+    camCollisionRay.set(camTarget, dir);
+    camCollisionRay.far = camDist + 0.4;
+    const hits = camCollisionRay.intersectObjects(interiorColliders, false);
+    if (hits.length) want = Math.max(0.9, hits[0].distance - 0.35); // stop short of the surface
+  }
+  // Pull in fast so a wall never clips through; ease back out slowly so the camera
+  // doesn't lurch every time you pass a doorway.
+  const rate = want < camPullIn ? 0.55 : 0.10;
+  camPullIn = camPullIn === 0 ? want : camPullIn + (want - camPullIn) * rate;
+  const useDist = inInterior ? camPullIn : camDist;
+
+  let x = camTarget.x + useDist * Math.sin(camYaw) * Math.cos(camPitch);
+  let y = camTarget.y + useDist * Math.sin(camPitch);
+  let z = camTarget.z + useDist * Math.cos(camYaw) * Math.cos(camPitch);
 
   if (cameraShakeTime > 0) {
     const s = cameraShakeTime * 0.35; // shrinks as it decays
@@ -4824,7 +4851,7 @@ const DOOR_POS = { x: 0, z: 14 };      // outside, on the house's garage-facing 
    outside the building entirely, which is why you had to walk through a wall. This
    is the middle of the ground floor. */
 const INTERIOR_EXIT = { x: 2005, z: -2 };
-let interiorRoot = null, interiorReady = false, inInterior = false;
+// (declared earlier, above updateCamera — see the hoisted block)
 let hiddenOutdoors = [];
 
 function loadInterior() {
@@ -4832,9 +4859,16 @@ function loadInterior() {
     try {
       interiorRoot = gltf.scene;
       interiorRoot.position.set(INTERIOR_ORIGIN.x, INTERIOR_ORIGIN.y, INTERIOR_ORIGIN.z);
+      interiorColliders.length = 0;
       interiorRoot.traverse((o) => {
-        if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; o.frustumCulled = true; }
+        if (!o.isMesh) return;
+        o.castShadow = false; o.receiveShadow = true; o.frustumCulled = true;
+        // shell only: walls, floors, ceilings, roof. Furniture is deliberately excluded
+        // so the camera doesn't jam itself on a sofa.
+        const n = (o.name || '') + '|' + ((o.material && o.material.name) || '');
+        if (/level|wall|floor|ceil|roof|stair/i.test(n)) interiorColliders.push(o);
       });
+      if (window.__gameNote) window.__gameNote('interior colliders: ' + interiorColliders.length);
       interiorRoot.visible = false;
       scene.add(interiorRoot);
       interiorReady = true;
@@ -4903,6 +4937,11 @@ function enterInterior() {
     // pull the camera in — the outdoor distance puts it through a wall indoors
     camDist = Math.min(camDist, 4.2);
     camTargetYOffset = 1.2;
+    camPullIn = 0;
+    // No outdoors visible from inside: swap the sky for a flat dark backdrop so
+    // windows don't show the yard you just left.
+    savedBackground = scene.background;
+    scene.background = new THREE.Color(0x0a0a0d);
   }, 120);
 }
 function exitInterior() {
@@ -4918,6 +4957,8 @@ function exitInterior() {
     if (scene.fog) { scene.fog.near = 120; scene.fog.far = 420; }
     camDist = 7.5;
     camTargetYOffset = 0.9;
+    camPullIn = 0;
+    if (savedBackground) { scene.background = savedBackground; savedBackground = null; }
   }, 120);
 }
 
