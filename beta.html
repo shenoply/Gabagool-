@@ -611,6 +611,12 @@ const ASSETS = {
   CALL_CARMINE: 'call_carmine.mp3',
   CALL_JUNIOR: 'call_junior.mp3',
   INTERIOR: 'interior.glb',
+  TONY_HOUSE: 'tony_house.glb',
+  PORK_STORE: 'pork_store.glb',
+  BARBER_SHOP: 'barber_shop.glb',
+  CHURCH: 'church.glb',
+  BRICK_WALL: 'brick_wall_a.glb',
+  DUMPSTER: 'dumpster.glb',
   GRASS_COLOR: 'grass_color.webp',   // photoscanned ground grass, 1024 — replaces the procedural canvas texture
   GRASS_NORMAL: 'grass_normal.webp', // 512 is plenty for a normal map at this viewing distance
   FOREST_NEAR: 'pine_near.glb', // pine patch, 47,920 verts, ~51 x 46 units — cloned across the map
@@ -6256,6 +6262,47 @@ function buildRoadFurniture() {
   if (window.__gameNote) window.__gameNote('roadside: ' + poleZs.length + ' poles, ' + railZs.length * 2 + ' rail posts');
 }
 
+/* ================= MESHY BUILDINGS (BETA) =================
+   Generated in Meshy so they share the visual family of the existing house and
+   character, decimated from ~120MB each down to ~2MB, and scaled with the real-world
+   size and ground offset baked into the file — so no magic numbers here.
+
+   The candidate house goes 60 units up the road for comparison against the current
+   one; the storefronts line the east side of the highway at x≈50, facing the road.
+   Loaded last, deferred, and failures are non-fatal. */
+const njBuildings = [];
+function loadMeshyBuildings() {
+  const place = (assetKey, x, z, rotY, label) => {
+    loader.parse(assetKey, '', (gltf) => {
+      try {
+        const o = gltf.scene;
+        o.position.set(x, 0, z);
+        o.rotation.y = rotY;
+        o.traverse((m) => {
+          if (!m.isMesh) return;
+          m.castShadow = false;      // these are scenery; shadows aren't worth the cost
+          m.receiveShadow = false;
+          m.frustumCulled = true;
+        });
+        scene.add(o);
+        njBuildings.push(o);
+        if (window.__gameNote) window.__gameNote('placed ' + label);
+      } catch (e) { console.warn(label + ' setup failed:', e); }
+    }, (e) => console.warn(label + ' load failed:', e));
+  };
+
+  // the candidate house, up the road and set back like the real one
+  place(ASSETS.TONY_HOUSE, -8, 62, Math.PI, 'tony_house');
+
+  // storefronts along the east shoulder, front faces turned toward the road
+  const FACE_ROAD = -Math.PI / 2;
+  place(ASSETS.PORK_STORE,  50, 150, FACE_ROAD, 'pork_store');
+  place(ASSETS.BARBER_SHOP, 50, 172, FACE_ROAD, 'barber_shop');
+  place(ASSETS.BRICK_WALL,  50, 193, FACE_ROAD, 'brick_wall');
+  place(ASSETS.CHURCH,      52, 235, FACE_ROAD, 'church');
+  place(ASSETS.DUMPSTER,    44, 184, 0.6, 'dumpster');
+}
+
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
   const lanes = [-ROAD_ZONE.halfW * 0.55, -ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.55];
@@ -6986,7 +7033,8 @@ function endLoad(name) {
     setTimeout(() => { try { buildDust(); buildRain(); buildPuddles(); } catch (e) { console.warn('weather failed:', e); } }, 6200);
     setTimeout(() => { try { buildFireflies(); buildLeaves(); buildCelestialBodies(); } catch (e) { console.warn('ambient particles failed:', e); } }, 7200);
     setTimeout(loadInterior, 9000); // last in the queue — biggest file, least urgent
-    setTimeout(buildRoadFurniture, 6500); // procedural, no download — safe to build early
+    setTimeout(buildRoadFurniture, 6500); // procedural, no download
+    setTimeout(loadMeshyBuildings, 11000); // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
        low-poly next to a photoscanned character reads as a different game, and I
        made it worse by putting it 20 units from the road at 7.5x scale. Kept the
