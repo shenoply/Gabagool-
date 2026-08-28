@@ -1278,8 +1278,13 @@ function openPhoneRing() {
   phoneRingPopupOpen = true;
   // Handset first; the old popup only appears if the phone UI is missing.
   if (typeof showIncomingOnPhone === 'function') {
+    // Carmine and Junior are the ones with real recordings, so weight toward them:
+    // 35% Carmine, 30% Junior, 35% the Boss.
     const r = Math.random();
-    showIncomingOnPhone(r < 0.28 ? 'carmine' : r < 0.52 ? 'junior' : 'boss');
+    showIncomingOnPhone(r < 0.35 ? 'carmine' : r < 0.65 ? 'junior' : 'boss');
+    // The handset path used to return before this, so incoming calls were silent.
+    playPhoneRing();
+    openPhoneRing._ringLoop = setInterval(() => { if (phoneRingPopupOpen) playPhoneRing(); }, 3500);
     return;
   }
   phoneDialog.style.display = 'block';
@@ -1301,7 +1306,11 @@ document.getElementById('phone-answer-btn').addEventListener('click', () => {
     bossQuizCall();
     return;
   }
-  nextPhoneRingAt = Infinity; // next ring is scheduled when this mission resolves
+  /* Was Infinity, with the next ring scheduled only when the mission resolved — so
+     abandoning one debt chase silenced the phone forever, Carmine and Junior
+     included. A long fallback still lets the mission reschedule normally, but
+     guarantees the phone comes back. */
+  scheduleNextPhoneRing(420);
   if (drivingMode) {
     startChaseAudio();
     startDebtMission();
@@ -1429,6 +1438,7 @@ function updateGarageProximity() {
 function updatePhoneRinger() {
   if (phoneRingPopupOpen || missionState !== 'none' || !audioUnlocked) return;
   if (gameState === 'passedout' || georgeDialogOpen) return;
+  if (nextPhoneRingAt === Infinity) scheduleNextPhoneRing(420); // never stranded
   if (performance.now() >= nextPhoneRingAt) openPhoneRing();
 }
 
@@ -5697,7 +5707,7 @@ function showIncomingOnPhone(callerKey) {
         // Voice callers: hand control straight back, and only now start the audio.
         closePhoneRing();
         if (answer) startVoiceCall(key);
-        else scheduleNextPhoneRing(150 + Math.random() * 200);
+        else scheduleNextPhoneRing(70 + Math.random() * 80); // declined: try again sooner
         return;
       }
       if (answer) document.getElementById('phone-answer-btn').click();
