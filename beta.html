@@ -1272,12 +1272,15 @@ phoneDialog.innerHTML =
 document.body.appendChild(phoneDialog);
 function openPhoneRing() {
   phoneRingPopupOpen = true;
+  // Handset first; the old popup only appears if the phone UI is missing.
+  if (typeof showIncomingOnPhone === 'function') { showIncomingOnPhone(); return; }
   phoneDialog.style.display = 'block';
   playPhoneRing();
   // Keep ringing every few seconds until answered or declined
   openPhoneRing._ringLoop = setInterval(() => { if (phoneRingPopupOpen) playPhoneRing(); }, 3500);
 }
 function closePhoneRing() {
+  if (incomingCall) { incomingCall = false; phoneEl.style.animation = ''; closePhone(); }
   phoneRingPopupOpen = false;
   phoneDialog.style.display = 'none';
   clearInterval(openPhoneRing._ringLoop);
@@ -3796,6 +3799,7 @@ function saveGameState() {
       audioMode: audioMode,
       track: (typeof currentTrack !== 'undefined') ? currentTrack : 0,
       quizBest: quizBest,
+      snakeBest: snakeBest,
     }));
   } catch (e) { /* private mode or quota — not worth surfacing */ }
 }
@@ -3807,6 +3811,7 @@ function loadGameState() {
     if (typeof d.dayTime === 'number') dayTime = d.dayTime;   // resume at the hour you left
     if (typeof d.debts === 'number') debtsCollected = d.debts;
     if (typeof d.quizBest === 'number') quizBest = d.quizBest;
+    if (typeof d.snakeBest === 'number') snakeBest = d.snakeBest;
     if (typeof d.audioMode === 'number') { audioMode = d.audioMode; soundOn = audioMode === 0; sfxOn = audioMode !== 2; }
   } catch (e) { /* ignore corrupt saves rather than blocking startup */ }
 }
@@ -5522,6 +5527,7 @@ const PHONE_CSS = `
   .ph-item{padding:3px 4px;border-radius:2px;cursor:pointer;}
   .ph-item.sel{background:#ffc247;color:#2b2a13;text-shadow:none;}
   .ph-soft{display:flex;justify-content:space-between;margin-top:9px;font-size:10px;opacity:0.85;}
+  @keyframes phbuzz{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
   .ph-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:14px;}
   .ph-key{background:linear-gradient(#4a4f57,#2c3036);color:#dfe3e8;border:none;border-radius:7px;padding:9px 0;
     font:700 12px ui-monospace,monospace;box-shadow:0 2px 0 #191c20;}
@@ -5544,6 +5550,7 @@ const PHONE_MENU = [
   { key: 'radio', label: 'Radio' },
   { key: 'quiz', label: 'Pop Quiz' },
   { key: 'stats', label: 'Stats' },
+  { key: 'snake', label: 'Snake' },
   { key: 'settings', label: 'Settings' },
 ];
 let phoneSel = 0;
@@ -5616,6 +5623,7 @@ function phoneActivate() {
   if (phoneScreen !== 'menu') return;
   const k = PHONE_MENU[phoneSel].key;
   if (k === 'quiz') { closePhone(); openQuiz(); return; }
+  if (k === 'snake') { startSnake(); return; }
   phoneScreen = k;
   renderPhone();
 }
@@ -5626,7 +5634,7 @@ function phoneAction(act) {
   else if (act === 'photo') { closePhone(); togglePhotoMode(); }
 }
 function openPhone() { phoneOpen = true; phoneScreen = 'menu'; phoneSel = 0; phoneEl.style.display = 'flex'; renderPhone(); }
-function closePhone() { phoneOpen = false; phoneEl.style.display = 'none'; }
+function closePhone() { phoneOpen = false; stopSnake(); phoneEl.style.display = 'none'; phoneEl.style.animation = ''; }
 
 /* Car DJ. The DJ spoke only on a station change, so on a long drive he never said
    anything. Now he chimes in periodically while you're driving with the radio on. */
@@ -5637,6 +5645,129 @@ function updateCarDJ(dt) {
   if (nextDjAt > 0) return;
   nextDjAt = 70 + Math.random() * 110;
   djSpeak();
+}
+
+/* ================= INCOMING CALLS ON THE HANDSET =================
+   The call used to arrive as a modern popup pill, which sat badly against a 2005
+   phone sitting in the same game. Now the handset itself rings: full screen, caller
+   on the LCD, soft keys for answer and decline, and the screen shakes like a phone
+   buzzing on a table. The old popup is kept as a fallback if the phone UI hasn't
+   been created for any reason. */
+let incomingCall = false;
+function showIncomingOnPhone() {
+  incomingCall = true;
+  phoneOpen = true;
+  phoneEl.style.display = 'flex';
+  phoneEl.style.animation = 'phbuzz 0.35s ease-in-out infinite';
+  phoneEl.innerHTML =
+    '<div class="ph-body"><div class="ph-grille"></div><div class="ph-screen" style="text-align:center;">' +
+    phoneSignalBar() +
+    '<div style="margin-top:26px;font-size:10px;opacity:0.75;">INCOMING CALL</div>' +
+    '<div style="margin-top:6px;font:800 20px/1.2 ui-monospace,monospace;">THE BOSS</div>' +
+    '<div style="margin-top:4px;font-size:10px;opacity:0.6;">mobile</div>' +
+    '<div style="margin-top:30px;font-size:22px;">\u260E</div>' +
+    '<div class="ph-soft" style="margin-top:26px;"><span>Answer</span><span>Decline</span></div>' +
+    '</div><div class="ph-keys" style="grid-template-columns:1fr 1fr;">' +
+    '<button class="ph-key" data-call="answer" style="background:linear-gradient(#2f7a3f,#1d5228);">ANSWER</button>' +
+    '<button class="ph-key" data-call="decline" style="background:linear-gradient(#7a2f2f,#521d1d);">DECLINE</button>' +
+    '</div></div>';
+  phoneEl.querySelectorAll('[data-call]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const answer = b.dataset.call === 'answer';
+      incomingCall = false;
+      phoneEl.style.animation = '';
+      closePhone();
+      if (answer) document.getElementById('phone-answer-btn').click();
+      else document.getElementById('phone-decline-btn').click();
+    });
+  });
+}
+
+/* ================= SNAKE =================
+   It is a 2005 phone. Rendered as characters in the LCD rather than as canvas, so it
+   inherits the amber glow and scanlines for free. */
+let snakeState = null;
+function startSnake() {
+  const W = 16, H = 11;
+  snakeState = {
+    W, H, body: [{ x: 6, y: 5 }, { x: 5, y: 5 }, { x: 4, y: 5 }],
+    dir: { x: 1, y: 0 }, food: { x: 11, y: 5 }, score: 0, dead: false, tick: 0,
+  };
+  phoneScreen = 'snake';
+  renderSnake();
+  if (startSnake._t) clearInterval(startSnake._t);
+  startSnake._t = setInterval(stepSnake, 220);
+}
+function stopSnake() {
+  if (startSnake._t) { clearInterval(startSnake._t); startSnake._t = null; }
+  snakeState = null;
+}
+function stepSnake() {
+  const s = snakeState;
+  if (!s || s.dead || !phoneOpen) return;
+  const head = { x: s.body[0].x + s.dir.x, y: s.body[0].y + s.dir.y };
+  if (head.x < 0 || head.y < 0 || head.x >= s.W || head.y >= s.H ||
+      s.body.some((b) => b.x === head.x && b.y === head.y)) {
+    s.dead = true;
+    if (s.score > snakeBest) { snakeBest = s.score; saveGameState(); }
+    renderSnake();
+    return;
+  }
+  s.body.unshift(head);
+  if (head.x === s.food.x && head.y === s.food.y) {
+    s.score++;
+    do {
+      s.food = { x: Math.floor(Math.random() * s.W), y: Math.floor(Math.random() * s.H) };
+    } while (s.body.some((b) => b.x === s.food.x && b.y === s.food.y));
+  } else {
+    s.body.pop();
+  }
+  renderSnake();
+}
+let snakeBest = 0;
+function renderSnake() {
+  const s = snakeState;
+  if (!s) return;
+  let grid = '';
+  for (let y = 0; y < s.H; y++) {
+    for (let x = 0; x < s.W; x++) {
+      const isHead = s.body[0].x === x && s.body[0].y === y;
+      const isBody = !isHead && s.body.some((b) => b.x === x && b.y === y);
+      const isFood = s.food.x === x && s.food.y === y;
+      grid += isHead ? '\u25A0' : isBody ? '\u25AA' : isFood ? '\u25CF' : '\u00B7';
+    }
+    grid += '\n';
+  }
+  phoneEl.innerHTML =
+    '<div class="ph-body"><div class="ph-grille"></div><div class="ph-screen">' +
+    '<div class="ph-bar"><span>SNAKE</span><span>' + s.score + '</span><span>BEST ' + snakeBest + '</span></div>' +
+    '<pre style="margin:0;font:700 10px/1.05 ui-monospace,monospace;letter-spacing:1px;">' + grid + '</pre>' +
+    (s.dead ? '<div style="text-align:center;margin-top:4px;">GAME OVER</div>' : '') +
+    '<div class="ph-soft"><span>' + (s.dead ? 'Retry' : 'Move') + '</span><span>Back</span></div>' +
+    '</div><div class="ph-keys">' +
+    '<button class="ph-key" data-s="ul"> </button>' +
+    '<button class="ph-key" data-s="up">\u25B2</button>' +
+    '<button class="ph-key" data-s="ur"> </button>' +
+    '<button class="ph-key" data-s="left">\u25C0</button>' +
+    '<button class="ph-key" data-s="' + (s.dead ? 'retry' : 'ok') + '">' + (s.dead ? '\u21BB' : 'OK') + '</button>' +
+    '<button class="ph-key" data-s="right">\u25B6</button>' +
+    '<button class="ph-key" data-s="dl"> </button>' +
+    '<button class="ph-key" data-s="down">\u25BC</button>' +
+    '<button class="ph-key" data-s="back">BACK</button>' +
+    '</div></div>';
+  phoneEl.querySelectorAll('[data-s]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const k = b.dataset.s, st = snakeState;
+      if (!st) return;
+      // no reversing straight into yourself
+      if (k === 'up' && st.dir.y === 0) st.dir = { x: 0, y: -1 };
+      else if (k === 'down' && st.dir.y === 0) st.dir = { x: 0, y: 1 };
+      else if (k === 'left' && st.dir.x === 0) st.dir = { x: -1, y: 0 };
+      else if (k === 'right' && st.dir.x === 0) st.dir = { x: 1, y: 0 };
+      else if (k === 'retry') startSnake();
+      else if (k === 'back') { stopSnake(); phoneScreen = 'menu'; renderPhone(); }
+    });
+  });
 }
 
 function laneX(index) {
