@@ -342,6 +342,7 @@
     <div id="speedo-gear" style="margin-top:2px;opacity:0.75;">GEAR 1</div>
   </div>
   <div id="compass" style="position:fixed;left:50%;transform:translateX(-50%);top:106px;z-index:11;display:none;font:700 10px/1.4 ui-monospace,Menlo,Consolas,monospace;color:var(--text-dim);background:var(--panel);border:1px solid var(--panel-border);border-radius:10px;padding:6px 12px;backdrop-filter:blur(6px);text-align:center;"></div>
+  <div id="pos-readout" style="position:fixed;left:50%;transform:translateX(-50%);top:150px;z-index:30;font:800 13px/1 ui-monospace,Menlo,Consolas,monospace;color:#ffd166;background:rgba(10,12,16,0.9);border:1px solid #665;border-radius:8px;padding:8px 14px;">X 0.0   Z 0.0</div>
   <div id="game-clock" style="position:fixed;left:12px;top:62px;z-index:12;font:700 12px/1 ui-monospace,Menlo,Consolas,monospace;color:var(--text-dim);background:var(--panel);border:1px solid var(--panel-border);border-radius:999px;padding:7px 12px;backdrop-filter:blur(6px);">12:00 AM</div>
   <div id="status-panel">
     <div class="row"><span class="lbl">Status</span><span class="state-text" id="state-text">Searching</span></div>
@@ -655,6 +656,19 @@ function base64ToArrayBuffer(b64) {
   });
   window.__gameNote = note; // so load callbacks can report too
   // GPU memory pressure is the standing suspect — report the renderer's own counts.
+  /* Live position readout. The house is a single fused mesh with no named door, so
+     the front door cannot be found by reading the model — it has to be measured in
+     game. Walk to the door and read these numbers off. */
+  window.__posLine = null;
+  window.__showPos = true; // on from the start for this measuring pass
+  setInterval(() => {
+    if (!window.__showPos) return;
+    const el = document.getElementById('pos-readout');
+    if (!el) return;
+    const c = (typeof character !== 'undefined' && character) ? character.position : null;
+    if (!c) return;
+    el.textContent = 'X ' + c.x.toFixed(1) + '   Z ' + c.z.toFixed(1) + (inInterior ? '   [inside]' : '');
+  }, 200);
   window.__reportGPU = () => {
     try {
       const i = renderer.info;
@@ -1636,6 +1650,7 @@ function interiorClamp(pos) {
   // INTERIOR_ORIGIN. Inset by 2m so he stops short of the walls instead of in them.
   pos.x = Math.max(INTERIOR_ORIGIN.x - 0.5, Math.min(INTERIOR_ORIGIN.x + 10.5, pos.x));
   pos.z = Math.max(INTERIOR_ORIGIN.z - 8.5, Math.min(INTERIOR_ORIGIN.z + 4.5, pos.z));
+  pos.y = 0;
 }
 function walkBound() {
   // Was just far enough to reach the garage pad. Now that the car can leave the road
@@ -4857,13 +4872,19 @@ function updateEngineDistance() {
 
    Everything outdoors is hidden while inside, so this replaces the exterior's draw
    calls rather than adding to them. */
-const INTERIOR_ORIGIN = { x: 2000, y: 0, z: 0 };
+/* The interior now sits ON the house rather than 2 km away. Its own contents span
+   x -2.5..12.5 and z -10.5..6.5, so this offset centres the building on the origin —
+   the same place the exterior house is centred. Everything outdoors (including the
+   exterior house) is hidden while you're inside, so nothing overlaps visually, and
+   it means walking in doesn't teleport you: the compass still reads sensibly and
+   stepping back out puts you where you were. */
+const INTERIOR_ORIGIN = { x: -5, y: 0, z: 2 };
 const DOOR_POS = { x: 0, z: 14 };      // outside, on the house's garage-facing edge
 /* Measured from the model's true world bounds (x -2.5..12.5, z -10.5..6.5, 8.2m
    tall). The first attempt spawned at local z=8, which is past the z=6.5 wall —
    outside the building entirely, which is why you had to walk through a wall. This
    is the middle of the ground floor. */
-const INTERIOR_EXIT = { x: 2005, z: -2 };
+const INTERIOR_EXIT = { x: 0, z: 0 }; // centre of the ground floor, which is now the origin
 // (declared earlier, above updateCamera — see the hoisted block)
 let hiddenOutdoors = [];
 
@@ -4935,6 +4956,7 @@ function setOutdoorsVisible(on) {
     hiddenOutdoors = [];
     for (const child of scene.children) {
       if (child === interiorRoot || child === character || child.isLight || child === doorMarker) continue;
+      if (child === contactShadow) continue; // keep the character's ground shadow
       if (child.visible) { hiddenOutdoors.push(child); child.visible = false; }
     }
   } else {
