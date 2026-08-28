@@ -611,6 +611,7 @@ const ASSETS = {
   CALL_CARMINE: 'call_carmine.mp3',
   CALL_JUNIOR: 'call_junior.mp3',
   INTERIOR: 'interior.glb',
+  NJ_STREET: 'nj_street.glb',
   GRASS_COLOR: 'grass_color.webp',   // photoscanned ground grass, 1024 — replaces the procedural canvas texture
   GRASS_NORMAL: 'grass_normal.webp', // 512 is plenty for a normal map at this viewing distance
   FOREST_NEAR: 'pine_near.glb', // pine patch, 47,920 verts, ~51 x 46 units — cloned across the map
@@ -6145,6 +6146,37 @@ function updatePovCamera() {
   camera.rotation.z += (carState.roll || 0) * 0.3;
 }
 
+/* ================= NEW JERSEY STREET (BETA) =================
+   Built from Kenney's City Kit (Suburban), CC0 — 21 house types, fences, trees. I
+   composed 149 placements from 12 unique meshes sharing a single 512px atlas, so the
+   whole street is 470 KB and one material.
+
+   It lines the highway (x=27, z=-80..900) rather than the yard: the low-poly kit and
+   the photoscanned house read very differently up close, but at road distance and
+   through fog the suburbia sells and the mismatch doesn't. Loaded last, and only
+   after the interior, so it never delays anything you see first. */
+let njStreet = null;
+function loadNJStreet() {
+  loader.parse(ASSETS.NJ_STREET, '', (gltf) => {
+    try {
+      njStreet = gltf.scene;
+      njStreet.traverse((o) => {
+        if (!o.isMesh) return;
+        o.castShadow = false;      // 149 shadow casters would be indefensible
+        o.receiveShadow = false;
+        o.frustumCulled = true;    // only a handful are ever in view
+        if (o.material) {
+          o.material.fog = true;   // let distance haze blend it into the treeline
+          o.material.roughness = 0.95;
+          o.material.metalness = 0.0;
+        }
+      });
+      scene.add(njStreet);
+      if (window.__gameNote) window.__gameNote('NJ street: ' + njStreet.children.length + ' objects');
+    } catch (e) { console.warn('nj street failed:', e); }
+  }, (e) => console.warn('nj street load failed:', e));
+}
+
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
   const lanes = [-ROAD_ZONE.halfW * 0.55, -ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.55];
@@ -6875,6 +6907,7 @@ function endLoad(name) {
     setTimeout(() => { try { buildDust(); buildRain(); buildPuddles(); } catch (e) { console.warn('weather failed:', e); } }, 6200);
     setTimeout(() => { try { buildFireflies(); buildLeaves(); buildCelestialBodies(); } catch (e) { console.warn('ambient particles failed:', e); } }, 7200);
     setTimeout(loadInterior, 9000); // last in the queue — biggest file, least urgent
+    setTimeout(loadNJStreet, 12000); // after the interior; scenery, so lowest priority
     setTimeout(() => { if (window.__reportGPU) window.__reportGPU(); }, 9000); // one-shot resource report once scenery has settled
   }
 }
