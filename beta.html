@@ -4987,7 +4987,18 @@ function loadInterior() {
         // Everything is solid except things you genuinely walk over. The previous
         // filter also excluded "frame" and "glass", which threw away door frames,
         // window frames and glazing — all of which are walls you could stroll through.
-        if (!/rug|carpet|mat_floor|^floor/i.test(o.name || '')) interiorSolids.push(o);
+        /* 202 solids meant getting snagged on every lamp and chair leg. Collide with
+           the shell and with furniture big enough to actually be an obstacle; small
+           props are walked through, which is far less annoying than being stuck. */
+        const big = (() => {
+          try {
+            const bb = new THREE.Box3().setFromObject(o);
+            const sz = new THREE.Vector3(); bb.getSize(sz);
+            return Math.max(sz.x, sz.z) > 0.7 && sz.y > 0.4;
+          } catch (e) { return false; }
+        })();
+        const structural = /level|wall|ceil|roof|stair/i.test(n);
+        if (!/rug|carpet|mat_floor|^floor/i.test(o.name || '') && (structural || big)) interiorSolids.push(o);
       });
       if (window.__gameNote) window.__gameNote('interior: ' + interiorColliders.length + ' wall meshes, ' + interiorSolids.length + ' solids, ' + doorsHidden + ' doors opened');
       if (window.__gameNote) window.__gameNote('interior colliders: ' + interiorColliders.length);
@@ -5106,7 +5117,7 @@ function updateInteriorActions() {
   if (leave) leave.style.display = (inInterior && !photoMode) ? '' : 'none';
   if (!inInterior || !character || photoMode) { actBtn.style.display = 'none'; return; }
   const px = character.position.x, pz = character.position.z;
-  const near = (p) => Math.hypot(px - (INTERIOR_ORIGIN.x + p.x), pz - (INTERIOR_ORIGIN.z + p.z));
+  const near = (p) => { const w = iw(p); return Math.hypot(px - w.x, pz - w.z); };
   if (seated) {
     actBtn.textContent = 'Stand Up'; actBtnAction = toggleSit; actBtn.style.display = ''; return;
   }
@@ -5258,10 +5269,17 @@ function renderQuiz() {
    The bathroom fittings sit under matrix-transformed parents that a translation
    walk can't resolve, so the mirror is placed by eye on the living-room wall
    instead of at the real bathroom one. */
-const SOFA_POS = { x: 1.18, z: -0.35 };
-const FRIDGE_POS = { x: -1.42, z: 2.43 };
-const TV_POS = { x: 1.51, z: -3.95 };
-const MIRROR_POS = { x: 3.2, z: -0.2 };
+/* LOCAL coordinates, inside interiorRoot's own space. These were previously stored
+   as world positions (local + INTERIOR_ORIGIN) but then used as local positions when
+   parenting objects to interiorRoot — which already carries that offset. Everything
+   landed about 5 m out, inside walls, and the proximity checks added the offset a
+   second time so Sit and Fridge never triggered. */
+const SOFA_POS = { x: 6.18, z: -2.35 };
+const FRIDGE_POS = { x: 3.58, z: 0.43 };
+const TV_POS = { x: 6.51, z: -5.95 };
+const MIRROR_POS = { x: 8.2, z: -2.2 };
+// world position of a local point inside the interior
+const iw = (p) => ({ x: INTERIOR_ORIGIN.x + p.x, z: INTERIOR_ORIGIN.z + p.z });
 
 /* 4. Interior lighting that follows the clock. Warm lamps that come up after dark
    and fade out during the day, so the house isn't lit identically at 3pm and 3am. */
@@ -5270,8 +5288,8 @@ function buildInteriorLights() {
   const spots = [
     [SOFA_POS.x, 2.3, SOFA_POS.z, 0xffd9a0, 9],
     [FRIDGE_POS.x, 2.3, FRIDGE_POS.z - 1.2, 0xfff0d0, 7],
-    [3.0, 2.3, -3.0, 0xffd9a0, 8],
-    [-2.5, 2.3, -4.5, 0xffc98a, 6],
+    [8.0, 2.3, -5.0, 0xffd9a0, 8],
+    [2.5, 2.3, -6.5, 0xffc98a, 6],
   ];
   for (const [x, y, z, col, dist] of spots) {
     const l = new THREE.PointLight(col, 0, dist, 2);
@@ -5342,8 +5360,8 @@ function buildMirror() {
 }
 function updateMirror() {
   if (!mirrorMesh || !inInterior || !character) return;
-  const d = Math.hypot(character.position.x - (INTERIOR_ORIGIN.x + MIRROR_POS.x),
-                       character.position.z - (INTERIOR_ORIGIN.z + MIRROR_POS.z));
+  const mw = iw(MIRROR_POS);
+  const d = Math.hypot(character.position.x - mw.x, character.position.z - mw.z);
   if (d > 8) return;                       // out of range, don't pay for it
   if ((mirrorTick++ % 6) !== 0) return;    // every 6th frame is plenty for a mirror
   mirrorMesh.visible = false;              // don't let it reflect itself
@@ -5364,7 +5382,7 @@ function toggleSit() {
     return;
   }
   seated = true;
-  character.position.set(INTERIOR_ORIGIN.x + SOFA_POS.x, 0.42, INTERIOR_ORIGIN.z + SOFA_POS.z + 0.35);
+  { const w = iw(SOFA_POS); character.position.set(w.x, 0.42, w.z + 0.35); }
   character.rotation.y = Math.PI;
   playAction(CLIP.crouch, { fade: 0.3 });
 }
@@ -5376,8 +5394,8 @@ function openFridge() {
   if (now - fridgeUsedAt < 25000) return;
   fridgeUsedAt = now;
   playDoorSlam();
-  const wx = INTERIOR_ORIGIN.x + FRIDGE_POS.x;
-  const wz = INTERIOR_ORIGIN.z + FRIDGE_POS.z;
+  const fw = iw(FRIDGE_POS);
+  const wx = fw.x, wz = fw.z;
   try { spawnGabagool(wx + 0.8, wz + 0.4); } catch (e) { /* spawner is outdoor-scoped; ignore */ }
   if (window.__gameNote) window.__gameNote('Fridge: gabagool acquired');
 }
@@ -6526,7 +6544,17 @@ function handleMovement(dt) {
     const analogScale = joyManual && !keyManual ? Math.max(0.35, joyMag) : 1;
     let speed = (manual && running) ? runSpeed : walkSpeed * analogScale;
   if (crouching) speed *= 0.45; // crouch-walking is slower, as the clip implies
-    const blocked = isBlockedAheadThrottled(character.position, moveDir, inInterior ? 0.75 : 0.55);
+    let blocked = isBlockedAheadThrottled(character.position, moveDir, inInterior ? 0.6 : 0.55);
+    if (blocked && inInterior) {
+      // Try sliding along the obstacle rather than stopping dead — being pinned in a
+      // doorway with no way out is what made this feel broken.
+      const slideA = new THREE.Vector3(-moveDir.z, 0, moveDir.x).normalize();
+      const slideB = slideA.clone().multiplyScalar(-1);
+      for (const alt of [slideA, slideB]) {
+        const test = alt.clone().multiplyScalar(0.7).add(moveDir.clone().multiplyScalar(0.3)).normalize();
+        if (!isBlockedAhead(character.position, test, 0.6)) { moveDir.copy(test); blocked = false; break; }
+      }
+    }
     if (!blocked) {
       character.position.addScaledVector(moveDir, speed * dt);
       if (inInterior) {
