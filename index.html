@@ -2085,6 +2085,13 @@ function updateStatusUI() {
   hFill.style.width = pct + '%';
   hFill.classList.toggle('low', pct < 30);
   const sFill = document.getElementById('size-fill');
+  /* The SIZE meter is dead now that growth on eating is gone — it would sit at zero
+     forever. Hide the bar and its label wherever they live in the panel. */
+  if (sFill && sFill.parentElement) {
+    sFill.parentElement.style.display = 'none';
+    const lbl = sFill.parentElement.previousElementSibling;
+    if (lbl && /size/i.test(lbl.textContent || '')) lbl.style.display = 'none';
+  }
 
   const panicRow = document.getElementById('panic-row');
   if (gameState === 'anxious') {
