@@ -211,10 +211,12 @@
     /* Moved off the right edge: the action pad (SHOOT/JUMP/KNEE) and the sound,
        camera and cigar buttons all live there now and were sitting on top of these.
        Left side, above the toggles, is clear. */
-    position: fixed; left: 20px; bottom: 330px; z-index: 10;
+    /* Toggle stack occupies bottom 246/288/330 on the left, so this sits above it.
+       Sound, photo and cigar have moved out to their own column on the right. */
+    position: fixed; left: 20px; bottom: 380px; z-index: 10;
     display: flex; flex-direction: row; gap: 8px;
   }
-  #zoom-controls button {
+  #util-pad button, #zoom-controls button {
     width: 34px; height: 34px; border-radius: 50%; background: var(--panel); border: 1px solid var(--panel-border);
     color: var(--text); font-size: 16px; backdrop-filter: blur(6px);
     display: flex; align-items: center; justify-content: center;
@@ -404,12 +406,19 @@
   <div id="autohunt-toggle"><span class="sw"></span> Auto-hunt</div>
   <div id="drive-toggle"><span class="sw"></span> Drive</div>
 
-  <div id="action-pad" style="position:fixed;right:14px;bottom:calc(196px + env(safe-area-inset-bottom,0px));z-index:11;display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
+  <div id="util-pad" style="position:fixed;right:16px;bottom:calc(86px + env(safe-area-inset-bottom,0px));z-index:11;display:flex;flex-direction:row;gap:8px;align-items:center;">
+    <button id="horn-btn" title="Horn" style="display:none;">📢</button>
+    <button id="photo-btn" title="Photo mode">📷</button>
+    <button id="cigar-btn" title="Cigar">🚬</button>
+    <button id="quiz-btn" title="Quiz">❓</button>
+  </div>
+
+  <div id="action-pad" style="position:fixed;right:14px;bottom:calc(220px + env(safe-area-inset-bottom,0px));z-index:11;display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
     <div class="act-btn" data-act="shoot" style="width:58px;height:58px;border-radius:50%;background:var(--panel);border:2px solid #d84a3a;color:#ff7a63;font:800 10px/58px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">SHOOT</div>
     <div class="act-btn" data-act="jump" style="width:58px;height:58px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/58px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">JUMP</div>
     <div class="act-btn" data-act="punch" style="width:52px;height:52px;border-radius:50%;background:var(--panel);border:2px solid var(--panel-border);color:var(--text-dim);font:800 10px/52px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">KNEE</div>
   </div>
-  <div id="handbrake-btn" style="display:none;position:fixed;right:16px;bottom:calc(210px + env(safe-area-inset-bottom,0px));z-index:11;width:62px;height:62px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/62px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;touch-action:none;">HAND<br>BRAKE</div>
+  <div id="handbrake-btn" style="display:none;position:fixed;right:16px;bottom:calc(146px + env(safe-area-inset-bottom,0px));z-index:12;width:62px;height:62px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/62px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;touch-action:none;">HAND<br>BRAKE</div>
 
   <div id="joystick-zone">
     <div id="joystick-base">
@@ -432,9 +441,7 @@
     </button>
     <button id="zoom-in">+</button>
     <button id="zoom-out">−</button>
-    <button id="horn-btn" title="Horn" style="display:none;">📢</button>
-    <button id="photo-btn" title="Photo mode">📷</button>
-    <button id="cigar-btn" title="Cigar">🚬</button>
+
   </div>
 
   <div id="radio" style="position:fixed;left:50%;transform:translateX(-50%);top:62px;z-index:12;display:none;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--panel-border);border-radius:999px;padding:6px 10px;backdrop-filter:blur(6px);">
@@ -1144,6 +1151,10 @@ function loadGeorgeCar() {
     georgeCar.scale.setScalar(2.5);
     georgeCar.position.set(GEORGE_POS.x, 0.65, GEORGE_POS.z);
     georgeCar.rotation.y = Math.PI / 2;
+    // Register as a collider so you can't walk through it. houseColliders is what
+    // isBlockedAhead() tests outdoors, so adding the car's meshes is all it takes.
+    georgeCar.updateMatrixWorld(true);
+    georgeCar.traverse((o) => { if (o.isMesh) houseColliders.push(o); });
     scene.add(georgeCar);
   }, (err) => {
     console.warn('George car failed to load (non-fatal):', err);
@@ -3726,7 +3737,7 @@ function showRadio(show) {
 let photoMode = false;
 function togglePhotoMode() {
   photoMode = !photoMode;
-  const hide = ['topbar','anim-panel','joystick-zone','run-toggle','autohunt-toggle','drive-toggle','status-panel','speedo','radio','hint','zoom-controls','action-pad','game-clock','compass'];
+  const hide = ['topbar','anim-panel','joystick-zone','run-toggle','autohunt-toggle','drive-toggle','status-panel','speedo','radio','hint','zoom-controls','action-pad','game-clock','compass','util-pad','pos-readout'];
   for (const id of hide) {
     const el = document.getElementById(id);
     if (el) el.style.visibility = photoMode ? 'hidden' : '';
@@ -5053,6 +5064,116 @@ function updateInteriorPrompt(dt) {
   }
 }
 
+/* ================= POP QUIZ =================
+   Questions are written from general knowledge of the series — no dialogue is
+   reproduced, only facts about plot, characters and production. Answers are
+   shuffled each time so the position doesn't give it away. */
+const QUIZ = [
+  { q: "What is the name of the strip club the crew uses as a hangout?", a: ["The Bada Bing", "The Crazy Horse", "Nuovo Vesuvio", "Satriale's"], c: 0 },
+  { q: "What kind of business is Satriale's?", a: ["A pork store", "A funeral home", "A car wash", "A bakery"], c: 0 },
+  { q: "What animal appears in Tony's pool in the first season, triggering his panic attacks?", a: ["Ducks", "Swans", "Geese", "Herons"], c: 0 },
+  { q: "Who is Tony's psychiatrist?", a: ["Dr. Jennifer Melfi", "Dr. Elliot Kupferberg", "Dr. Richard La Penna", "Dr. Wendi Kobler"], c: 0 },
+  { q: "What is Tony's wife called?", a: ["Carmela", "Adriana", "Janice", "Rosalie"], c: 0 },
+  { q: "Which character runs the Aprile crew before Tony reassigns it?", a: ["Richie Aprile", "Ralph Cifaretto", "Paulie Gualtieri", "Furio Giunta"], c: 0 },
+  { q: "What is Tony's nephew's name?", a: ["Christopher Moltisanti", "Silvio Dante", "Bobby Baccalieri", "Eugene Pontecorvo"], c: 0 },
+  { q: "What instrument-shaped nickname does Peter Paul Gualtieri go by?", a: ["Paulie Walnuts", "Big Pussy", "Johnny Sack", "Little Carmine"], c: 0 },
+  { q: "In which US state is the series primarily set?", a: ["New Jersey", "New York", "Rhode Island", "Connecticut"], c: 0 },
+  { q: "What is the name of Tony's sister who returns from Seattle?", a: ["Janice", "Barbara", "Livia", "Gabriella"], c: 0 },
+  { q: "Who played Tony Soprano?", a: ["James Gandolfini", "Michael Imperioli", "Steven Van Zandt", "Tony Sirico"], c: 0 },
+  { q: "What is the name of Tony's mother?", a: ["Livia", "Carmela", "Angie", "Concetta"], c: 0 },
+  { q: "Which crew member is also a musician in Bruce Springsteen's band?", a: ["Steven Van Zandt", "Michael Imperioli", "Vincent Pastore", "Federico Castelluccio"], c: 0 },
+  { q: "What does Tony famously call the cured meat he loves?", a: ["Gabagool", "Mozzarell", "Manigot", "Prosciutt"], c: 0 },
+  { q: "How many seasons did the series run?", a: ["Six", "Five", "Seven", "Eight"], c: 0 },
+  { q: "What business does Tony use as his official occupation?", a: ["Waste management", "Construction", "Restaurant supply", "Trucking"], c: 0 },
+  { q: "Who is Tony's consigliere and closest advisor?", a: ["Silvio Dante", "Paulie Gualtieri", "Bobby Baccalieri", "Furio Giunta"], c: 0 },
+  { q: "What is the name of Tony and Carmela's daughter?", a: ["Meadow", "Adriana", "Sophia", "Kelli"], c: 0 },
+];
+let quizIndex = 0, quizScore = 0, quizAsked = 0, quizOrder = [];
+const quizEl = document.createElement('div');
+quizEl.id = 'quiz-overlay';
+quizEl.style.cssText = 'position:fixed;inset:0;z-index:120;display:none;background:rgba(6,8,12,0.94);backdrop-filter:blur(6px);align-items:center;justify-content:center;padding:24px;';
+document.body.appendChild(quizEl);
+
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+function openQuiz() {
+  quizOrder = shuffle([...QUIZ.keys()]);
+  quizIndex = 0; quizScore = 0; quizAsked = 0;
+  quizEl.style.display = 'flex';
+  renderQuiz();
+}
+function closeQuiz() { quizEl.style.display = 'none'; }
+
+function renderQuiz() {
+  if (quizIndex >= 8 || quizIndex >= quizOrder.length) {
+    const pct = Math.round((quizScore / Math.max(1, quizAsked)) * 100);
+    const verdict = pct === 100 ? "You're in the family."
+                  : pct >= 75 ? "Respectable. Sit down, have something."
+                  : pct >= 50 ? "You've seen it, but you weren't paying attention."
+                  : "You watched one episode on a plane, didn't you.";
+    quizEl.innerHTML = '';
+    const box = document.createElement('div');
+    box.style.cssText = 'max-width:420px;text-align:center;color:#fff;font:400 15px/1.6 -apple-system,sans-serif;';
+    box.innerHTML = '<div style="font:800 30px/1 -apple-system,sans-serif;color:var(--accent);margin-bottom:10px;">' +
+      quizScore + ' / ' + quizAsked + '</div><div style="opacity:0.8;margin-bottom:22px;">' + verdict + '</div>';
+    const again = document.createElement('button');
+    again.textContent = 'Play again';
+    again.style.cssText = 'background:var(--accent);color:#1a1208;border:none;border-radius:999px;padding:12px 26px;font:800 14px -apple-system,sans-serif;margin-right:10px;';
+    again.onclick = openQuiz;
+    const done = document.createElement('button');
+    done.textContent = 'Done';
+    done.style.cssText = 'background:transparent;color:#fff;border:1px solid #556;border-radius:999px;padding:12px 26px;font:700 14px -apple-system,sans-serif;';
+    done.onclick = closeQuiz;
+    box.appendChild(again); box.appendChild(done);
+    quizEl.appendChild(box);
+    return;
+  }
+
+  const item = QUIZ[quizOrder[quizIndex]];
+  // shuffle answers but remember which one is right
+  const opts = item.a.map((text, i) => ({ text, right: i === item.c }));
+  shuffle(opts);
+
+  quizEl.innerHTML = '';
+  const box = document.createElement('div');
+  box.style.cssText = 'max-width:440px;width:100%;color:#fff;font:400 15px/1.5 -apple-system,sans-serif;';
+  const head = document.createElement('div');
+  head.style.cssText = 'font:800 11px/1 -apple-system,sans-serif;letter-spacing:2px;color:var(--accent);margin-bottom:14px;';
+  head.textContent = 'POP QUIZ  ' + (quizIndex + 1) + '/8   \u2022   SCORE ' + quizScore;
+  const q = document.createElement('div');
+  q.style.cssText = 'font:700 19px/1.35 -apple-system,sans-serif;margin-bottom:20px;';
+  q.textContent = item.q;
+  box.appendChild(head); box.appendChild(q);
+
+  opts.forEach((o) => {
+    const b = document.createElement('button');
+    b.textContent = o.text;
+    b.style.cssText = 'display:block;width:100%;text-align:left;background:rgba(255,255,255,0.06);color:#fff;border:1px solid #333a44;border-radius:12px;padding:14px 16px;margin-bottom:10px;font:600 15px -apple-system,sans-serif;';
+    b.onclick = () => {
+      quizAsked++;
+      if (o.right) quizScore++;
+      // show the answer briefly before moving on
+      [...box.querySelectorAll('button')].forEach((x) => { x.disabled = true; x.style.opacity = '0.55'; });
+      b.style.opacity = '1';
+      b.style.background = o.right ? 'rgba(80,200,120,0.25)' : 'rgba(220,80,70,0.25)';
+      b.style.borderColor = o.right ? '#4cc26e' : '#d8503f';
+      if (!o.right) {
+        const right = [...box.querySelectorAll('button')].find((x) => x.textContent === item.a[item.c]);
+        if (right) { right.style.opacity = '1'; right.style.borderColor = '#4cc26e'; }
+      }
+      setTimeout(() => { quizIndex++; renderQuiz(); }, 900);
+    };
+    box.appendChild(b);
+  });
+
+  const quit = document.createElement('button');
+  quit.textContent = 'Close';
+  quit.style.cssText = 'background:transparent;color:#8a94a3;border:none;padding:10px 4px;font:600 13px -apple-system,sans-serif;margin-top:6px;';
+  quit.onclick = closeQuiz;
+  box.appendChild(quit);
+  quizEl.appendChild(box);
+}
+
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
   const lanes = [-ROAD_ZONE.halfW * 0.55, -ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.55];
@@ -6300,6 +6421,7 @@ document.querySelectorAll('.act-btn').forEach((btn) => {
 });
 window.addEventListener('blur', () => setCrouch(false));
 document.getElementById('cigar-btn').addEventListener('click', (e) => { e.stopPropagation(); toggleCigar(); });
+document.getElementById('quiz-btn').addEventListener('click', (e) => { e.stopPropagation(); openQuiz(); });
 
 const hbBtn = document.getElementById('handbrake-btn');
 // pointer events rather than click: it has to be held, not tapped
