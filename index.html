@@ -2485,6 +2485,7 @@ function getHeightAtUsing(colliders, x, z) {
 }
 
 let lastGroundY = 0;
+let characterFootOffset = 0; // residual correction measured from the animated pose, not the bind pose
 let groundCheckSkip = 0;
 function updateGroundHeight() {
   if (!character) return;
@@ -2494,7 +2495,7 @@ function updateGroundHeight() {
   if (groundCheckSkip === 0) {
     lastGroundY = getGroundHeightAt(character.position.x, character.position.z);
   }
-  if (!isJumping) character.position.y = lastGroundY; // jump/idle own Y while active
+  if (!isJumping) character.position.y = lastGroundY + characterFootOffset; // jump/idle own Y while active
 }
 
 // Looks a short distance ahead in the given direction; true if a mostly-vertical
@@ -4278,7 +4279,7 @@ function updateJump(dt) {
       playCarOneShot && playDoorSlam();
     }
   }
-  character.position.y = (lastGroundY || 0) + jumpY;
+  character.position.y = (lastGroundY || 0) + characterFootOffset + jumpY;
 }
 
 /* Idle. No idle clip exists, so this is procedural breathing on the whole body plus
@@ -4305,7 +4306,7 @@ function updateIdleMotion(dt) {
   }
   // breathing on top, kept small now that the clip does most of the work
   const breath = Math.sin(idleTime * 1.6) * 0.006;
-  character.position.y = (lastGroundY || 0) + breath;
+  character.position.y = (lastGroundY || 0) + characterFootOffset + breath;
   character.rotation.z = Math.sin(idleTime * 0.9) * 0.006;
   if (idleTime > nextFidgetAt) {
     nextFidgetAt = idleTime + 9 + Math.random() * 11;
@@ -5632,6 +5633,22 @@ loader.parse(buffer, '', (gltf) => {
   character.position.x = GEORGE_POS.x - 2.6;
   character.position.z = GEORGE_POS.z + 1.8;
   character.rotation.y = Math.atan2(GEORGE_POS.x - character.position.x, GEORGE_POS.z - character.position.z); // facing him
+
+  /* Skinned meshes don't report accurate bounds from the bind pose, so the initial
+     grounding can be off once animation starts. Re-measure a moment after the first
+     clip is running and correct any residual offset — this is what left him standing
+     in the ground rather than on it. */
+  setTimeout(() => {
+    try {
+      scene.updateMatrixWorld(true);
+      const bb = new THREE.Box3().setFromObject(character);
+      const foot = bb.min.y - (character.position.y - (lastGroundY || 0));
+      if (Math.abs(foot) > 0.02) {
+        characterFootOffset = -foot;
+        if (window.__gameNote) window.__gameNote('Grounding corrected by ' + characterFootOffset.toFixed(2) + 'm');
+      }
+    } catch (e) { /* leave as-is */ }
+  }, 1200);
 
   // Measure the ACTUAL on-screen size now, and frame the camera from real numbers.
   scene.updateMatrixWorld(true);
