@@ -297,6 +297,10 @@
     <div class="label" id="loading-label" style="display:none;">Loading…</div>
     <div class="pct" id="loading-pct" style="display:none;"></div>
     <button id="tap-to-play">Tap to Start</button>
+    <div id="loading-tips" style="margin-top:22px;max-width:300px;text-align:left;font:400 12px/1.65 -apple-system,BlinkMacSystemFont,sans-serif;color:rgba(255,255,255,0.5);">
+      <div style="font-weight:700;color:rgba(255,255,255,0.72);margin-bottom:7px;letter-spacing:0.4px;">FOR BEST RESULTS</div>
+      <div id="tip-line" style="min-height:34px;"></div>
+    </div>
   </div>
 
   <div id="speed-vignette"></div>
@@ -470,6 +474,7 @@ const ASSETS = {
   GARAGE_E50: 'mercedes_e50.glb',
   GARAGE_W201: 'mercedes_w201.glb',
   GARAGE_PONY: 'hyundai_pony.glb',
+  ENGINE_V8: 'engine_v8.mp3',   // MIT, godotengine/godot-demo-projects truck_town
   ENGINE_IDLE: 'engine_idle.mp3',  // CC0, from pmndrs/racing-game
   ENGINE_REV: 'engine_rev.mp3',
   CAR_BRAKE: 'car_brake.mp3',
@@ -1625,7 +1630,7 @@ let manualOverrideTimer = 0; // seconds autopilot stays suppressed after a manua
 
 /* ================= GABAGOOL GAME ================= */
 const MAX_HUNGER = 100;
-const HUNGER_DRAIN_PER_SEC = 100 / 42;   // starves in ~42s of not eating — the yard's bigger now, gives more travel time
+const HUNGER_DRAIN_PER_SEC = 100 / 420;  // slowed 10x from 100/42. At 42s the bar emptied faster than you could cross the yard, let alone drive anywhere.
 let EAT_DISTANCE = 0.6;
 let RESCUE_DISTANCE = 1.05;            // slightly forgiving while anxious
 const GROW_PER_EAT = 0.12;
@@ -3137,6 +3142,7 @@ function updateCarDriving(dt) {
   updateReverseLight();
   updateReverseBeep();
   updateIndicators(steer);
+  updateAntenna(dt, steer);
   updateRoadNoise(Math.min(1, Math.abs(carState.speed) / CAR_MAX_SPEED), !!carState.offRoad);
   // Lay rubber when the car is genuinely sliding sideways or braking hard at speed.
   const wheelspin = (throttle > 0.75 && speedFrac < 0.22) || (handbrakeDown && speedFrac > 0.15); // hard on the power from near standstill
@@ -3779,7 +3785,7 @@ function updatePuddles() {
 function playEngineCrank(up) {
   if (!ambientCtx || !sfxOn || !engineNodes) return;
   try {
-    const el = new Audio(ASSETS.ENGINE_REV);
+    const el = new Audio(ASSETS.ENGINE_V8);
     el.volume = 0.5;
     el.playbackRate = up ? 0.62 : 0.5;
     el.play().catch(() => {});
@@ -4114,6 +4120,68 @@ function updateLeaves(t) {
   const sh = leafMesh && leafMesh.material.userData.shader;
   if (sh) sh.uniforms.uTime.value = t;
 }
+
+/* Antenna. A thin whip on the roof that trails against acceleration and cornering —
+   the kind of secondary motion that reads as weight without any physics. */
+let antenna = null, antennaLean = { x: 0, z: 0 };
+function ensureAntenna() {
+  if (antenna || !car) return;
+  const box = new THREE.Box3().setFromObject(car);
+  const g = new THREE.CylinderGeometry(0.012, 0.02, 1.15, 5);
+  g.translate(0, 0.575, 0); // pivot at the base, so it bends from the mount
+  antenna = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.5, metalness: 0.6 }));
+  antenna.position.set(box.max.x * 0.55, box.max.y - box.min.y - 0.05, box.min.z * 0.35);
+  car.add(antenna);
+}
+let lastCarSpeed = 0;
+function updateAntenna(dt, steer) {
+  ensureAntenna();
+  if (!antenna) return;
+  const accel = (carState.speed - lastCarSpeed) / Math.max(dt, 0.0001);
+  lastCarSpeed = carState.speed;
+  // trails backwards under acceleration, leans out of the corner, springs back
+  const targetX = Math.max(-0.5, Math.min(0.5, -accel * 0.012));
+  const targetZ = Math.max(-0.5, Math.min(0.5, steer * carState.speed * 0.014));
+  antennaLean.x += (targetX - antennaLean.x) * Math.min(1, dt * 9);
+  antennaLean.z += (targetZ - antennaLean.z) * Math.min(1, dt * 9);
+  // a little residual wobble so it never sits perfectly still
+  const w = Math.sin(clock.elapsedTime * 13) * 0.012 * Math.min(1, Math.abs(carState.speed) / 6);
+  antenna.rotation.set(antennaLean.x + w, 0, antennaLean.z + w);
+}
+
+/* Loading tips. This game is heavy for a phone browser and most of the failures in
+   testing traced back to device conditions rather than the code — low battery
+   throttling, other tabs holding memory, a flaky connection dropping asset
+   downloads. Worth telling people that up front instead of letting it look broken. */
+const LOADING_TIPS = [
+  'Close other browser tabs — each one holds memory this game needs.',
+  'Charge above 30%. Phones throttle the GPU hard in battery saver, which can stall loading.',
+  'Wi-Fi beats mobile data here — around 50 MB of models and textures load in.',
+  'If loading stalls, reload. Assets retry automatically, but a fresh start is faster.',
+  'Turn your phone sideways for a wider view of the road.',
+  'Tap the speaker to cycle: all sound, music muted, silent.',
+  'Walk up to George and ask him to sing.',
+  'A full day passes in about 8 minutes — wait for nightfall.',
+  'Hold HANDBRAKE while turning to slide the back end out.',
+  'The camera button hides the interface for screenshots. Double-tap to exit.',
+];
+(function cycleLoadingTips() {
+  const el = document.getElementById('tip-line');
+  if (!el) return;
+  let i = Math.floor(Math.random() * LOADING_TIPS.length);
+  const show = () => {
+    el.style.opacity = '0';
+    setTimeout(() => {
+      el.textContent = LOADING_TIPS[i % LOADING_TIPS.length];
+      i++;
+      el.style.opacity = '1';
+    }, 320);
+  };
+  el.style.transition = 'opacity 0.32s ease';
+  el.textContent = LOADING_TIPS[i % LOADING_TIPS.length];
+  i++;
+  setInterval(show, 5200);
+})();
 
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
@@ -4996,6 +5064,12 @@ loader.parse(buffer, '', (gltf) => {
   character = root; // move the wrapper group for translation/rotation from here on
   sharpenTextures(character);
 
+  // Start beside George rather than at the origin — he's the most interesting thing
+  // in the yard and there was nothing at 0,0 to explain what to do first.
+  character.position.x = GEORGE_POS.x - 2.6;
+  character.position.z = GEORGE_POS.z + 1.8;
+  character.rotation.y = Math.atan2(GEORGE_POS.x - character.position.x, GEORGE_POS.z - character.position.z); // facing him
+
   // Measure the ACTUAL on-screen size now, and frame the camera from real numbers.
   scene.updateMatrixWorld(true);
   const worldBox = new THREE.Box3().setFromObject(character);
@@ -5273,8 +5347,8 @@ soundToggle.addEventListener('click', () => {
     // Silence the continuous sources immediately rather than waiting for the next frame.
     if (typeof engineNodes !== 'undefined' && engineNodes) {
       try {
-        engineNodes.idle.el.pause();
-        engineNodes.rev.el.pause();
+        engineNodes.main.el.pause();
+        engineNodes.body.el.pause();
         engineNodes.started = false;
       } catch (e) { /* ignore */ }
     }
@@ -5435,9 +5509,13 @@ function initEngineAudio() {
       gain.connect(ambientCtx.destination);
       return { el, gain };
     };
+    // The V8 loop is a short clean cycle meant to be pitch-shifted across the whole
+    // range — that is what the previous pair weren't, which is why they sounded wrong
+    // however they were blended. It carries the main note; the old idle bed stays
+    // underneath at low revs to fill the bottom end.
     engineNodes = {
-      idle: make(ASSETS.ENGINE_IDLE),
-      rev: make(ASSETS.ENGINE_REV),
+      main: make(ASSETS.ENGINE_V8),
+      body: make(ASSETS.ENGINE_IDLE),
       started: false,
     };
   } catch (e) {
@@ -5452,11 +5530,11 @@ function updateEngineAudio(speedFrac, throttle, driving) {
   const t = ambientCtx.currentTime;
 
   if (!driving || !sfxOn) {
-    engineNodes.idle.gain.gain.setTargetAtTime(0, t, 0.2);
-    engineNodes.rev.gain.gain.setTargetAtTime(0, t, 0.2);
+    engineNodes.main.gain.gain.setTargetAtTime(0, t, 0.2);
+    engineNodes.body.gain.gain.setTargetAtTime(0, t, 0.2);
     if (engineNodes.started) {
-      engineNodes.idle.el.pause();
-      engineNodes.rev.el.pause();
+      engineNodes.main.el.pause();
+      engineNodes.body.el.pause();
       engineNodes.started = false;
       playEngineCrank(false);
     }
@@ -5466,8 +5544,8 @@ function updateEngineAudio(speedFrac, throttle, driving) {
   // A suspended context plays nothing and throws nothing — resume before use.
   if (ambientCtx.state === 'suspended') ambientCtx.resume().catch(() => {});
   if (!engineNodes.started) {
-    engineNodes.idle.el.play().catch(() => {});
-    engineNodes.rev.el.play().catch(() => {});
+    engineNodes.main.el.play().catch(() => {});
+    engineNodes.body.el.play().catch(() => {});
     engineNodes.started = true;
     playEngineCrank(true);
   }
@@ -5481,13 +5559,15 @@ function updateEngineAudio(speedFrac, throttle, driving) {
   // Pitch: playbackRate is clamped well inside the range where MP3 resampling still
   // sounds like an engine rather than a chipmunk or a tractor.
   const lim = applyRevLimiter(1 / 60, speedFrac);
-  engineNodes.idle.el.playbackRate = 0.85 + rev * 0.5 + lim;
-  engineNodes.rev.el.playbackRate = 0.8 + rev * 0.55 + lim;
+  // Wide pitch sweep across the gear band — this loop takes it cleanly, which is the
+  // whole reason for switching to it.
+  engineNodes.main.el.playbackRate = Math.max(0.5, Math.min(2.6, 0.72 + rev * 1.15 + gear * 0.06 + lim));
+  engineNodes.body.el.playbackRate = Math.max(0.5, Math.min(1.6, 0.8 + rev * 0.35));
 
-  // Crossfade: idle carries the bottom end, the rev layer takes over under load.
-  const blend = Math.min(1, speedFrac * 1.5 + Math.max(0, throttle) * 0.35);
-  engineNodes.idle.gain.gain.setTargetAtTime(0.30 * (1 - blend * 0.75), t, 0.12);
-  engineNodes.rev.gain.gain.setTargetAtTime(0.34 * blend, t, 0.12);
+  const load = Math.max(0, throttle);
+  engineNodes.main.gain.gain.setTargetAtTime(0.16 + speedFrac * 0.10 + load * 0.07, t, 0.10);
+  // body layer fills the bottom end at low revs and steps aside as the main note climbs
+  engineNodes.body.gain.gain.setTargetAtTime(0.12 * (1 - speedFrac * 0.8), t, 0.14);
 }
 
 /* One-shots: braking and impacts. Each gets its own short-lived element so repeats
