@@ -662,16 +662,28 @@ function base64ToArrayBuffer(b64) {
   window.__posLine = null;
   window.__showPos = true; // on from the start for this measuring pass
   setInterval(() => {
-    if (!window.__showPos) return;
-    const el = document.getElementById('pos-readout');
-    if (!el) return;
-    const c = (typeof character !== 'undefined' && character) ? character.position : null;
-    if (!c) return;
-    el.textContent = 'X ' + c.x.toFixed(1) + '   Z ' + c.z.toFixed(1) + (inInterior ? '   [inside]' : '');
+    try {
+      const el = document.getElementById('pos-readout');
+      if (!el) return;
+      // `character` is a module-scope let; reading it from here is safe once the
+      // module has finished, but wrap anyway so a throw can never kill the timer.
+      const c = (window.__charRef && window.__charRef.position) || null;
+      if (!c) { el.textContent = 'X --   Z --'; return; }
+      el.textContent = 'X ' + c.x.toFixed(1) + '   Z ' + c.z.toFixed(1) + (inInterior ? '   [inside]' : '');
+    } catch (e) { /* never let the readout break anything */ }
   }, 200);
+  // Repeat the position into the panel every few seconds during this measuring pass.
+  setInterval(() => {
+    try {
+      const c = window.__charRef && window.__charRef.position;
+      if (c && window.__gameNote) window.__gameNote('POS  X ' + c.x.toFixed(1) + '  Z ' + c.z.toFixed(1));
+    } catch (e) {}
+  }, 4000);
   window.__reportGPU = () => {
     try {
       const i = renderer.info;
+      const c = window.__charRef && window.__charRef.position;
+      if (c) note('POSITION: X ' + c.x.toFixed(1) + '  Z ' + c.z.toFixed(1));
       note('GPU: ' + i.memory.geometries + ' geometries, ' + i.memory.textures +
            ' textures, ' + i.render.triangles.toLocaleString() + ' tris/frame, ' +
            i.render.calls + ' draw calls, ' +
@@ -5908,6 +5920,7 @@ loader.parse(buffer, '', (gltf) => {
   character.position.y -= box2.min.y;
 
   character = root; // move the wrapper group for translation/rotation from here on
+  window.__charRef = character; // safe handle for the position readout
   sharpenTextures(character);
 
   // Start beside George rather than at the origin — he's the most interesting thing
