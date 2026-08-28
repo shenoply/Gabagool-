@@ -393,15 +393,24 @@
       POOLS.forEach(([title, list]) => shuffle(list).forEach((t) => queue.push([title, t])));
 
       let i = 0;
-      function show() {
+      function show(instant) {
         const [title, text] = queue[i % queue.length];
         head.textContent = title;
+        i++;
+        if (instant) {
+          // The first tip paints immediately. It used to go through the fade, which
+          // meant the line sat empty for 220ms — and during a heavy load that timer
+          // can be delayed far longer, so the tips looked like they never appeared.
+          line.textContent = text;
+          line.style.opacity = '1';
+          return;
+        }
         line.style.opacity = '0';
         setTimeout(() => { line.textContent = text; line.style.opacity = '1'; }, 220);
-        i++;
       }
       line.style.transition = 'opacity 0.22s ease';
-      show();
+      line.style.opacity = '1';
+      show(true);
       setInterval(show, 6500);
     })();
   </script>
