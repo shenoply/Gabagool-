@@ -815,6 +815,7 @@ function base64ToArrayBuffer(b64) {
      window.__fog(0.0015) for thinner. Prints the obscured-percentage table. */
   window.__fog = (d) => {
     if (!scene.fog) return 'no fog';
+    window.__fogManual = true;   // stop the per-frame reassert fighting you
     scene.fog.density = d;
     return [100,200,300,400,500,600,700].map(x =>
       `${x}: ${Math.round((1 - Math.exp(-Math.pow(d * x, 2))) * 100)}%`).join('  ');
@@ -1012,7 +1013,8 @@ function updateDayNight(dt) {
      300 units ~43%               600 units ~89%
    So anything arriving past 500 is already gone before you could see it arrive.
    Density is tunable live via window.__fog(d) — see below. */
-scene.fog = new THREE.FogExp2(0xc9784a, 0.0025); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
+const FOG_OUTDOOR = 0.0016, FOG_INDOOR = 0.05;
+scene.fog = new THREE.FogExp2(0xc9784a, FOG_OUTDOOR); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
 /* ---------- Image-based lighting ----------
    scene.environment was never set, so every MeshStandardMaterial had nothing to
@@ -5220,7 +5222,7 @@ function enterInterior() {
     character.rotation.y = Math.PI;
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
     // indoors the horizon is a wall, so pull the fog right in
-    if (scene.fog) scene.fog.density = 0.055;   // indoors the horizon is a wall
+    if (scene.fog) scene.fog.density = FOG_INDOOR;   // indoors the horizon is a wall
     // The interior neither casts nor meaningfully receives shadows, and the shadow
     // map is one of the most expensive things per frame. Off while inside.
     try { renderer.shadowMap.enabled = false; } catch (e) {}
@@ -5249,7 +5251,7 @@ function exitInterior() {
     character.position.set(DOOR_POS.x + 1.2, 0, DOOR_POS.z + 2.2);
     character.rotation.y = Math.atan2(1.2, 2.2); // facing out, away from the door
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
-    if (scene.fog) scene.fog.density = 0.0025;  // back to outdoor haze
+    if (scene.fog) scene.fog.density = FOG_OUTDOOR;  // back to outdoor haze
     try { renderer.shadowMap.enabled = qualityLevel >= 1; } catch (e) {}
     try { renderer.setPixelRatio(qualityLevel >= 2 ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio, 1.5)); } catch (e) {}
     camDist = 7.5;
@@ -8181,6 +8183,10 @@ function tick() {
   {
     const pb = document.getElementById('pov-btn');
     if (pb) pb.style.display = drivingMode ? '' : 'none';
+  }
+  if (scene.fog && !window.__fogManual) {
+    const want = inInterior ? FOG_INDOOR : FOG_OUTDOOR;
+    if (scene.fog.density !== want) scene.fog.density = want;
   }
   updateBuildingLOD();
   updateCallStrip();
