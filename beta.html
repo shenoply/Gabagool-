@@ -995,7 +995,9 @@ function updateDayNight(dt) {
   }
 }
 
-scene.fog = new THREE.Fog(0xc9784a, 160, 700); // 420 -> 700 so roadside buildings don't vanish // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
+/* Linear fog from 160 to 700. Everything that streams or swaps LOD does so past
+   480, where fog has already taken most of the contrast out of it. */
+scene.fog = new THREE.Fog(0xc9784a, 160, 700); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
 /* ---------- Image-based lighting ----------
    scene.environment was never set, so every MeshStandardMaterial had nothing to
@@ -6305,7 +6307,12 @@ function loadMeshyBuildings() {
       m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true;
     });
     l.addLevel(a, 0);
-    l.addLevel(b, 170);   // swap to the cheap version past 170 units
+    /* Switch deep inside the fog, not in clear air. Fog runs 160->700, so at 480
+       the building is already ~60% faded to fog colour and the swap is invisible.
+       At the old 170 the swap happened where you could still see it clearly, which
+       is exactly what you were watching "load". This is the San Andreas trick:
+       don't hide the pop, put it where nothing is legible. */
+    l.addLevel(b, 480);
     l.position.set(x, 0, z);
     l.rotation.y = rotY;
     scene.add(l);
@@ -6333,15 +6340,18 @@ function loadMeshyBuildings() {
   ];
   PAIRS.forEach(([hiKey, loKey], ki) => {
     loadPair(hiKey, loKey, (hi, lo) => {
-      for (let n = 0; n < 5; n++) putLOD(hi, lo, EAST_X, 96 + (n * 4 + ki) * 22, FACE_W);
-      for (let n = 0; n < 5; n++) putLOD(hi, lo, WEST_X, 107 + (n * 4 + ((ki + 2) % 4)) * 22, FACE_E);
+      /* Start at z=48 rather than 96 — close enough that the street reads from the
+         house, while clearing the yard (which spans about +-22) and the garage at
+         z=26. 6 of each per side now the row is longer. */
+      for (let n = 0; n < 6; n++) putLOD(hi, lo, EAST_X, 48 + (n * 4 + ki) * 22, FACE_W);
+      for (let n = 0; n < 6; n++) putLOD(hi, lo, WEST_X, 59 + (n * 4 + ((ki + 2) % 4)) * 22, FACE_E);
     });
   });
 
   load(ASSETS.DUMPSTER, (src) => {
     for (let n = 0; n < 4; n++) {
-      put(src, EAST_X - 5, 140 + n * 130, 0.6);
-      put(src, WEST_X + 5, 200 + n * 130, 2.4);
+      put(src, EAST_X - 5, 90 + n * 130, 0.6);
+      put(src, WEST_X + 5, 150 + n * 130, 2.4);
     }
   });
 }
