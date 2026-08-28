@@ -820,11 +820,31 @@ function base64ToArrayBuffer(b64) {
     return [100,200,300,400,500,600,700].map(x =>
       `${x}: ${Math.round((1 - Math.exp(-Math.pow(d * x, 2))) * 100)}%`).join('  ');
   };
+  /* A lost WebGL context renders black while the DOM HUD keeps working and throws
+     no error — indistinguishable from a rendering bug unless you listen for it.
+     Usually it means the GPU ran out of memory. */
+  try {
+    const cv = renderer.domElement;
+    cv.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      if (window.__gameNote) window.__gameNote('WEBGL CONTEXT LOST — GPU out of memory. Reload.');
+      const b = document.createElement('div');
+      b.style.cssText = 'position:fixed;inset:auto 12px 90px 12px;z-index:200;background:#3a1414;border:1px solid #d8503f;color:#ffd9d9;padding:14px;border-radius:12px;font:700 13px -apple-system,sans-serif;text-align:center;';
+      b.textContent = 'Graphics memory ran out. Tap to reload.';
+      b.onclick = () => location.reload();
+      document.body.appendChild(b);
+    });
+    cv.addEventListener('webglcontextrestored', () => {
+      if (window.__gameNote) window.__gameNote('WebGL context restored');
+    });
+  } catch (e) {}
+
   window.__reportGPU = () => {
     try {
       const i = renderer.info;
       const c = window.__charRef && window.__charRef.position;
       if (c) note('POSITION: X ' + c.x.toFixed(1) + '  Z ' + c.z.toFixed(1));
+      if (i.programs) note('SHADERS: ' + i.programs.length);
       note('GPU: ' + i.memory.geometries + ' geometries, ' + i.memory.textures +
            ' textures, ' + i.render.triangles.toLocaleString() + ' tris/frame, ' +
            i.render.calls + ' draw calls, ' +
@@ -1751,7 +1771,7 @@ function createGrassTexture() {
 /* 900 spanned only +-450 while the road runs to z=900 and the buildings to 565 —
    so the far end of the street floated over nothing, which reads as the world
    ending rather than as distance. 2200 covers the whole drivable length. */
-const groundGeo = new THREE.PlaneGeometry(2200, 2200); // 100 -> 320 -> 900. At 320 the edge sat at 160 units while fog does not finish until 420, so it was only ~13% fogged and met the sky as a hard line. At 900 the edge is at 450, past fog far, so it fades out instead of ending. It is one quad either way — the size costs nothing.
+const groundGeo = new THREE.PlaneGeometry(1400, 1400); // covers z=900 road end; 2200 was needless memory // 100 -> 320 -> 900. At 320 the edge sat at 160 units while fog does not finish until 420, so it was only ~13% fogged and met the sky as a hard line. At 900 the edge is at 450, past fog far, so it fades out instead of ending. It is one quad either way — the size costs nothing.
 const groundMat = new THREE.MeshStandardMaterial({ map: createGrassTexture(), roughness: 0.95, metalness: 0.0 });
 groundMat.map.anisotropy = maxAniso;
 const ground = new THREE.Mesh(groundGeo, groundMat);
