@@ -3726,6 +3726,7 @@ function setRadioStation(i) {
   const st = RADIO_STATIONS[radioIndex];
   document.getElementById('radio-name').textContent = st.name;
   playStatic();
+  setTimeout(djSpeak, 420); // after the static settles
   if (bgAudio && st.src) {
     const wasOn = soundOn;
     bgAudio.src = st.src;
@@ -3742,7 +3743,7 @@ function showRadio(show) {
 let photoMode = false;
 function togglePhotoMode() {
   photoMode = !photoMode;
-  const hide = ['topbar','anim-panel','joystick-zone','run-toggle','autohunt-toggle','drive-toggle','status-panel','speedo','radio','hint','zoom-controls','action-pad','game-clock','compass','util-pad','pos-readout'];
+  const hide = ['topbar','anim-panel','joystick-zone','run-toggle','autohunt-toggle','drive-toggle','status-panel','speedo','radio','hint','zoom-controls','action-pad','game-clock','compass','util-pad','pos-readout','interior-act-btn'];
   for (const id of hide) {
     const el = document.getElementById(id);
     if (el) el.style.visibility = photoMode ? 'hidden' : '';
@@ -4966,7 +4967,12 @@ function loadInterior() {
       if (window.__gameNote) window.__gameNote('interior: ' + interiorColliders.length + ' wall meshes, ' + interiorSolids.length + ' solids, ' + doorsHidden + ' doors opened');
       if (window.__gameNote) window.__gameNote('interior colliders: ' + interiorColliders.length);
       interiorRoot.visible = false;
+    if (tvVideo) tvVideo.pause();
+    seated = false;
       scene.add(interiorRoot);
+      buildInteriorLights();
+      buildTV();
+      buildMirror();
       interiorReady = true;
       buildDoorMarker();
     } catch (e) { console.warn('interior setup failed:', e); }
@@ -5024,6 +5030,7 @@ function enterInterior() {
   setTimeout(() => {
     inInterior = true;
     interiorRoot.visible = true;
+    if (tvVideo) tvVideo.play().catch(() => {});
     setOutdoorsVisible(false);
     if (doorMarker) doorMarker.position.set(INTERIOR_EXIT.x, 0, INTERIOR_EXIT.z + 2.5);
     character.position.set(INTERIOR_EXIT.x, 0, INTERIOR_EXIT.z);
@@ -5047,6 +5054,8 @@ function exitInterior() {
   setTimeout(() => {
     inInterior = false;
     interiorRoot.visible = false;
+    if (tvVideo) tvVideo.pause();
+    seated = false;
     setOutdoorsVisible(true);
     if (doorMarker) doorMarker.position.set(DOOR_POS.x, 0, DOOR_POS.z);
     character.position.set(DOOR_POS.x + 1.2, 0, DOOR_POS.z + 2.2);
@@ -5058,6 +5067,32 @@ function exitInterior() {
     camPullIn = 0;
     if (savedBackground) { scene.background = savedBackground; savedBackground = null; }
   }, 120);
+}
+
+const actBtn = document.createElement('div');
+actBtn.id = 'interior-act-btn';
+actBtn.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(196px + env(safe-area-inset-bottom,0px));z-index:41;display:none;background:#f0f2f5;color:#141414;font:800 13px/1 -apple-system,sans-serif;padding:11px 20px;border-radius:999px;box-shadow:0 6px 20px rgba(0,0,0,0.45);user-select:none;-webkit-user-select:none;';
+document.body.appendChild(actBtn);
+let actBtnAction = null;
+actBtn.addEventListener('click', (e) => { e.stopPropagation(); if (actBtnAction) actBtnAction(); });
+
+function updateInteriorActions() {
+  if (!inInterior || !character || photoMode) { actBtn.style.display = 'none'; return; }
+  const px = character.position.x, pz = character.position.z;
+  const near = (p) => Math.hypot(px - (INTERIOR_ORIGIN.x + p.x), pz - (INTERIOR_ORIGIN.z + p.z));
+  if (seated) {
+    actBtn.textContent = 'Stand Up'; actBtnAction = toggleSit; actBtn.style.display = ''; return;
+  }
+  if (near(SOFA_POS) < 2.2) {
+    actBtn.textContent = 'Sit'; actBtnAction = toggleSit; actBtn.style.display = ''; return;
+  }
+  if (near(FRIDGE_POS) < 2.2) {
+    const ready = performance.now() - fridgeUsedAt > 25000;
+    actBtn.textContent = ready ? 'Open Fridge' : 'Fridge (empty)';
+    actBtnAction = ready ? openFridge : null;
+    actBtn.style.display = ''; return;
+  }
+  actBtn.style.display = 'none';
 }
 
 function updateInteriorPrompt(dt) {
@@ -5182,6 +5217,186 @@ function renderQuiz() {
   quit.onclick = closeQuiz;
   box.appendChild(quit);
   quizEl.appendChild(box);
+}
+
+/* ================= INTERIOR FEATURES =================
+   Positions below are measured from the model's node hierarchy, not guessed:
+     sofa 1.18,-0.35   fireplace 1.51,-3.61   dining 3.06,-2.94
+     fridge -1.42,2.43  counter -1.42,-2.97
+   The bathroom fittings sit under matrix-transformed parents that a translation
+   walk can't resolve, so the mirror is placed by eye on the living-room wall
+   instead of at the real bathroom one. */
+const SOFA_POS = { x: 1.18, z: -0.35 };
+const FRIDGE_POS = { x: -1.42, z: 2.43 };
+const TV_POS = { x: 1.51, z: -3.95 };
+const MIRROR_POS = { x: 3.2, z: -0.2 };
+
+/* 4. Interior lighting that follows the clock. Warm lamps that come up after dark
+   and fade out during the day, so the house isn't lit identically at 3pm and 3am. */
+const interiorLamps = [];
+function buildInteriorLights() {
+  const spots = [
+    [SOFA_POS.x, 2.3, SOFA_POS.z, 0xffd9a0, 9],
+    [FRIDGE_POS.x, 2.3, FRIDGE_POS.z - 1.2, 0xfff0d0, 7],
+    [3.0, 2.3, -3.0, 0xffd9a0, 8],
+    [-2.5, 2.3, -4.5, 0xffc98a, 6],
+  ];
+  for (const [x, y, z, col, dist] of spots) {
+    const l = new THREE.PointLight(col, 0, dist, 2);
+    l.position.set(x, y, z);
+    interiorRoot.add(l);
+    interiorLamps.push(l);
+  }
+  // a fire glow that flickers, at the fireplace
+  const fire = new THREE.PointLight(0xff7a2a, 0, 6, 2);
+  fire.position.set(TV_POS.x, 0.6, TV_POS.z + 0.3);
+  interiorRoot.add(fire);
+  interiorLamps.push(fire);
+  fire.userData.fire = true;
+}
+function updateInteriorLights() {
+  if (!inInterior) { for (const l of interiorLamps) l.intensity = 0; return; }
+  const lit = 0.35 + nightLightLevel * 0.65; // dimmer by day, never fully off indoors
+  for (const l of interiorLamps) {
+    l.intensity = l.userData.fire
+      ? (1.4 + Math.sin(clock.elapsedTime * 9) * 0.3 + Math.random() * 0.25)
+      : 2.2 * lit;
+  }
+}
+
+/* 7. TV playing the cutscene file that was already in the repo and unused. */
+let tvMesh = null, tvVideo = null;
+function buildTV() {
+  try {
+    tvVideo = document.createElement('video');
+    tvVideo.src = ASSETS.CUTSCENE;
+    tvVideo.loop = true; tvVideo.muted = true; tvVideo.playsInline = true;
+    tvVideo.crossOrigin = 'anonymous';
+    const tex = new THREE.VideoTexture(tvVideo);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const frame = new THREE.Mesh(
+      new THREE.BoxGeometry(1.5, 0.92, 0.06),
+      new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5, metalness: 0.4 })
+    );
+    tvMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.82), new THREE.MeshBasicMaterial({ map: tex }));
+    tvMesh.position.z = 0.035;
+    frame.add(tvMesh);
+    frame.position.set(TV_POS.x, 1.5, TV_POS.z);
+    interiorRoot.add(frame);
+  } catch (e) { console.warn('tv failed:', e); }
+}
+
+/* 6. Mirror. A cube camera rendered at low resolution and only refreshed when you
+   are close and looking at it — a full-rate mirror is far too expensive here. */
+let mirrorMesh = null, mirrorCam = null, mirrorRT = null, mirrorTick = 0;
+function buildMirror() {
+  mirrorRT = new THREE.WebGLCubeRenderTarget(128, { generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
+  mirrorCam = new THREE.CubeCamera(0.1, 40, mirrorRT);
+  mirrorCam.position.set(MIRROR_POS.x, 1.5, MIRROR_POS.z);
+  interiorRoot.add(mirrorCam);
+  mirrorMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.0, 1.7),
+    new THREE.MeshBasicMaterial({ envMap: mirrorRT.texture })
+  );
+  mirrorMesh.position.set(MIRROR_POS.x, 1.15, MIRROR_POS.z);
+  mirrorMesh.rotation.y = -Math.PI / 2;
+  interiorRoot.add(mirrorMesh);
+  const frame = new THREE.Mesh(
+    new THREE.BoxGeometry(0.06, 1.85, 1.15),
+    new THREE.MeshStandardMaterial({ color: 0x3a2c1c, roughness: 0.6, metalness: 0.3 })
+  );
+  frame.position.set(MIRROR_POS.x + 0.04, 1.15, MIRROR_POS.z);
+  interiorRoot.add(frame);
+}
+function updateMirror() {
+  if (!mirrorMesh || !inInterior || !character) return;
+  const d = Math.hypot(character.position.x - (INTERIOR_ORIGIN.x + MIRROR_POS.x),
+                       character.position.z - (INTERIOR_ORIGIN.z + MIRROR_POS.z));
+  if (d > 8) return;                       // out of range, don't pay for it
+  if ((mirrorTick++ % 6) !== 0) return;    // every 6th frame is plenty for a mirror
+  mirrorMesh.visible = false;              // don't let it reflect itself
+  mirrorCam.update(renderer, scene);
+  mirrorMesh.visible = true;
+}
+
+/* 5. Sit. There is no sitting animation in this model — the closest is the in-place
+   crouch — so this lowers him onto the seat and holds that pose. Honest compromise,
+   and it reads better than standing rigidly on a sofa. */
+let seated = false;
+function toggleSit() {
+  if (!inInterior || !character) return;
+  if (seated) {
+    seated = false;
+    character.position.y = 0;
+    playAction(CLIP.idle, { fade: 0.25 });
+    return;
+  }
+  seated = true;
+  character.position.set(INTERIOR_ORIGIN.x + SOFA_POS.x, 0.42, INTERIOR_ORIGIN.z + SOFA_POS.z + 0.35);
+  character.rotation.y = Math.PI;
+  playAction(CLIP.crouch, { fade: 0.3 });
+}
+
+/* 8. Fridge. One gabagool per visit, with a cooldown, because it is the joke. */
+let fridgeUsedAt = 0;
+function openFridge() {
+  const now = performance.now();
+  if (now - fridgeUsedAt < 25000) return;
+  fridgeUsedAt = now;
+  playDoorSlam();
+  const wx = INTERIOR_ORIGIN.x + FRIDGE_POS.x;
+  const wz = INTERIOR_ORIGIN.z + FRIDGE_POS.z;
+  try { spawnGabagool(wx + 0.8, wz + 0.4); } catch (e) { /* spawner is outdoor-scoped; ignore */ }
+  if (window.__gameNote) window.__gameNote('Fridge: gabagool acquired');
+}
+
+/* 9. Footstep reverb indoors. A short synthetic impulse response so steps ring in a
+   room instead of sounding like an open lawn. */
+let interiorConvolver = null, interiorReverbGain = null;
+function ensureInteriorReverb() {
+  if (interiorConvolver || !ambientCtx) return;
+  const len = Math.floor(ambientCtx.sampleRate * 0.6);
+  const buf = ambientCtx.createBuffer(2, len, ambientCtx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch);
+    for (let i = 0; i < len; i++) {
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6);
+    }
+  }
+  interiorConvolver = ambientCtx.createConvolver();
+  interiorConvolver.buffer = buf;
+  interiorReverbGain = ambientCtx.createGain();
+  interiorReverbGain.gain.value = 0;
+  interiorConvolver.connect(interiorReverbGain);
+  interiorReverbGain.connect(ambientCtx.destination);
+}
+function updateInteriorReverb() {
+  if (!ambientCtx) return;
+  ensureInteriorReverb();
+  if (!interiorReverbGain) return;
+  interiorReverbGain.gain.setTargetAtTime(inInterior ? 0.55 : 0, ambientCtx.currentTime, 0.4);
+}
+
+/* 3. Radio DJ. Uses the browser's own speech synthesis, so it costs nothing to
+   download. Fires on station change, and only if the device actually has a voice. */
+const DJ_LINES = [
+  "You're locked in. Nothing but the good stuff tonight.",
+  "Coming up, more of the same, and I make no apologies for it.",
+  "Traffic's clear on the highway. Not that you were gonna slow down.",
+  "That was a request. From somebody who knows somebody.",
+  "Keep it here. We got nowhere else to be.",
+  "Turn it up. Your neighbours already hate you.",
+];
+function djSpeak() {
+  try {
+    if (!window.speechSynthesis || !soundOn) return;
+    const u = new SpeechSynthesisUtterance(DJ_LINES[Math.floor(Math.random() * DJ_LINES.length)]);
+    u.rate = 1.02; u.pitch = 0.8; u.volume = 0.55;
+    const vs = window.speechSynthesis.getVoices();
+    const en = vs.find((v) => /en-(US|GB)/i.test(v.lang));
+    if (en) u.voice = en;
+    window.speechSynthesis.speak(u);
+  } catch (e) { /* no voices available; skip silently */ }
 }
 
 function laneX(index) {
@@ -6927,6 +7142,10 @@ function tick() {
   updateClouds(dt);
   updateGeorgeProximity();
   updateInteriorPrompt(dt);
+  updateInteriorActions();
+  updateInteriorLights();
+  updateMirror();
+  updateInteriorReverb();
   updatePhoneRinger();
   updateGarageProximity();
   if (georgeSongActive) {
