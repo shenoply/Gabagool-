@@ -382,6 +382,8 @@
     <div class="act-btn" data-act="shoot" style="width:58px;height:58px;border-radius:50%;background:var(--panel);border:2px solid #d84a3a;color:#ff7a63;font:800 10px/58px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">SHOOT</div>
     <div class="act-btn" data-act="jump" style="width:58px;height:58px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/58px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">JUMP</div>
     <div class="act-btn" data-act="crouch" style="width:58px;height:58px;border-radius:50%;background:var(--panel);border:2px solid var(--panel-border);color:var(--text-dim);font:800 10px/58px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">CROUCH</div>
+    <div class="act-btn" data-act="roll" style="width:52px;height:52px;border-radius:50%;background:var(--panel);border:2px solid var(--panel-border);color:var(--text-dim);font:800 10px/52px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">ROLL</div>
+    <div class="act-btn" data-act="punch" style="width:52px;height:52px;border-radius:50%;background:var(--panel);border:2px solid var(--panel-border);color:var(--text-dim);font:800 10px/52px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">KNEE</div>
   </div>
   <div id="handbrake-btn" style="display:none;position:fixed;right:16px;bottom:calc(210px + env(safe-area-inset-bottom,0px));z-index:11;width:62px;height:62px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/62px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;touch-action:none;">HAND<br>BRAKE</div>
 
@@ -1613,8 +1615,11 @@ let currentActionName = null;
 // Secondary clips for the scrolling strip. Walk/Run/Crouch/Jump/Shoot are promoted
 // to their own buttons, so they are deliberately not repeated here.
 const ANIM_ORDER = [
-  "Casual_Walk", "Idle_11", "Alert", "Idle_Turn_Left",
-  "Forward_Roll_and_Fire", "Boxing_Practice",
+  "M_Jog_001", "Casual_Walk", "M_Run_Backwards_002", "M_Run_Strafe_Left_002",
+  "M_Crouch_Walk_003", "M_Falling_Idle_002",
+  "Idle_11", "M_Standing_Idle_001", "M_Standing_Idle_002",
+  "M_Standing_Idle_Variations_002", "M_Standing_Idle_Variations_005",
+  "Alert", "Idle_Turn_Left", "Boxing_Practice",
   "Boxing_Guard_Right_Straight_Kick", "Boxing_Guard_Step_Knee_Strike",
   "golf_drive", "Dead"
 ];
@@ -1623,6 +1628,12 @@ const ANIM_ORDER = [
    lowercase where the rest are not, so they're referenced exactly as exported. */
 const LABELS = {
   "walking_man": "Walk", "running": "Run", "Casual_Walk": "Stroll",
+  "M_Jog_001": "Jog", "M_Walk_Jump_003": "Standing Jump", "M_Run_Backwards_002": "Backwards",
+  "M_Crouch_Walk_003": "Crouch Walk", "M_CrouchedWalk_Backwards_002": "Crouch Back",
+  "M_Run_Strafe_Left_002": "Strafe", "M_Jog_Strafe_Left_001": "Jog Strafe",
+  "M_Falling_Idle_002": "Falling", "M_Standing_Idle_001": "Idle 1",
+  "M_Standing_Idle_002": "Idle 2", "M_Standing_Idle_Variations_002": "Idle 3",
+  "M_Standing_Idle_Variations_005": "Idle 4", "M_Standing_Idle_Variations_008": "Idle 5",
   "Cautious_Crouch_Walk_Forward_inplace": "Crouch", "Jump_Run": "Jump",
   "Draw_and_Shoot_Left": "Shoot", "Forward_Roll_and_Fire": "Roll + Fire",
   "Alert": "Alert", "Idle_11": "Idle", "Idle_Turn_Left": "Idle Turn",
@@ -1631,13 +1642,29 @@ const LABELS = {
   "Dead": "Dead"
 };
 const CLIP = {
-  walk: "walking_man", run: "running", stroll: "Casual_Walk",
-  crouch: "Cautious_Crouch_Walk_Forward_inplace", jump: "Jump_Run",
+  walk: "walking_man",          // unchanged — the original walk, deliberately left alone
+  run: "running",               // unchanged
+  jog: "M_Jog_001",             // new middle gear between walk and run
+  stroll: "Casual_Walk",
+  crouch: "Cautious_Crouch_Walk_Forward_inplace",
+  crouchWalk: "M_Crouch_Walk_003",
+  crouchBack: "M_CrouchedWalk_Backwards_002",
+  back: "M_Run_Backwards_002",
+  strafe: "M_Run_Strafe_Left_002",
+  jogStrafe: "M_Jog_Strafe_Left_001",
+  jump: "Jump_Run",             // running jump
+  jumpStand: "M_Walk_Jump_003", // proper standing jump — this is what was missing
+  falling: "M_Falling_Idle_002",
   shoot: "Draw_and_Shoot_Left", roll: "Forward_Roll_and_Fire",
   idle: "Idle_11", idleTurn: "Idle_Turn_Left", alert: "Alert",
 };
+// Idle now cycles through real variations instead of repeating one clip.
+const IDLE_POOL = ["Idle_11", "M_Standing_Idle_001", "M_Standing_Idle_002",
+  "M_Standing_Idle_Variations_002", "M_Standing_Idle_Variations_005",
+  "M_Standing_Idle_Variations_008"];
 // Anything that counts as "he is moving", so idle motion and footsteps behave.
-const LOCOMOTION = new Set([CLIP.walk, CLIP.run, CLIP.stroll, CLIP.crouch]);
+const LOCOMOTION = new Set([CLIP.walk, CLIP.run, CLIP.jog, CLIP.stroll, CLIP.crouch,
+  CLIP.crouchWalk, CLIP.crouchBack, CLIP.back, CLIP.strafe, CLIP.jogStrafe]);
 // Buttons promoted out of the scrolling strip into their own controls.
 const PRIMARY_CLIPS = [CLIP.walk, CLIP.run, CLIP.crouch, CLIP.jump, CLIP.shoot];
 
@@ -4216,8 +4243,10 @@ function startJump() {
   // motion matches the animation instead of hovering in place.
   jumpDirX = Math.sin(character.rotation.y);
   jumpDirZ = Math.cos(character.rotation.y);
-  jumpFwd = characterMoving ? 6.2 : 3.4;
-  playAction(CLIP.jump, { loop: false, manual: true });
+  jumpFwd = characterMoving ? 6.2 : 0.9; // a standing jump barely travels
+  // The pack only had a running jump, which is why a standing jump looked wrong.
+  // There's a proper one now, so pick by what he's actually doing.
+  playAction(characterMoving ? CLIP.jump : CLIP.jumpStand, { loop: false, manual: true });
   if (ambientCtx && sfxOn) {
     // a small effort grunt: short filtered noise, nothing fancy
     const t = ambientCtx.currentTime;
@@ -4257,6 +4286,7 @@ function updateJump(dt) {
    standing perfectly still is what made him look like a prop. */
 let idleTime = 0, nextFidgetAt = 6 + Math.random() * 8;
 const IDLE_GESTURES = [CLIP.idleTurn, CLIP.alert, 'Boxing_Practice', 'golf_drive'];
+let idlePick = 0;
 function updateIdleMotion(dt) {
   if (!character || drivingMode || isJumping || crouching) { idleTime = 0; return; }
   // Was testing LOCOMOTION.has(currentActionName) — but on stopping, the walk clip
@@ -4267,9 +4297,11 @@ function updateIdleMotion(dt) {
   // There is a proper Idle clip in this model now, so drop into it rather than
   // leaving him frozen on the last walk frame.
   if (idleTime > 0.3 && currentActionName !== CLIP.idle && manualOverrideTimer <= 0
-      && !IDLE_GESTURES.includes(currentActionName)
+      && !IDLE_GESTURES.includes(currentActionName) && !IDLE_POOL.includes(currentActionName)
       && currentActionName !== CLIP.shoot && !isJumping) {
-    playAction(CLIP.idle, { fade: 0.3, loop: true });
+    // rotate through the idle variations so standing still isn't one looping pose
+    idlePick = (idlePick + 1) % IDLE_POOL.length;
+    playAction(IDLE_POOL[idlePick], { fade: 0.3, loop: true });
   }
   // breathing on top, kept small now that the clip does most of the work
   const breath = Math.sin(idleTime * 1.6) * 0.006;
@@ -4592,7 +4624,7 @@ let crouching = false;
 function setCrouch(on) {
   if (crouching === on || drivingMode) return;
   crouching = on;
-  if (on) playAction(CLIP.crouch, { fade: 0.18 });
+  if (on) playAction(characterMoving ? CLIP.crouchWalk : CLIP.crouch, { fade: 0.18 });
   else playAction(LOCOMOTION.has(currentActionName) ? CLIP.walk : CLIP.idle, { fade: 0.18 });
 }
 
@@ -5765,7 +5797,11 @@ function handleMovement(dt) {
 
     // Crouch has to win here, or the locomotion selector overwrites it every frame —
     // which is exactly why holding CROUCH did nothing while moving.
-    const wanted = crouching ? CLIP.crouch : ((manual && running) ? CLIP.run : CLIP.walk);
+    // Movement now has three gears plus a crouch variant. Basic walk is untouched.
+    const wanted = crouching ? CLIP.crouchWalk
+                 : (manual && running) ? CLIP.run
+                 : (analogScale > 0.78) ? CLIP.jog   // push the stick further to jog
+                 : CLIP.walk;
     if (actions[wanted] && currentActionName !== wanted) {
       playAction(wanted, { fade: 0.2, loop: true });
     }
@@ -5912,6 +5948,16 @@ document.querySelectorAll('.act-btn').forEach((btn) => {
     if (act === 'jump') startJump();
     else if (act === 'shoot') fireShot();
     else if (act === 'crouch') setCrouch(true);
+    else if (act === 'roll') {
+      // roll carries him forward, like the jump does
+      playAction(CLIP.roll, { loop: false, manual: true });
+      if (!isJumping && character) {
+        jumpDirX = Math.sin(character.rotation.y);
+        jumpDirZ = Math.cos(character.rotation.y);
+        jumpFwd = 5.5; isJumping = true; jumpVel = 1.2;
+      }
+    }
+    else if (act === 'punch') playAction('Boxing_Guard_Step_Knee_Strike', { loop: false, manual: true });
   };
   const release = (e) => {
     if (e) e.stopPropagation();
