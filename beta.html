@@ -811,6 +811,14 @@ function base64ToArrayBuffer(b64) {
       } catch (e) {}
     }, 4000);
   }
+  /* Tune the fog without a redeploy: window.__fog(0.004) for thicker,
+     window.__fog(0.0015) for thinner. Prints the obscured-percentage table. */
+  window.__fog = (d) => {
+    if (!scene.fog) return 'no fog';
+    scene.fog.density = d;
+    return [100,200,300,400,500,600,700].map(x =>
+      `${x}: ${Math.round((1 - Math.exp(-Math.pow(d * x, 2))) * 100)}%`).join('  ');
+  };
   window.__reportGPU = () => {
     try {
       const i = renderer.info;
@@ -995,9 +1003,16 @@ function updateDayNight(dt) {
   }
 }
 
-/* Linear fog from 160 to 700. Everything that streams or swaps LOD does so past
-   480, where fog has already taken most of the contrast out of it. */
-scene.fog = new THREE.Fog(0xc9784a, 160, 700); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
+/* Exponential fog, not linear. THREE.Fog fades evenly between two distances, which
+   at 160->700 was so gentle you could not see it at all — which is why every
+   "hide the transition in the fog" fix failed. FogExp2 builds with the square of
+   distance, the way real haze does and the way the PS2-era open-world games did it:
+     100 units  ~6% obscured      400 units ~63%
+     200 units ~22%               500 units ~79%
+     300 units ~43%               600 units ~89%
+   So anything arriving past 500 is already gone before you could see it arrive.
+   Density is tunable live via window.__fog(d) — see below. */
+scene.fog = new THREE.FogExp2(0xc9784a, 0.0025); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
 /* ---------- Image-based lighting ----------
    scene.environment was never set, so every MeshStandardMaterial had nothing to
@@ -5205,7 +5220,7 @@ function enterInterior() {
     character.rotation.y = Math.PI;
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
     // indoors the horizon is a wall, so pull the fog right in
-    if (scene.fog) { scene.fog.near = 6; scene.fog.far = 60; }
+    if (scene.fog) scene.fog.density = 0.055;   // indoors the horizon is a wall
     // The interior neither casts nor meaningfully receives shadows, and the shadow
     // map is one of the most expensive things per frame. Off while inside.
     try { renderer.shadowMap.enabled = false; } catch (e) {}
@@ -5234,7 +5249,7 @@ function exitInterior() {
     character.position.set(DOOR_POS.x + 1.2, 0, DOOR_POS.z + 2.2);
     character.rotation.y = Math.atan2(1.2, 2.2); // facing out, away from the door
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
-    if (scene.fog) { scene.fog.near = 160; scene.fog.far = 700; }
+    if (scene.fog) scene.fog.density = 0.0025;  // back to outdoor haze
     try { renderer.shadowMap.enabled = qualityLevel >= 1; } catch (e) {}
     try { renderer.setPixelRatio(qualityLevel >= 2 ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio, 1.5)); } catch (e) {}
     camDist = 7.5;
@@ -6305,7 +6320,7 @@ function loadMeshyBuildings() {
   /* Real distance fade. Rather than relying on fog that is tinted invisible, each
      building fades its own opacity in over the last 120 units of draw distance, so
      it arrives gradually instead of switching on. Cheap: one lerp per building. */
-  const FADE_START = 560, FADE_END = 680;
+  const FADE_START = 900, FADE_END = 1050;  // effectively off: FogExp2 handles it
   const fadeBuildings = () => {
     for (const b of njBuildings) {
       const d = Math.abs(b.position.z - camera.position.z) + Math.abs(b.position.x - camera.position.x) * 0.4;
