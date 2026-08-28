@@ -991,7 +991,7 @@ function updateDayNight(dt) {
   }
 }
 
-scene.fog = new THREE.Fog(0xc9784a, 120, 420); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
+scene.fog = new THREE.Fog(0xc9784a, 160, 700); // 420 -> 700 so roadside buildings don't vanish // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
 /* ---------- Image-based lighting ----------
    scene.environment was never set, so every MeshStandardMaterial had nothing to
@@ -1589,7 +1589,7 @@ function applySharpenToObject(root, strength) {
   });
 }
 
-const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.2, 600); // far raised 220->600 to match the enlarged fog range. Near stays 0.2 (raised from 0.05 originally, since a 4400:1 ratio caused depth-buffer flicker on the city backdrop); 3000:1 is still comfortably safe.
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.2, 1100); // must exceed fog far, or buildings clip instead of fading // far raised 220->600 to match the enlarged fog range. Near stays 0.2 (raised from 0.05 originally, since a 4400:1 ratio caused depth-buffer flicker on the city backdrop); 3000:1 is still comfortably safe.
 let camYaw = Math.PI * 0.25;
 let camPitch = 0.32;
 let camDist = 5.5;
@@ -5225,7 +5225,7 @@ function exitInterior() {
     character.position.set(DOOR_POS.x + 1.2, 0, DOOR_POS.z + 2.2);
     character.rotation.y = Math.atan2(1.2, 2.2); // facing out, away from the door
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
-    if (scene.fog) { scene.fog.near = 120; scene.fog.far = 420; }
+    if (scene.fog) { scene.fog.near = 160; scene.fog.far = 700; }
     try { renderer.shadowMap.enabled = qualityLevel >= 1; } catch (e) {}
     try { renderer.setPixelRatio(qualityLevel >= 2 ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio, 1.5)); } catch (e) {}
     camDist = 7.5;
@@ -6264,43 +6264,77 @@ function buildRoadFurniture() {
 
 /* ================= MESHY BUILDINGS (BETA) =================
    Generated in Meshy so they share the visual family of the existing house and
-   character, decimated from ~120MB each down to ~2MB, and scaled with the real-world
-   size and ground offset baked into the file — so no magic numbers here.
+   character, decimated from ~120MB each to ~2MB, with real-world scale and ground
+   offset baked into the file.
 
-   The candidate house goes 60 units up the road for comparison against the current
-   one; the storefronts line the east side of the highway at x≈50, facing the road.
-   Loaded last, deferred, and failures are non-fatal. */
+   Three things learned from the first pass:
+   1. They popped in and out. The cause was draw distance, not culling: fog ended at
+      420 and the camera far plane at 600, so buildings materialised out of haze as
+      you drove. Fog now reaches 700 with the far plane at 1100. Frustum culling
+      stays ON — with ~36K verts per building, rendering all of them unconditionally
+      would be millions of triangles a frame.
+   2. Fog swallowed them at 420 units. Pushed to 700, with the camera far plane
+      raised to match, or buildings would clip against the frustum instead.
+   3. They sat too far back. Now at x=44 east and x=10 west — just behind the
+      guardrail — so they read from the road rather than from the treeline. */
 const njBuildings = [];
+const meshyCache = {};
+
 function loadMeshyBuildings() {
-  const place = (assetKey, x, z, rotY, label) => {
-    loader.parse(assetKey, '', (gltf) => {
-      try {
-        const o = gltf.scene;
-        o.position.set(x, 0, z);
-        o.rotation.y = rotY;
-        o.traverse((m) => {
-          if (!m.isMesh) return;
-          m.castShadow = false;      // these are scenery; shadows aren't worth the cost
-          m.receiveShadow = false;
-          m.frustumCulled = true;
-        });
-        scene.add(o);
-        njBuildings.push(o);
-        if (window.__gameNote) window.__gameNote('placed ' + label);
-      } catch (e) { console.warn(label + ' setup failed:', e); }
-    }, (e) => console.warn(label + ' load failed:', e));
+  const load = (key, cb) => {
+    if (meshyCache[key]) { cb(meshyCache[key]); return; }
+    loader.parse(key, '', (gltf) => {
+      meshyCache[key] = gltf.scene;
+      cb(gltf.scene);
+    }, (e) => console.warn('meshy load failed:', e));
   };
 
-  // the candidate house, up the road and set back like the real one
-  place(ASSETS.TONY_HOUSE, -8, 62, Math.PI, 'tony_house');
+  const put = (src, x, z, rotY) => {
+    const o = src.clone(true);
+    o.position.set(x, 0, z);
+    o.rotation.y = rotY;
+    o.traverse((m) => {
+      if (!m.isMesh) return;
+      m.castShadow = false;
+      m.receiveShadow = false;
+      m.frustumCulled = true;   // essential: only the few in view should render
+    });
+    scene.add(o);
+    njBuildings.push(o);
+  };
 
-  // storefronts along the east shoulder, front faces turned toward the road
-  const FACE_ROAD = -Math.PI / 2;
-  place(ASSETS.PORK_STORE,  50, 150, FACE_ROAD, 'pork_store');
-  place(ASSETS.BARBER_SHOP, 50, 172, FACE_ROAD, 'barber_shop');
-  place(ASSETS.BRICK_WALL,  50, 193, FACE_ROAD, 'brick_wall');
-  place(ASSETS.CHURCH,      52, 235, FACE_ROAD, 'church');
-  place(ASSETS.DUMPSTER,    44, 184, 0.6, 'dumpster');
+  // the candidate house stays where it is, as the neighbouring property
+  load(ASSETS.TONY_HOUSE, (src) => put(src, -8, 62, Math.PI));
+
+  /* Storefronts down both shoulders. Deterministic order rather than random, so the
+     street is the same every load and I can move a specific building if you ask. */
+  const EAST_X = 44, WEST_X = 10;
+  const FACE_W = -Math.PI / 2;   // east side, front turned west toward the road
+  const FACE_E =  Math.PI / 2;   // west side, front turned east
+  const KEYS = [ASSETS.PORK_STORE, ASSETS.BARBER_SHOP, ASSETS.CHURCH, ASSETS.BRICK_WALL];
+
+  KEYS.forEach((k, ki) => {
+    load(k, (src) => {
+      /* 5 of each type per side = 40 buildings. At ~36K verts each that is 1.4M
+         total, but frustum culling means only the handful in front of you render.
+         22-unit spacing reads as a street without the models intersecting. */
+      for (let n = 0; n < 5; n++) {
+        put(src, EAST_X, 96 + (n * 4 + ki) * 22, FACE_W);
+      }
+      for (let n = 0; n < 5; n++) {
+        put(src, WEST_X, 107 + (n * 4 + ((ki + 2) % 4)) * 22, FACE_E);
+      }
+    });
+  });
+
+  load(ASSETS.DUMPSTER, (src) => {
+    for (let n = 0; n < 4; n++) {
+      put(src, EAST_X - 5, 140 + n * 130, 0.6);
+      put(src, WEST_X + 5, 200 + n * 130, 2.4);
+    }
+  });
+
+  if (window.__gameNote) window.__gameNote('meshy buildings queued');
 }
 
 function laneX(index) {
