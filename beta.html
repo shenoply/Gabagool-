@@ -6145,6 +6145,117 @@ function updatePovCamera() {
   camera.rotation.z += (carState.roll || 0) * 0.3;
 }
 
+/* ================= ROADSIDE FURNITURE =================
+   Utility poles with sagging wires, guardrail, green highway signs. Built from
+   primitives in muted real-world colours rather than a cartoon kit, so they sit
+   next to the photoscanned house without fighting it. Everything that repeats is
+   an InstancedMesh — the whole lot is about 13 draw calls. */
+let roadFurniture = null;
+const ROAD_CX = 27, ROAD_HW = 10;
+
+function buildRoadFurniture() {
+  if (roadFurniture) return;
+  roadFurniture = new THREE.Group();
+  const Z0 = -70, Z1 = 880;
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x6b6259, roughness: 0.95, metalness: 0 });
+  const steelMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.55, metalness: 0.65 });
+  const darkMat  = new THREE.MeshStandardMaterial({ color: 0x4a4f55, roughness: 0.8, metalness: 0.3 });
+
+  const poleZs = [];
+  for (let z = Z0; z < Z1; z += 42) poleZs.push(z);
+  const poleX = ROAD_CX + ROAD_HW + 4.5;
+  const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.16, 0.22, 11, 7), woodMat, poleZs.length);
+  const arms  = new THREE.InstancedMesh(new THREE.BoxGeometry(2.4, 0.14, 0.14), woodMat, poleZs.length);
+  const m = new THREE.Matrix4();
+  poleZs.forEach((z, i) => {
+    m.makeTranslation(poleX, 5.5, z); poles.setMatrixAt(i, m);
+    m.makeTranslation(poleX, 9.7, z); arms.setMatrixAt(i, m);
+  });
+  poles.castShadow = false; arms.castShadow = false;
+  roadFurniture.add(poles, arms);
+
+  // sagging wires — a catenary dip is what makes it read as a power line
+  const pts = [];
+  for (let i = 0; i < poleZs.length - 1; i++) {
+    const za = poleZs[i], zb = poleZs[i + 1];
+    for (const off of [-1.0, 0, 1.0]) {
+      for (let s = 0; s < 7; s++) {
+        const t0 = s / 7, t1 = (s + 1) / 7;
+        const sag = (t) => 9.6 - 1.15 * Math.sin(Math.PI * t);
+        pts.push(poleX + off, sag(t0), za + (zb - za) * t0,
+                 poleX + off, sag(t1), za + (zb - za) * t1);
+      }
+    }
+  }
+  const wireGeo = new THREE.BufferGeometry();
+  wireGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  roadFurniture.add(new THREE.LineSegments(wireGeo, new THREE.LineBasicMaterial({ color: 0x24262a, fog: true })));
+
+  const railZs = [];
+  for (let z = Z0; z < Z1; z += 4) railZs.push(z);
+  const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 0.75, 0.12), darkMat, railZs.length * 2);
+  const beams = new THREE.InstancedMesh(new THREE.BoxGeometry(0.06, 0.32, 4.02), steelMat, railZs.length * 2);
+  let k = 0;
+  for (const side of [-1, 1]) {
+    const rx = ROAD_CX + side * (ROAD_HW + 1.6);
+    for (const z of railZs) {
+      m.makeTranslation(rx, 0.38, z); posts.setMatrixAt(k, m);
+      m.makeTranslation(rx, 0.62, z + 2); beams.setMatrixAt(k, m);
+      k++;
+    }
+  }
+  posts.castShadow = false; beams.castShadow = false;
+  roadFurniture.add(posts, beams);
+
+  function signTexture(top, bottom) {
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 256;
+    const g = c.getContext('2d');
+    g.fillStyle = '#0d5c2e'; g.fillRect(0, 0, 512, 256);
+    g.strokeStyle = '#eef2f0'; g.lineWidth = 6; g.strokeRect(12, 12, 488, 232);
+    g.fillStyle = '#eef2f0'; g.textAlign = 'center';
+    g.font = '700 62px -apple-system, Helvetica, Arial, sans-serif';
+    g.fillText(top, 256, 108);
+    g.font = '600 40px -apple-system, Helvetica, Arial, sans-serif';
+    g.fillText(bottom, 256, 176);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+  const SIGNS = [
+    { z: 120, top: 'NORTH', bottom: 'Newark  12' },
+    { z: 430, top: 'EXIT 14', bottom: 'Bloomfield Ave' },
+    { z: 720, top: 'SOUTH', bottom: 'Newark Bay' },
+  ];
+  for (const s of SIGNS) {
+    const g = new THREE.Group();
+    const panel = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 3.2),
+      new THREE.MeshStandardMaterial({ map: signTexture(s.top, s.bottom), roughness: 0.7, metalness: 0.05 }));
+    panel.position.set(0, 6.2, 0);
+    panel.rotation.y = -Math.PI / 2;
+    g.add(panel);
+    for (const dx of [-2.2, 2.2]) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 6.4, 6), steelMat);
+      leg.position.set(0, 3.2, dx);
+      g.add(leg);
+    }
+    g.position.set(ROAD_CX - ROAD_HW - 3.2, 0, s.z);
+    roadFurniture.add(g);
+  }
+
+  const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x6d6a63, roughness: 1, metalness: 0 });
+  for (const side of [-1, 1]) {
+    const strip = new THREE.Mesh(new THREE.PlaneGeometry(2.6, Z1 - Z0), shoulderMat);
+    strip.rotation.x = -Math.PI / 2;
+    strip.position.set(ROAD_CX + side * (ROAD_HW + 1.2), 0.02, (Z0 + Z1) / 2);
+    roadFurniture.add(strip);
+  }
+
+  roadFurniture.traverse((o) => { if (o.isMesh || o.isLine) o.frustumCulled = true; });
+  scene.add(roadFurniture);
+  if (window.__gameNote) window.__gameNote('roadside: ' + poleZs.length + ' poles, ' + railZs.length * 2 + ' rail posts');
+}
+
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
   const lanes = [-ROAD_ZONE.halfW * 0.55, -ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.55];
