@@ -213,8 +213,12 @@
        Left side, above the toggles, is clear. */
     /* Toggle stack occupies bottom 246/288/330 on the left, so this sits above it.
        Sound, photo and cigar have moved out to their own column on the right. */
+    /* Zoom joins the toggle cluster on the left rather than floating over the scene
+       on its own. Sound moved into the same group. */
     position: fixed; left: 20px; bottom: 380px; z-index: 10;
     display: flex; flex-direction: row; gap: 8px;
+    background: rgba(17,22,29,0.55); padding: 6px; border-radius: 999px;
+    backdrop-filter: blur(6px);
   }
   #util-pad button, #zoom-controls button {
     width: 34px; height: 34px; border-radius: 50%; background: var(--panel); border: 1px solid var(--panel-border);
@@ -406,13 +410,13 @@
   <div id="autohunt-toggle"><span class="sw"></span> Auto-hunt</div>
   <div id="drive-toggle"><span class="sw"></span> Drive</div>
 
-  <div id="leave-house-btn" style="position:fixed;left:12px;top:104px;z-index:41;display:none;background:rgba(20,22,28,0.92);color:#ffb347;border:1px solid #ffb347;font:800 11px/1 -apple-system,sans-serif;padding:10px 14px;border-radius:999px;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">EXIT HOUSE</div>
+  <div id="leave-house-btn" style="position:fixed;left:12px;top:100px;z-index:41;display:none;background:rgba(20,22,28,0.92);color:#ffb347;border:1px solid #ffb347;font:800 11px/1 -apple-system,sans-serif;padding:10px 14px;border-radius:999px;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">EXIT HOUSE</div>
 
-  <div id="util-pad" style="position:fixed;right:16px;bottom:calc(86px + env(safe-area-inset-bottom,0px));z-index:11;display:flex;flex-direction:row;gap:8px;align-items:center;">
+  <div id="util-pad" style="position:fixed;right:16px;bottom:calc(86px + env(safe-area-inset-bottom,0px));z-index:11;display:flex;flex-direction:row;gap:8px;align-items:center;background:rgba(17,22,29,0.55);padding:6px;border-radius:999px;backdrop-filter:blur(6px);">
     <button id="horn-btn" title="Horn" style="display:none;">📢</button>
     <button id="photo-btn" title="Photo mode">📷</button>
     <button id="cigar-btn" title="Cigar">🚬</button>
-    <button id="quiz-btn" title="Quiz">❓</button>
+    <button id="phone-btn" title="Phone">📱</button>
   </div>
 
   <div id="action-pad" style="position:fixed;right:14px;bottom:calc(220px + env(safe-area-inset-bottom,0px));z-index:11;display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
@@ -3764,7 +3768,7 @@ function showRadio(show) {
 let photoMode = false;
 function togglePhotoMode() {
   photoMode = !photoMode;
-  const hide = ['topbar','anim-panel','joystick-zone','run-toggle','autohunt-toggle','drive-toggle','status-panel','speedo','radio','hint','zoom-controls','action-pad','game-clock','compass','util-pad','pos-readout','interior-act-btn'];
+  const hide = ['topbar','anim-panel','joystick-zone','run-toggle','autohunt-toggle','drive-toggle','status-panel','speedo','radio','hint','zoom-controls','action-pad','game-clock','compass','util-pad','pos-readout','interior-act-btn','leave-house-btn'];
   for (const id of hide) {
     const el = document.getElementById(id);
     if (el) el.style.visibility = photoMode ? 'hidden' : '';
@@ -5492,6 +5496,149 @@ function bossQuizCall() {
   renderQuiz();
 }
 
+/* ================= THE PHONE =================
+   A 2005 candybar handset, full screen. Everything that was cluttering the HUD as a
+   loose button — quiz, radio, stats, settings — lives in here instead, which is both
+   tidier and more in period than a row of icons floating over the pool.
+
+   The look is deliberately of its era: a small amber-on-dark LCD with visible pixel
+   grid, a chunky bezel, soft keys, and a signal/battery strip. */
+let phoneOpen = false, phoneScreen = 'menu';
+const phoneEl = document.createElement('div');
+phoneEl.id = 'phone-overlay';
+phoneEl.style.cssText = 'position:fixed;inset:0;z-index:130;display:none;background:rgba(4,5,8,0.92);align-items:center;justify-content:center;';
+document.body.appendChild(phoneEl);
+
+const PHONE_CSS = `
+  .ph-body{width:min(300px,86vw);background:linear-gradient(#3a3f46,#22262b);border-radius:26px;padding:18px 16px 22px;box-shadow:0 18px 50px rgba(0,0,0,0.6),inset 0 1px 0 rgba(255,255,255,0.18);}
+  .ph-grille{height:5px;width:52px;margin:0 auto 12px;border-radius:3px;background:#15181c;}
+  .ph-screen{background:#2b2a13;border:3px solid #14161a;border-radius:6px;padding:10px;min-height:214px;
+    font:700 12px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#ffc247;
+    text-shadow:0 0 3px rgba(255,180,60,0.55);position:relative;overflow:hidden;}
+  /* the pixel grid is what makes it read as an LCD rather than a rectangle */
+  .ph-screen:after{content:'';position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(0deg,rgba(0,0,0,0.16) 0 1px,transparent 1px 2px);}
+  .ph-bar{display:flex;justify-content:space-between;font-size:10px;opacity:0.85;border-bottom:1px solid rgba(255,194,71,0.3);padding-bottom:4px;margin-bottom:7px;}
+  .ph-item{padding:3px 4px;border-radius:2px;cursor:pointer;}
+  .ph-item.sel{background:#ffc247;color:#2b2a13;text-shadow:none;}
+  .ph-soft{display:flex;justify-content:space-between;margin-top:9px;font-size:10px;opacity:0.85;}
+  .ph-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:14px;}
+  .ph-key{background:linear-gradient(#4a4f57,#2c3036);color:#dfe3e8;border:none;border-radius:7px;padding:9px 0;
+    font:700 12px ui-monospace,monospace;box-shadow:0 2px 0 #191c20;}
+  .ph-key:active{transform:translateY(1px);box-shadow:0 1px 0 #191c20;}
+`;
+const phStyle = document.createElement('style');
+phStyle.textContent = PHONE_CSS;
+document.head.appendChild(phStyle);
+
+function phoneSignalBar() {
+  const t = Math.floor(dayTime * 24 * 60);
+  const hh = String(((Math.floor(t / 60) + 11) % 12) + 1);
+  const mm = String(t % 60).padStart(2, '0');
+  const ampm = Math.floor(t / 60) < 12 ? 'AM' : 'PM';
+  return '<div class="ph-bar"><span>\u2582\u2584\u2586\u2588 GAB</span><span>' + hh + ':' + mm + ' ' + ampm + '</span><span>\u25AE\u25AE\u25AE</span></div>';
+}
+
+const PHONE_MENU = [
+  { key: 'contacts', label: 'Contacts' },
+  { key: 'radio', label: 'Radio' },
+  { key: 'quiz', label: 'Pop Quiz' },
+  { key: 'stats', label: 'Stats' },
+  { key: 'settings', label: 'Settings' },
+];
+let phoneSel = 0;
+
+function renderPhone() {
+  let body = '';
+  if (phoneScreen === 'menu') {
+    body = PHONE_MENU.map((m, i) =>
+      '<div class="ph-item' + (i === phoneSel ? ' sel' : '') + '" data-i="' + i + '">' +
+      (i === phoneSel ? '\u25B8 ' : '  ') + m.label + '</div>').join('');
+  } else if (phoneScreen === 'contacts') {
+    body = '<div style="opacity:0.7;font-size:10px;margin-bottom:6px;">CONTACTS</div>' +
+      '<div class="ph-item" data-act="callboss">\u260E The Boss</div>' +
+      '<div class="ph-item" data-act="george">\u260E George</div>' +
+      '<div style="opacity:0.55;margin-top:8px;font-size:10px;">2 of 2</div>';
+  } else if (phoneScreen === 'radio') {
+    body = '<div style="opacity:0.7;font-size:10px;margin-bottom:6px;">RADIO</div>' +
+      RADIO_STATIONS.map((st, i) =>
+        '<div class="ph-item' + (i === radioIndex ? ' sel' : '') + '" data-act="station" data-i="' + i + '">' +
+        (i === radioIndex ? '\u25B8 ' : '  ') + st.name + '</div>').join('');
+  } else if (phoneScreen === 'stats') {
+    body = '<div style="opacity:0.7;font-size:10px;margin-bottom:6px;">STATS</div>' +
+      '<div>Debts&nbsp;&nbsp;&nbsp;' + (typeof debtsCollected !== 'undefined' ? debtsCollected : 0) + '</div>' +
+      '<div>Quiz&nbsp;best&nbsp;' + quizBest + '/8</div>' +
+      '<div>Gabagool&nbsp;' + (typeof gabagoolsEaten !== 'undefined' ? gabagoolsEaten : '-') + '</div>' +
+      '<div style="margin-top:8px;opacity:0.6;">Height 1.75m</div>';
+  } else if (phoneScreen === 'settings') {
+    const modes = ['All sound', 'Music muted', 'Silent'];
+    body = '<div style="opacity:0.7;font-size:10px;margin-bottom:6px;">SETTINGS</div>' +
+      '<div class="ph-item" data-act="audio">Audio: ' + modes[audioMode] + '</div>' +
+      '<div class="ph-item" data-act="photo">Photo mode</div>';
+  }
+  phoneEl.innerHTML =
+    '<div class="ph-body"><div class="ph-grille"></div><div class="ph-screen">' +
+    phoneSignalBar() + body +
+    '<div class="ph-soft"><span>' + (phoneScreen === 'menu' ? 'Select' : 'Select') + '</span><span>' +
+    (phoneScreen === 'menu' ? 'Exit' : 'Back') + '</span></div></div>' +
+    '<div class="ph-keys">' +
+    '<button class="ph-key" data-k="up">\u25B2</button>' +
+    '<button class="ph-key" data-k="ok">OK</button>' +
+    '<button class="ph-key" data-k="down">\u25BC</button>' +
+    '<button class="ph-key" data-k="back">BACK</button>' +
+    '<button class="ph-key" data-k="close">END</button>' +
+    '<button class="ph-key" data-k="ok2">\u2713</button>' +
+    '</div></div>';
+
+  phoneEl.querySelectorAll('[data-i]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const i = parseInt(el.dataset.i, 10);
+      if (el.dataset.act === 'station') { setRadioStation(i); renderPhone(); return; }
+      phoneSel = i; phoneActivate();
+    });
+  });
+  phoneEl.querySelectorAll('[data-act]').forEach((el) => {
+    if (el.dataset.act === 'station') return;
+    el.addEventListener('click', () => phoneAction(el.dataset.act));
+  });
+  phoneEl.querySelectorAll('.ph-key').forEach((b) => {
+    b.addEventListener('click', () => {
+      const k = b.dataset.k;
+      if (k === 'up') { phoneSel = (phoneSel - 1 + PHONE_MENU.length) % PHONE_MENU.length; renderPhone(); }
+      else if (k === 'down') { phoneSel = (phoneSel + 1) % PHONE_MENU.length; renderPhone(); }
+      else if (k === 'ok' || k === 'ok2') phoneActivate();
+      else if (k === 'back') { if (phoneScreen === 'menu') closePhone(); else { phoneScreen = 'menu'; renderPhone(); } }
+      else if (k === 'close') closePhone();
+    });
+  });
+}
+function phoneActivate() {
+  if (phoneScreen !== 'menu') return;
+  const k = PHONE_MENU[phoneSel].key;
+  if (k === 'quiz') { closePhone(); openQuiz(); return; }
+  phoneScreen = k;
+  renderPhone();
+}
+function phoneAction(act) {
+  if (act === 'callboss') { closePhone(); bossQuizCall(); }
+  else if (act === 'george') { closePhone(); if (window.__gameNote) window.__gameNote('George does not answer the phone. He is a car.'); }
+  else if (act === 'audio') { soundToggle.click(); renderPhone(); }
+  else if (act === 'photo') { closePhone(); togglePhotoMode(); }
+}
+function openPhone() { phoneOpen = true; phoneScreen = 'menu'; phoneSel = 0; phoneEl.style.display = 'flex'; renderPhone(); }
+function closePhone() { phoneOpen = false; phoneEl.style.display = 'none'; }
+
+/* Car DJ. The DJ spoke only on a station change, so on a long drive he never said
+   anything. Now he chimes in periodically while you're driving with the radio on. */
+let nextDjAt = 45 + Math.random() * 60;
+function updateCarDJ(dt) {
+  if (!drivingMode || !soundOn || phoneOpen) return;
+  nextDjAt -= dt;
+  if (nextDjAt > 0) return;
+  nextDjAt = 70 + Math.random() * 110;
+  djSpeak();
+}
+
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
   const lanes = [-ROAD_ZONE.halfW * 0.55, -ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.55];
@@ -6749,7 +6896,7 @@ document.querySelectorAll('.act-btn').forEach((btn) => {
 });
 window.addEventListener('blur', () => setCrouch(false));
 document.getElementById('cigar-btn').addEventListener('click', (e) => { e.stopPropagation(); toggleCigar(); });
-document.getElementById('quiz-btn').addEventListener('click', (e) => { e.stopPropagation(); openQuiz(); });
+document.getElementById('phone-btn').addEventListener('click', (e) => { e.stopPropagation(); openPhone(); });
 document.getElementById('leave-house-btn').addEventListener('click', (e) => { e.stopPropagation(); exitInterior(); });
 
 const hbBtn = document.getElementById('handbrake-btn');
@@ -7251,6 +7398,7 @@ function tick() {
   updateClouds(dt);
   updateGeorgeProximity();
   updateInteriorPrompt(dt);
+  updateCarDJ(dt);
   updateInteriorActions();
   updateInteriorLights();
   updateMirror();
