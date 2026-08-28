@@ -617,6 +617,10 @@ const ASSETS = {
   CHURCH: 'church.glb',
   BRICK_WALL: 'brick_wall_a.glb',
   DUMPSTER: 'dumpster.glb',
+  PORK_STORE_LOD: 'pork_store_lod.glb',
+  BARBER_SHOP_LOD: 'barber_shop_lod.glb',
+  CHURCH_LOD: 'church_lod.glb',
+  BRICK_WALL_LOD: 'brick_wall_a_lod.glb',
   GRASS_COLOR: 'grass_color.webp',   // photoscanned ground grass, 1024 — replaces the procedural canvas texture
   GRASS_NORMAL: 'grass_normal.webp', // 512 is plenty for a normal map at this viewing distance
   FOREST_NEAR: 'pine_near.glb', // pine patch, 47,920 verts, ~51 x 46 units — cloned across the map
@@ -6263,67 +6267,74 @@ function buildRoadFurniture() {
 }
 
 /* ================= MESHY BUILDINGS (BETA) =================
-   Generated in Meshy so they share the visual family of the existing house and
-   character, decimated from ~120MB each to ~2MB, with real-world scale and ground
-   offset baked into the file.
+   Generated in Meshy, decimated from ~120MB each to ~2MB, with real-world scale and
+   ground offset baked into the file.
 
-   Three things learned from the first pass:
-   1. They popped in and out. The cause was draw distance, not culling: fog ended at
-      420 and the camera far plane at 600, so buildings materialised out of haze as
-      you drove. Fog now reaches 700 with the far plane at 1100. Frustum culling
-      stays ON — with ~36K verts per building, rendering all of them unconditionally
-      would be millions of triangles a frame.
-   2. Fog swallowed them at 420 units. Pushed to 700, with the camera far plane
-      raised to match, or buildings would clip against the frustum instead.
-   3. They sat too far back. Now at x=44 east and x=10 west — just behind the
-      guardrail — so they read from the road rather than from the treeline. */
+   The pop-in problem, properly solved. Three separate causes:
+
+   1. DRAW DISTANCE. Fog ended at 420 and the camera far plane at 600, so buildings
+      materialised out of haze in front of you. Fog now reaches 700, far plane 1100.
+      The far plane must exceed fog distance or they clip in hard instead of fading.
+
+   2. COST OF SEEING FURTHER. Showing more of the road means more buildings on
+      screen, and at 36K verts each that gets expensive fast. So each one is a
+      THREE.LOD: the full model within 170 units, a 12K-vert version beyond that.
+      A distant building costs a third as much, which is what buys the draw distance.
+
+   3. CULLING. Left ON deliberately. Rendering all 40 unconditionally would be 1.4M
+      verts a frame regardless of where you look. */
 const njBuildings = [];
 const meshyCache = {};
 
 function loadMeshyBuildings() {
   const load = (key, cb) => {
     if (meshyCache[key]) { cb(meshyCache[key]); return; }
-    loader.parse(key, '', (gltf) => {
-      meshyCache[key] = gltf.scene;
-      cb(gltf.scene);
-    }, (e) => console.warn('meshy load failed:', e));
+    loader.parse(key, '', (gltf) => { meshyCache[key] = gltf.scene; cb(gltf.scene); },
+                 (e) => console.warn('meshy load failed:', e));
+  };
+  // load a full/LOD pair, then hand back a factory that builds THREE.LOD instances
+  const loadPair = (hiKey, loKey, cb) => {
+    load(hiKey, (hi) => load(loKey, (lo) => cb(hi, lo)));
+  };
+
+  const putLOD = (hi, lo, x, z, rotY) => {
+    const l = new THREE.LOD();
+    const a = hi.clone(true), b = lo.clone(true);
+    for (const o of [a, b]) o.traverse((m) => {
+      if (!m.isMesh) return;
+      m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true;
+    });
+    l.addLevel(a, 0);
+    l.addLevel(b, 170);   // swap to the cheap version past 170 units
+    l.position.set(x, 0, z);
+    l.rotation.y = rotY;
+    scene.add(l);
+    njBuildings.push(l);
   };
 
   const put = (src, x, z, rotY) => {
     const o = src.clone(true);
     o.position.set(x, 0, z);
     o.rotation.y = rotY;
-    o.traverse((m) => {
-      if (!m.isMesh) return;
-      m.castShadow = false;
-      m.receiveShadow = false;
-      m.frustumCulled = true;   // essential: only the few in view should render
-    });
+    o.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true; } });
     scene.add(o);
     njBuildings.push(o);
   };
 
-  // the candidate house stays where it is, as the neighbouring property
   load(ASSETS.TONY_HOUSE, (src) => put(src, -8, 62, Math.PI));
 
-  /* Storefronts down both shoulders. Deterministic order rather than random, so the
-     street is the same every load and I can move a specific building if you ask. */
   const EAST_X = 44, WEST_X = 10;
-  const FACE_W = -Math.PI / 2;   // east side, front turned west toward the road
-  const FACE_E =  Math.PI / 2;   // west side, front turned east
-  const KEYS = [ASSETS.PORK_STORE, ASSETS.BARBER_SHOP, ASSETS.CHURCH, ASSETS.BRICK_WALL];
-
-  KEYS.forEach((k, ki) => {
-    load(k, (src) => {
-      /* 5 of each type per side = 40 buildings. At ~36K verts each that is 1.4M
-         total, but frustum culling means only the handful in front of you render.
-         22-unit spacing reads as a street without the models intersecting. */
-      for (let n = 0; n < 5; n++) {
-        put(src, EAST_X, 96 + (n * 4 + ki) * 22, FACE_W);
-      }
-      for (let n = 0; n < 5; n++) {
-        put(src, WEST_X, 107 + (n * 4 + ((ki + 2) % 4)) * 22, FACE_E);
-      }
+  const FACE_W = -Math.PI / 2, FACE_E = Math.PI / 2;
+  const PAIRS = [
+    [ASSETS.PORK_STORE,  ASSETS.PORK_STORE_LOD],
+    [ASSETS.BARBER_SHOP, ASSETS.BARBER_SHOP_LOD],
+    [ASSETS.CHURCH,      ASSETS.CHURCH_LOD],
+    [ASSETS.BRICK_WALL,  ASSETS.BRICK_WALL_LOD],
+  ];
+  PAIRS.forEach(([hiKey, loKey], ki) => {
+    loadPair(hiKey, loKey, (hi, lo) => {
+      for (let n = 0; n < 5; n++) putLOD(hi, lo, EAST_X, 96 + (n * 4 + ki) * 22, FACE_W);
+      for (let n = 0; n < 5; n++) putLOD(hi, lo, WEST_X, 107 + (n * 4 + ((ki + 2) % 4)) * 22, FACE_E);
     });
   });
 
@@ -6333,8 +6344,11 @@ function loadMeshyBuildings() {
       put(src, WEST_X + 5, 200 + n * 130, 2.4);
     }
   });
+}
 
-  if (window.__gameNote) window.__gameNote('meshy buildings queued');
+/* THREE.LOD only switches level when update() is called with the camera. */
+function updateBuildingLOD() {
+  for (const b of njBuildings) if (b.isLOD) b.update(camera);
 }
 
 function laneX(index) {
@@ -8113,6 +8127,7 @@ function tick() {
     const pb = document.getElementById('pov-btn');
     if (pb) pb.style.display = drivingMode ? '' : 'none';
   }
+  updateBuildingLOD();
   updateCallStrip();
   updateCarDJ(dt);
   updateInteriorActions();
