@@ -382,8 +382,6 @@
   <div id="action-pad" style="position:fixed;right:14px;bottom:calc(196px + env(safe-area-inset-bottom,0px));z-index:11;display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
     <div class="act-btn" data-act="shoot" style="width:58px;height:58px;border-radius:50%;background:var(--panel);border:2px solid #d84a3a;color:#ff7a63;font:800 10px/58px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">SHOOT</div>
     <div class="act-btn" data-act="jump" style="width:58px;height:58px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/58px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">JUMP</div>
-    <div class="act-btn" data-act="crouch" style="width:58px;height:58px;border-radius:50%;background:var(--panel);border:2px solid var(--panel-border);color:var(--text-dim);font:800 10px/58px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">CROUCH</div>
-    <div class="act-btn" data-act="roll" style="width:52px;height:52px;border-radius:50%;background:var(--panel);border:2px solid var(--panel-border);color:var(--text-dim);font:800 10px/52px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">ROLL</div>
     <div class="act-btn" data-act="punch" style="width:52px;height:52px;border-radius:50%;background:var(--panel);border:2px solid var(--panel-border);color:var(--text-dim);font:800 10px/52px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">KNEE</div>
   </div>
   <div id="handbrake-btn" style="display:none;position:fixed;right:16px;bottom:calc(210px + env(safe-area-inset-bottom,0px));z-index:11;width:62px;height:62px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/62px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;touch-action:none;">HAND<br>BRAKE</div>
@@ -1603,10 +1601,10 @@ let worldBound = 22; // a much bigger yard to actually explore
 // to stay tied to the house — but that left the player unable to step off the model
 // onto the surrounding lawn at all, which is where the garage now lives.
 function interiorClamp(pos) {
-  // 14.7 x 18.9 m building, with a margin so he can't stand in a wall
-  const hw = 6.6, hd = 8.6;
-  pos.x = Math.max(INTERIOR_ORIGIN.x - hw, Math.min(INTERIOR_ORIGIN.x + hw, pos.x));
-  pos.z = Math.max(INTERIOR_ORIGIN.z - hd, Math.min(INTERIOR_ORIGIN.z + hd, pos.z));
+  // Model occupies x -2.5..12.5 and z -10.5..6.5 in its own space; the group sits at
+  // INTERIOR_ORIGIN. Inset by 2m so he stops short of the walls instead of in them.
+  pos.x = Math.max(INTERIOR_ORIGIN.x - 0.5, Math.min(INTERIOR_ORIGIN.x + 10.5, pos.x));
+  pos.z = Math.max(INTERIOR_ORIGIN.z - 8.5, Math.min(INTERIOR_ORIGIN.z + 4.5, pos.z));
 }
 function walkBound() {
   // Was just far enough to reach the garage pad. Now that the car can leave the road
@@ -4821,7 +4819,11 @@ function updateEngineDistance() {
    calls rather than adding to them. */
 const INTERIOR_ORIGIN = { x: 2000, y: 0, z: 0 };
 const DOOR_POS = { x: 0, z: 14 };      // outside, on the house's garage-facing edge
-const INTERIOR_EXIT = { x: 2000, z: 8 }; // just inside, by the interior's own door
+/* Measured from the model's true world bounds (x -2.5..12.5, z -10.5..6.5, 8.2m
+   tall). The first attempt spawned at local z=8, which is past the z=6.5 wall —
+   outside the building entirely, which is why you had to walk through a wall. This
+   is the middle of the ground floor. */
+const INTERIOR_EXIT = { x: 2005, z: -2 };
 let interiorRoot = null, interiorReady = false, inInterior = false;
 let hiddenOutdoors = [];
 
@@ -4892,12 +4894,15 @@ function enterInterior() {
     inInterior = true;
     interiorRoot.visible = true;
     setOutdoorsVisible(false);
-    if (doorMarker) doorMarker.position.set(INTERIOR_EXIT.x, 0, INTERIOR_EXIT.z + 1.5);
+    if (doorMarker) doorMarker.position.set(INTERIOR_EXIT.x, 0, INTERIOR_EXIT.z + 2.5);
     character.position.set(INTERIOR_EXIT.x, 0, INTERIOR_EXIT.z);
     character.rotation.y = Math.PI;
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
     // indoors the horizon is a wall, so pull the fog right in
     if (scene.fog) { scene.fog.near = 6; scene.fog.far = 60; }
+    // pull the camera in — the outdoor distance puts it through a wall indoors
+    camDist = Math.min(camDist, 4.2);
+    camTargetYOffset = 1.2;
   }, 120);
 }
 function exitInterior() {
@@ -4911,13 +4916,15 @@ function exitInterior() {
     character.position.set(DOOR_POS.x, 0, DOOR_POS.z + 2.5);
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
     if (scene.fog) { scene.fog.near = 120; scene.fog.far = 420; }
+    camDist = 7.5;
+    camTargetYOffset = 0.9;
   }, 120);
 }
 
 function updateInteriorPrompt(dt) {
   if (!interiorReady || !character || drivingMode || photoMode) { doorBtn.style.display = 'none'; return; }
   const tx = inInterior ? INTERIOR_EXIT.x : DOOR_POS.x;
-  const tz = inInterior ? INTERIOR_EXIT.z + 1.5 : DOOR_POS.z;
+  const tz = inInterior ? INTERIOR_EXIT.z + 2.5 : DOOR_POS.z;
   const d = Math.hypot(character.position.x - tx, character.position.z - tz);
   const near = d < 3.5;
   doorBtn.style.display = near ? '' : 'none';
@@ -6161,22 +6168,11 @@ document.querySelectorAll('.act-btn').forEach((btn) => {
     btn.style.filter = 'brightness(1.5)';
     if (act === 'jump') startJump();
     else if (act === 'shoot') fireShot();
-    else if (act === 'crouch') setCrouch(true);
-    else if (act === 'roll') {
-      // roll carries him forward, like the jump does
-      playAction(CLIP.roll, { loop: false, manual: true });
-      if (!isJumping && character) {
-        jumpDirX = Math.sin(character.rotation.y);
-        jumpDirZ = Math.cos(character.rotation.y);
-        jumpFwd = 5.5; isJumping = true; jumpVel = 1.2;
-      }
-    }
     else if (act === 'punch') playAction('Boxing_Guard_Step_Knee_Strike', { loop: false, manual: true });
   };
   const release = (e) => {
     if (e) e.stopPropagation();
     btn.style.filter = '';
-    if (act === 'crouch') setCrouch(false); // crouch is held, the others are taps
   };
   btn.addEventListener('pointerdown', press);
   btn.addEventListener('pointerup', release);
