@@ -4506,7 +4506,7 @@ function updatePerf(dt) {
     fpsAvg = fpsSamples.reduce((a, b) => a + b, 0) / fpsSamples.length;
   }
   const now = performance.now();
-  if (now - lastQualityCheck < 6000 || fpsSamples.length < 60) return;
+  if (now - lastQualityCheck < (inInterior ? 2500 : 6000) || fpsSamples.length < 40) return;
   lastQualityCheck = now;
   if (fpsAvg < 26 && qualityLevel > 0) setQuality(qualityLevel - 1);
   else if (fpsAvg > 52 && qualityLevel < 2) setQuality(qualityLevel + 1);
@@ -5074,6 +5074,11 @@ function enterInterior() {
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
     // indoors the horizon is a wall, so pull the fog right in
     if (scene.fog) { scene.fog.near = 6; scene.fog.far = 60; }
+    // The interior neither casts nor meaningfully receives shadows, and the shadow
+    // map is one of the most expensive things per frame. Off while inside.
+    try { renderer.shadowMap.enabled = false; } catch (e) {}
+    // 209 draw calls indoors is the ceiling; drop the render scale to buy frames back
+    try { renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25)); } catch (e) {}
     // pull the camera in — the outdoor distance puts it through a wall indoors
     camDist = Math.min(camDist, 4.2);
     camTargetYOffset = 1.2;
@@ -5098,6 +5103,8 @@ function exitInterior() {
     character.rotation.y = Math.atan2(1.2, 2.2); // facing out, away from the door
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
     if (scene.fog) { scene.fog.near = 120; scene.fog.far = 420; }
+    try { renderer.shadowMap.enabled = qualityLevel >= 1; } catch (e) {}
+    try { renderer.setPixelRatio(qualityLevel >= 2 ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio, 1.5)); } catch (e) {}
     camDist = 7.5;
     camTargetYOffset = 0.9;
     camPullIn = 0;
@@ -5285,11 +5292,11 @@ const iw = (p) => ({ x: INTERIOR_ORIGIN.x + p.x, z: INTERIOR_ORIGIN.z + p.z });
    and fade out during the day, so the house isn't lit identically at 3pm and 3am. */
 const interiorLamps = [];
 function buildInteriorLights() {
+  /* Two lamps, not four. Every point light multiplies shader work across all 209
+     interior draw calls, which is the single most expensive thing in this room. */
   const spots = [
-    [SOFA_POS.x, 2.3, SOFA_POS.z, 0xffd9a0, 9],
-    [FRIDGE_POS.x, 2.3, FRIDGE_POS.z - 1.2, 0xfff0d0, 7],
-    [8.0, 2.3, -5.0, 0xffd9a0, 8],
-    [2.5, 2.3, -6.5, 0xffc98a, 6],
+    [SOFA_POS.x, 2.4, SOFA_POS.z, 0xffd9a0, 12],
+    [FRIDGE_POS.x, 2.4, FRIDGE_POS.z - 1.5, 0xfff0d0, 10],
   ];
   for (const [x, y, z, col, dist] of spots) {
     const l = new THREE.PointLight(col, 0, dist, 2);
@@ -5362,7 +5369,7 @@ function updateMirror() {
   if (!mirrorMesh || !inInterior || !character) return;
   const mw = iw(MIRROR_POS);
   const d = Math.hypot(character.position.x - mw.x, character.position.z - mw.z);
-  if (d > 8) return;                       // out of range, don't pay for it
+  if (d > 6 || qualityLevel < 2) return;    // out of range or not enough headroom — a cube camera is six extra renders
   if ((mirrorTick++ % 6) !== 0) return;    // every 6th frame is plenty for a mirror
   mirrorMesh.visible = false;              // don't let it reflect itself
   mirrorCam.update(renderer, scene);
@@ -7195,15 +7202,21 @@ function tick() {
   updateDayNight(dt);
   updateSkids(dt);
   updateTallGrass(clock.elapsedTime);
-  updateRain(dt);
-  updateRainAudio();
-  updateThunder(dt);
-  updatePuddles();
+  // Outdoor systems keep ticking even when nothing outdoors is visible. Indoors that
+  // is pure waste — rain, particles, traffic, ducks and skids are all hidden, so skip
+  // their updates and give the frame budget to the room you're actually standing in.
+  if (!inInterior) {
+    updateRain(dt);
+    updateRainAudio();
+    updateThunder(dt);
+    updatePuddles();
+    updateFireflies(clock.elapsedTime);
+    updateLeaves(clock.elapsedTime);
+      { const sh = dustMesh && dustMesh.material.userData.shader; if (sh) sh.uniforms.uTime.value = clock.elapsedTime; }
+    }
   updateContactShadow();
   updateClock();
   updateSunGlare();
-  updateFireflies(clock.elapsedTime);
-  updateLeaves(clock.elapsedTime);
   updateWindAudio(clock.elapsedTime);
   updateRipples(dt);
   updatePoolInteraction(dt);
@@ -7221,7 +7234,6 @@ function tick() {
   updatePistol();
   updateBirdScatter(dt);
   if (!drivingMode) updateDuckBehaviour(dt);
-  { const sh = dustMesh && dustMesh.material.userData.shader; if (sh) sh.uniforms.uTime.value = clock.elapsedTime; }
   applyShake(dt);
   if (!drivingMode) updateFootsteps(dt, LOCOMOTION.has(currentActionName), currentActionName === CLIP.run);
   if (drivingMode) {
