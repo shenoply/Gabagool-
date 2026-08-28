@@ -1731,7 +1731,10 @@ function createGrassTexture() {
   return tex;
 }
 
-const groundGeo = new THREE.PlaneGeometry(900, 900); // 100 -> 320 -> 900. At 320 the edge sat at 160 units while fog does not finish until 420, so it was only ~13% fogged and met the sky as a hard line. At 900 the edge is at 450, past fog far, so it fades out instead of ending. It is one quad either way — the size costs nothing.
+/* 900 spanned only +-450 while the road runs to z=900 and the buildings to 565 —
+   so the far end of the street floated over nothing, which reads as the world
+   ending rather than as distance. 2200 covers the whole drivable length. */
+const groundGeo = new THREE.PlaneGeometry(2200, 2200); // 100 -> 320 -> 900. At 320 the edge sat at 160 units while fog does not finish until 420, so it was only ~13% fogged and met the sky as a hard line. At 900 the edge is at 450, past fog far, so it fades out instead of ending. It is one quad either way — the size costs nothing.
 const groundMat = new THREE.MeshStandardMaterial({ map: createGrassTexture(), roughness: 0.95, metalness: 0.0 });
 groundMat.map.anisotropy = maxAniso;
 const ground = new THREE.Mesh(groundGeo, groundMat);
@@ -6299,6 +6302,28 @@ function loadMeshyBuildings() {
     load(hiKey, (hi) => load(loKey, (lo) => cb(hi, lo)));
   };
 
+  /* Real distance fade. Rather than relying on fog that is tinted invisible, each
+     building fades its own opacity in over the last 120 units of draw distance, so
+     it arrives gradually instead of switching on. Cheap: one lerp per building. */
+  const FADE_START = 560, FADE_END = 680;
+  const fadeBuildings = () => {
+    for (const b of njBuildings) {
+      const d = Math.abs(b.position.z - camera.position.z) + Math.abs(b.position.x - camera.position.x) * 0.4;
+      const t = 1 - Math.max(0, Math.min(1, (d - FADE_START) / (FADE_END - FADE_START)));
+      b.traverse((m) => {
+        if (!m.isMesh || !m.material) return;
+        const mats = Array.isArray(m.material) ? m.material : [m.material];
+        for (const mat of mats) {
+          if (!mat.userData.fadeReady) { mat.transparent = true; mat.userData.fadeReady = true; }
+          mat.opacity = t;
+          mat.depthWrite = t > 0.95;   // full-opacity buildings still write depth
+        }
+      });
+      b.visible = t > 0.01;
+    }
+  };
+  loadMeshyBuildings._fade = fadeBuildings;
+
   const putLOD = (hi, lo, x, z, rotY) => {
     const l = new THREE.LOD();
     const a = hi.clone(true), b = lo.clone(true);
@@ -6307,12 +6332,13 @@ function loadMeshyBuildings() {
       m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true;
     });
     l.addLevel(a, 0);
-    /* Switch deep inside the fog, not in clear air. Fog runs 160->700, so at 480
-       the building is already ~60% faded to fog colour and the swap is invisible.
-       At the old 170 the swap happened where you could still see it clearly, which
-       is exactly what you were watching "load". This is the San Andreas trick:
-       don't hide the pop, put it where nothing is legible. */
-    l.addLevel(b, 480);
+    /* No LOD swap. The fog here is tinted to match the sky, so it never actually
+       obscures anything — "hide the transition in the fog" was never going to work
+       because there is no visible fog to hide in. A swap you can see is worse than
+       the cost of not swapping, and with frustum culling only a handful of these
+       render at once. The low-detail mesh is kept but placed far beyond the camera's
+       far plane, so it exists and never triggers. */
+    l.addLevel(b, 5000);
     l.position.set(x, 0, z);
     l.rotation.y = rotY;
     scene.add(l);
@@ -6359,6 +6385,7 @@ function loadMeshyBuildings() {
 /* THREE.LOD only switches level when update() is called with the camera. */
 function updateBuildingLOD() {
   for (const b of njBuildings) if (b.isLOD) b.update(camera);
+  if (loadMeshyBuildings._fade) loadMeshyBuildings._fade();
 }
 
 function laneX(index) {
