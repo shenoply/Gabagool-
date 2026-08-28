@@ -5815,9 +5815,12 @@ function handleMovement(dt) {
     // Crouch has to win here, or the locomotion selector overwrites it every frame —
     // which is exactly why holding CROUCH did nothing while moving.
     // Movement now has three gears plus a crouch variant. Basic walk is untouched.
+    // Walk on the stick, run on the toggle — exactly as it was. A jog gear was added
+    // here on stick position, which meant pushing the stick to walk played the
+    // retargeted Jog instead of the original walk. That was wrong: the walk was not
+    // supposed to change. Jog is still available from the animation strip.
     const wanted = crouching ? CLIP.crouchWalk
                  : (manual && running) ? CLIP.run
-                 : (analogScale > 0.78) ? CLIP.jog   // push the stick further to jog
                  : CLIP.walk;
     if (actions[wanted] && currentActionName !== wanted) {
       playAction(wanted, { fade: 0.2, loop: true });
