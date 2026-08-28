@@ -3194,6 +3194,8 @@ function updateCarDriving(dt) {
   if (throttle > 0.6 && Math.random() < 0.25 && car) {
     spawnPuff(car.position.x - Math.sin(carState.heading) * 2.2, 0.35, car.position.z - Math.cos(carState.heading) * 2.2);
   }
+  updateDoppler(dt);
+  updateEngineDistance();
   updateRoadNoise(Math.min(1, Math.abs(carState.speed) / CAR_MAX_SPEED), !!carState.offRoad);
   // Lay rubber when the car is genuinely sliding sideways or braking hard at speed.
   const wheelspin = (throttle > 0.75 && speedFrac < 0.22) || (handbrakeDown && speedFrac > 0.15); // hard on the power from near standstill
@@ -4716,6 +4718,85 @@ function showPistol(ms) {
 }
 function updatePistol() {
   if (pistol && pistol.visible && performance.now() > pistolHideAt) pistol.visible = false;
+}
+
+/* ================= DOPPLER + CAMERA-DISTANCE MUFFLING ================= */
+
+/* 12. Doppler on passing traffic. Each traffic car gets a short looping tone whose
+   pitch shifts with closing speed and whose volume falls off with distance — the
+   pitch drop as one goes past is the whole effect. Only the nearest few are given
+   voices, since a dozen oscillators for cars you can't hear is wasted work. */
+const DOPPLER_VOICES = 3;
+let dopplerVoices = null;
+function ensureDoppler() {
+  if (dopplerVoices || !ambientCtx) return;
+  dopplerVoices = [];
+  for (let i = 0; i < DOPPLER_VOICES; i++) {
+    const o = ambientCtx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.value = 90;
+    const f = ambientCtx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = 700; f.Q.value = 0.8;
+    const g = ambientCtx.createGain();
+    g.gain.value = 0;
+    o.connect(f); f.connect(g); g.connect(ambientCtx.destination);
+    o.start();
+    dopplerVoices.push({ osc: o, filt: f, gain: g, lastDist: 999 });
+  }
+}
+function updateDoppler(dt) {
+  if (!ambientCtx || !sfxOn || !drivingMode || typeof trafficCars === 'undefined') return;
+  ensureDoppler();
+  if (!dopplerVoices) return;
+  const t = ambientCtx.currentTime;
+  // nearest cars first, so the voices always follow whatever is closest
+  // traffic entries are { mesh, laneX, speed } — mesh, not group
+  const near = trafficCars
+    .filter(c => c && c.mesh && c.mesh.visible)
+    .map(c => ({ c, d: Math.hypot(c.mesh.position.x - carState.x, c.mesh.position.z - carState.z) }))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, DOPPLER_VOICES);
+
+  for (let i = 0; i < dopplerVoices.length; i++) {
+    const v = dopplerVoices[i];
+    const item = near[i];
+    if (!item || item.d > 55) { v.gain.gain.setTargetAtTime(0, t, 0.25); v.lastDist = 999; continue; }
+    // closing speed from the change in distance — positive means approaching
+    const closing = (v.lastDist - item.d) / Math.max(dt, 0.0001);
+    v.lastDist = item.d;
+    const shift = Math.max(-0.35, Math.min(0.35, closing / 90)); // clamp so it can't screech
+    const base = 78 + Math.abs(item.c.speed || 8) * 2.2;
+    v.osc.frequency.setTargetAtTime(base * (1 + shift), t, 0.05);
+    v.filt.frequency.setTargetAtTime(500 + (1 - item.d / 55) * 1400, t, 0.1);
+    const falloff = Math.pow(1 - item.d / 55, 2);
+    v.gain.gain.setTargetAtTime(falloff * 0.06, t, 0.08);
+  }
+}
+
+/* 13. Engine muffling with camera distance. Pulling the camera back should sound
+   like stepping away from the car, not just look like it. Drives a lowpass and a
+   level drop on the engine bus rather than each node separately. */
+let engineTone = null;
+function updateEngineDistance() {
+  if (!ambientCtx || !engineNodes) return;
+  if (!engineTone) {
+    try {
+      engineTone = ambientCtx.createBiquadFilter();
+      engineTone.type = 'lowpass';
+      engineTone.frequency.value = 20000; // open by default; only closes as you pull back
+      engineTone.connect(ambientCtx.destination);
+      // re-route both engine layers through the filter
+      engineNodes.main.gain.disconnect();
+      engineNodes.body.gain.disconnect();
+      engineNodes.main.gain.connect(engineTone);
+      engineNodes.body.gain.connect(engineTone);
+    } catch (e) { engineTone = null; return; }
+  }
+  const d = camera.position.distanceTo(camTarget);
+  const near = 6, far = 26;
+  const k = Math.max(0, Math.min(1, (d - near) / (far - near)));
+  // high frequencies go first with distance, which is what actually reads as far away
+  engineTone.frequency.setTargetAtTime(20000 - k * 18200, ambientCtx.currentTime, 0.25);
 }
 
 function laneX(index) {
@@ -6484,5 +6565,15 @@ function tick() {
 }
 tick();
 </script>
+  <script>
+    /* Register the asset cache. Scoped to this directory, so it covers index.html
+       and beta.html alike. Registration failures are non-fatal — the game simply
+       downloads as before. */
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch((e) => console.warn('sw registration failed:', e));
+      });
+    }
+  </script>
 </body>
 </html>
