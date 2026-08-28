@@ -528,6 +528,7 @@ const ASSETS = {
   CAR_CRASH: 'car_crash.mp3',
   CAR_HORN: 'car_horn.mp3',
   CALL_CARMINE: 'call_carmine.mp3',
+  CALL_JUNIOR: 'call_junior.mp3',
   INTERIOR: 'interior.glb',
   GRASS_COLOR: 'grass_color.webp',   // photoscanned ground grass, 1024 — replaces the procedural canvas texture
   GRASS_NORMAL: 'grass_normal.webp', // 512 is plenty for a normal map at this viewing distance
@@ -1259,6 +1260,8 @@ function updateGeorgeProximity() {
 let nextPhoneRingAt = Infinity;
 let phoneRingPopupOpen = false;
 function scheduleNextPhoneRing(seconds) {
+  // A second call must never interrupt one in progress.
+  if (typeof onCall !== 'undefined' && onCall) seconds = Math.max(seconds, 60);
   nextPhoneRingAt = performance.now() + seconds * 1000;
 }
 const phoneDialog = document.createElement('div');
@@ -1272,10 +1275,12 @@ phoneDialog.innerHTML =
   '</div>';
 document.body.appendChild(phoneDialog);
 function openPhoneRing() {
+  if (typeof onCall !== 'undefined' && onCall) { scheduleNextPhoneRing(45); return; }
   phoneRingPopupOpen = true;
   // Handset first; the old popup only appears if the phone UI is missing.
   if (typeof showIncomingOnPhone === 'function') {
-    showIncomingOnPhone(Math.random() < 0.35 ? 'CARMINE LUPERTAZZI' : 'THE BOSS');
+    const r = Math.random();
+    showIncomingOnPhone(r < 0.28 ? 'carmine' : r < 0.52 ? 'junior' : 'boss');
     return;
   }
   phoneDialog.style.display = 'block';
@@ -5569,8 +5574,9 @@ function renderPhone() {
     body = '<div style="opacity:0.7;font-size:10px;margin-bottom:6px;">CONTACTS</div>' +
       '<div class="ph-item" data-act="callboss">\u260E The Boss</div>' +
       '<div class="ph-item" data-act="carmine">\u260E Carmine Lupertazzi</div>' +
+      '<div class="ph-item" data-act="junior">\u260E Uncle Junior</div>' +
       '<div class="ph-item" data-act="george">\u260E George</div>' +
-      '<div style="opacity:0.55;margin-top:8px;font-size:10px;">3 of 3</div>';
+      '<div style="opacity:0.55;margin-top:8px;font-size:10px;">4 of 4</div>';
   } else if (phoneScreen === 'radio') {
     body = '<div style="opacity:0.7;font-size:10px;margin-bottom:6px;">RADIO</div>' +
       RADIO_STATIONS.map((st, i) =>
@@ -5634,7 +5640,8 @@ function phoneActivate() {
 }
 function phoneAction(act) {
   if (act === 'callboss') { closePhone(); bossQuizCall(); }
-  else if (act === 'carmine') { closePhone(); startCarmineCall(); }
+  else if (act === 'carmine') { if (onCall) return; closePhone(); startVoiceCall('carmine'); }
+  else if (act === 'junior') { if (onCall) return; closePhone(); startVoiceCall('junior'); }
   else if (act === 'george') { closePhone(); if (window.__gameNote) window.__gameNote('George does not answer the phone. He is a car.'); }
   else if (act === 'audio') { soundToggle.click(); renderPhone(); }
   else if (act === 'photo') { closePhone(); togglePhotoMode(); }
@@ -5660,10 +5667,11 @@ function updateCarDJ(dt) {
    buzzing on a table. The old popup is kept as a fallback if the phone UI hasn't
    been created for any reason. */
 let incomingCall = false;
-function showIncomingOnPhone(caller) {
-  const who = caller || 'THE BOSS';
+function showIncomingOnPhone(callerKey) {
+  const key = callerKey || 'boss';
+  const who = CALLERS[key] ? CALLERS[key].name : 'THE BOSS';
   incomingCall = true;
-  showIncomingOnPhone._who = who;
+  showIncomingOnPhone._key = key;
   phoneOpen = true;
   phoneEl.style.display = 'flex';
   phoneEl.style.animation = 'phbuzz 0.35s ease-in-out infinite';
@@ -5685,10 +5693,11 @@ function showIncomingOnPhone(caller) {
       incomingCall = false;
       phoneEl.style.animation = '';
       closePhone();
-      if (showIncomingOnPhone._who === 'CARMINE LUPERTAZZI') {
-        // Hand control straight back — the call plays over normal gameplay.
+      const key = showIncomingOnPhone._key;
+      if (CALLERS[key]) {
+        // Voice callers: hand control straight back, and only now start the audio.
         closePhoneRing();
-        if (answer) startCarmineCall();
+        if (answer) startVoiceCall(key);
         else scheduleNextPhoneRing(150 + Math.random() * 200);
         return;
       }
@@ -5785,50 +5794,66 @@ function renderSnake() {
   });
 }
 
-/* ================= CARMINE'S CALL =================
-   A real voice call rather than a menu. Answering does NOT lock you to the handset:
-   the phone drops to a small "on call" strip and you keep full control of the game
-   while he talks — walking, driving, whatever. That was the whole point of the
-   request, and it's also how a phone call actually works. */
-let carmineAudio = null, onCall = false, callEndsAt = 0;
+/* ================= VOICE CALLS =================
+   Two recorded callers. Rules, in order of importance:
+
+   1. Audio starts only on ANSWER. Nothing plays on the ring itself — declining a
+      call must be silent, and previously the file would have begun the moment the
+      handset appeared.
+   2. Never two at once. A single shared audio element and an `onCall` guard mean a
+      second call cannot start while one is live; the ring scheduler also refuses to
+      fire during a call.
+   3. Answering hands control straight back — the phone drops to a small on-call
+      strip and you keep playing while they talk.
+*/
+const CALLERS = {
+  carmine: { name: 'CARMINE LUPERTAZZI', src: null, secs: 57 },
+  junior:  { name: 'UNCLE JUNIOR',       src: null, secs: 77 },
+};
+let callAudio = null, onCall = false, callEndsAt = 0, currentCaller = null;
+
 const callStrip = document.createElement('div');
 callStrip.id = 'call-strip';
 callStrip.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:12px;z-index:76;display:none;align-items:center;gap:10px;background:rgba(14,17,22,0.92);border:1px solid #3c7a4a;border-radius:999px;padding:8px 14px;backdrop-filter:blur(6px);font:700 12px/1 -apple-system,sans-serif;color:#bfe6c8;';
 document.body.appendChild(callStrip);
 
-function startCarmineCall() {
+function startVoiceCall(key) {
+  const c = CALLERS[key];
+  if (!c || onCall) return; // guard: never two at once
   try {
-    if (!carmineAudio) {
-      carmineAudio = new Audio(ASSETS.CALL_CARMINE);
-      carmineAudio.preload = 'auto';
-      carmineAudio.addEventListener('ended', endCarmineCall);
+    if (!callAudio) {
+      callAudio = new Audio();
+      callAudio.preload = 'auto';
+      callAudio.addEventListener('ended', endVoiceCall);
     }
-    carmineAudio.currentTime = 0;
-    carmineAudio.volume = sfxOn ? 0.95 : 0;
-    carmineAudio.play().catch(() => {});
+    callAudio.src = c.src;
+    callAudio.currentTime = 0;
+    callAudio.volume = sfxOn ? 0.95 : 0;
+    callAudio.play().catch(() => {});
     onCall = true;
-    callEndsAt = performance.now() + 57000;
-    // duck the music so you can hear him, the way a call would
-    if (bgAudio) bgAudio.volume = 0.18;
+    currentCaller = c;
+    callEndsAt = performance.now() + c.secs * 1000;
+    if (bgAudio) bgAudio.volume = 0.18; // duck the music, as a call would
     callStrip.style.display = 'flex';
-  } catch (e) { console.warn('carmine call failed:', e); }
+  } catch (e) { console.warn('voice call failed:', e); }
 }
-function endCarmineCall() {
+function endVoiceCall() {
   onCall = false;
+  currentCaller = null;
   callStrip.style.display = 'none';
-  try { if (carmineAudio) carmineAudio.pause(); } catch (e) {}
+  try { if (callAudio) { callAudio.pause(); callAudio.currentTime = 0; } } catch (e) {}
   if (bgAudio) bgAudio.volume = 1;
-  scheduleNextPhoneRing(120 + Math.random() * 180);
+  scheduleNextPhoneRing(150 + Math.random() * 200);
 }
 function updateCallStrip() {
-  if (!onCall) return;
+  if (!onCall || !currentCaller) return;
   const left = Math.max(0, Math.round((callEndsAt - performance.now()) / 1000));
   const mm = String(Math.floor(left / 60)), ss = String(left % 60).padStart(2, '0');
-  callStrip.innerHTML = '<span style="color:#5ad07a;">\u25CF</span> CARMINE LUPERTAZZI' +
+  callStrip.innerHTML = '<span style="color:#5ad07a;">\u25CF</span> ' + currentCaller.name +
     '<span style="opacity:0.7;">' + mm + ':' + ss + '</span>' +
     '<span id="hangup-btn" style="background:#7a2f2f;color:#ffd9d9;border-radius:999px;padding:5px 11px;margin-left:4px;">END</span>';
   const hb = document.getElementById('hangup-btn');
-  if (hb) hb.onclick = (e) => { e.stopPropagation(); endCarmineCall(); };
+  if (hb) hb.onclick = (e) => { e.stopPropagation(); endVoiceCall(); };
 }
 
 function laneX(index) {
@@ -7063,6 +7088,8 @@ soundToggle.addEventListener('click', () => {
 });
 // ---- wiring for horn, photo mode, radio and save (added late so bgAudio, car and
 // the audio flags above are all already defined) ----
+CALLERS.carmine.src = ASSETS.CALL_CARMINE;
+CALLERS.junior.src = ASSETS.CALL_JUNIOR;
 RADIO_STATIONS[0].src = BG_TRACKS[0];
 RADIO_STATIONS[1].src = BG_TRACKS[1];
 RADIO_STATIONS[2].src = ASSETS.GEORGE_SONG;
