@@ -1258,7 +1258,8 @@ function updateGeorgeProximity() {
    driving). Answer -> the job starts, auto-entering drive mode if needed.
    Decline -> he calls back later. */
 let nextPhoneRingAt = Infinity;
-let callRotation = 0; // fixed caller rotation, see openPhoneRing
+let callRotation = 0;      // position in the fallback rotation
+let pendingCaller = null;  // forces the next ring to be a specific caller
 let phoneRingPopupOpen = false;
 function scheduleNextPhoneRing(seconds) {
   // A second call must never interrupt one in progress.
@@ -1280,12 +1281,15 @@ function openPhoneRing() {
   phoneRingPopupOpen = true;
   // Handset first; the old popup only appears if the phone UI is missing.
   if (typeof showIncomingOnPhone === 'function') {
-    /* Fixed rotation rather than random: Junior first, then Carmine, then the Boss,
-       repeating. That guarantees you actually hear each recording instead of
-       waiting on a dice roll. */
+    /* Scripted sequence rather than a rotation on a blind timer:
+         Junior 10s after load.
+         Answered  -> Carmine 30s after Junior's call ENDS.
+         Declined  -> Carmine 10s later.
+       After Carmine it falls back to the ordinary rotation. */
     const order = ['junior', 'carmine', 'boss'];
-    const who = order[callRotation % order.length];
-    callRotation++;
+    const who = pendingCaller || order[callRotation % order.length];
+    if (!pendingCaller) callRotation++;
+    pendingCaller = null;
     showIncomingOnPhone(who);
     // The handset path used to return before this, so incoming calls were silent.
     playPhoneRing();
@@ -5764,8 +5768,15 @@ function showIncomingOnPhone(callerKey) {
       if (CALLERS[key]) {
         // Voice callers: hand control straight back, and only now start the audio.
         closePhoneRing();
-        if (answer) startVoiceCall(key);
-        else scheduleNextPhoneRing(10); // declined: next caller in 10s anyway
+        if (answer) {
+          // The follow-up is scheduled when the call ENDS, not now — otherwise the
+          // next ring would land in the middle of this one.
+          startVoiceCall(key);
+        } else {
+          // Declined: Junior specifically hands off to Carmine 10s later.
+          if (key === 'junior') { pendingCaller = 'carmine'; scheduleNextPhoneRing(10); }
+          else scheduleNextPhoneRing(10);
+        }
         return;
       }
       if (answer) document.getElementById('phone-answer-btn').click();
@@ -5912,8 +5923,11 @@ function startVoiceCall(key) {
   } catch (e) { console.warn('voice call failed:', e); }
 }
 function endVoiceCall() {
+  const finished = currentCaller;
   onCall = false;
   currentCaller = null;
+  // Junior answered and finished -> Carmine 30 seconds after the call ends.
+  if (finished && finished.name === CALLERS.junior.name) pendingCaller = 'carmine';
   callSuppressedEngine = false;
   callStrip.style.display = 'none';
   try { if (callAudio) { callAudio.pause(); callAudio.currentTime = 0; } } catch (e) {}
@@ -5921,7 +5935,7 @@ function endVoiceCall() {
     bgAudio.volume = 1;
     if (soundOn) bgAudio.play().catch(() => {}); // music back on, if it was on before
   }
-  scheduleNextPhoneRing(10); // call over: next one 10s later
+  scheduleNextPhoneRing(30); // 30s gap after a call ends
 }
 function updateCallStrip() {
   if (!onCall || !currentCaller) return;
