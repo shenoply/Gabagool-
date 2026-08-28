@@ -377,6 +377,12 @@
   <div id="run-toggle"><span class="sw"></span> Run</div>
   <div id="autohunt-toggle"><span class="sw"></span> Auto-hunt</div>
   <div id="drive-toggle"><span class="sw"></span> Drive</div>
+
+  <div id="action-pad" style="position:fixed;right:14px;bottom:calc(196px + env(safe-area-inset-bottom,0px));z-index:11;display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
+    <div class="act-btn" data-act="shoot" style="width:58px;height:58px;border-radius:50%;background:var(--panel);border:2px solid #d84a3a;color:#ff7a63;font:800 10px/58px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">SHOOT</div>
+    <div class="act-btn" data-act="jump" style="width:58px;height:58px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/58px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">JUMP</div>
+    <div class="act-btn" data-act="crouch" style="width:58px;height:58px;border-radius:50%;background:var(--panel);border:2px solid var(--panel-border);color:var(--text-dim);font:800 10px/58px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">CROUCH</div>
+  </div>
   <div id="handbrake-btn" style="display:none;position:fixed;right:16px;bottom:calc(210px + env(safe-area-inset-bottom,0px));z-index:11;width:62px;height:62px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/62px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;touch-action:none;">HAND<br>BRAKE</div>
 
   <div id="joystick-zone">
@@ -402,7 +408,6 @@
     <button id="zoom-out">−</button>
     <button id="horn-btn" title="Horn" style="display:none;">📢</button>
     <button id="photo-btn" title="Photo mode">📷</button>
-    <button id="jump-btn" title="Jump">⤴</button>
     <button id="cigar-btn" title="Cigar">🚬</button>
   </div>
 
@@ -1605,20 +1610,36 @@ let mixer = null;
 let actions = {};
 let currentAction = null;
 let currentActionName = null;
+// Secondary clips for the scrolling strip. Walk/Run/Crouch/Jump/Shoot are promoted
+// to their own buttons, so they are deliberately not repeated here.
 const ANIM_ORDER = [
-  "Walking", "Running", "Arise", "Agree_Gesture", "Angry_To_Tantrum_Sit",
-  "Block2", "Boxing_Guard_Prep_Straight_Punch", "Boxing_Guard_Right_Straight_Kick",
-  "Boxing_Practice", "Cough_While_Sleeping", "Shot_and_Fall_Forward", "360_Power_Spin_Jump"
+  "Casual_Walk", "Idle_11", "Alert", "Idle_Turn_Left",
+  "Forward_Roll_and_Fire", "Boxing_Practice",
+  "Boxing_Guard_Right_Straight_Kick", "Boxing_Guard_Step_Knee_Strike",
+  "golf_drive", "Dead"
 ];
+/* Clip names come from the merged Tony model (15 clips on one skeleton). Note the
+   inconsistent casing in the source export — "running" and "walking_man" are
+   lowercase where the rest are not, so they're referenced exactly as exported. */
 const LABELS = {
-  "Walking": "Walk", "Running": "Run", "Arise": "Arise",
-  "Agree_Gesture": "Agree", "Angry_To_Tantrum_Sit": "Angry → Sit",
-  "Block2": "Block", "Boxing_Guard_Prep_Straight_Punch": "Guard + Punch",
-  "Boxing_Guard_Right_Straight_Kick": "Guard + Kick", "Boxing_Practice": "Boxing Practice",
-  "Cough_While_Sleeping": "Cough (Sleep)", "Shot_and_Fall_Forward": "Shot & Fall",
-  "360_Power_Spin_Jump": "360 Spin Jump"
+  "walking_man": "Walk", "running": "Run", "Casual_Walk": "Stroll",
+  "Cautious_Crouch_Walk_Forward_inplace": "Crouch", "Jump_Run": "Jump",
+  "Draw_and_Shoot_Left": "Shoot", "Forward_Roll_and_Fire": "Roll + Fire",
+  "Alert": "Alert", "Idle_11": "Idle", "Idle_Turn_Left": "Idle Turn",
+  "Boxing_Practice": "Boxing", "Boxing_Guard_Right_Straight_Kick": "Kick",
+  "Boxing_Guard_Step_Knee_Strike": "Knee Strike", "golf_drive": "Golf Swing",
+  "Dead": "Dead"
 };
-const LOCOMOTION = new Set(["Walking", "Running"]);
+const CLIP = {
+  walk: "walking_man", run: "running", stroll: "Casual_Walk",
+  crouch: "Cautious_Crouch_Walk_Forward_inplace", jump: "Jump_Run",
+  shoot: "Draw_and_Shoot_Left", roll: "Forward_Roll_and_Fire",
+  idle: "Idle_11", idleTurn: "Idle_Turn_Left", alert: "Alert",
+};
+// Anything that counts as "he is moving", so idle motion and footsteps behave.
+const LOCOMOTION = new Set([CLIP.walk, CLIP.run, CLIP.stroll, CLIP.crouch]);
+// Buttons promoted out of the scrolling strip into their own controls.
+const PRIMARY_CLIPS = [CLIP.walk, CLIP.run, CLIP.crouch, CLIP.jump, CLIP.shoot];
 
 function playAction(name, { fade = 0.25, loop = true, manual = false } = {}) {
   if (!actions[name] || currentActionName === name) {
@@ -1791,9 +1812,9 @@ function startEating(gab) {
   if (character) character.scale.setScalar(sizeMult);
   document.getElementById('anxious-vignette').classList.remove('on');
   gameState = 'searching'; // no separate eating animation/state — effects apply instantly
-  if (currentActionName === 'Shot_and_Fall_Forward') {
+  if (currentActionName === 'Dead') {
     // Rescued mid-panic — get him back on his feet instead of leaving him on the ground.
-    playAction('Walking', { fade: 0.2, loop: true });
+    playAction(CLIP.walk, { fade: 0.2, loop: true });
     if (currentAction) { currentAction.paused = true; currentAction.time = 0; }
     wasMoving = false;
     stopEaseTimer = 0;
@@ -1805,7 +1826,7 @@ function startEating(gab) {
 function triggerAnxious() {
   gameState = 'anxious';
   anxiousTimer = ANXIOUS_DURATION;
-  playAction('Shot_and_Fall_Forward', { fade: 0.2, loop: false });
+  playAction('Dead', { fade: 0.2, loop: false }); // replaces Shot_and_Fall_Forward, which the new model doesn't have
   document.getElementById('anxious-vignette').classList.add('on');
 }
 
@@ -1820,7 +1841,7 @@ function reviveCharacter() {
   if (gameState !== 'passedout') return;
   gameState = 'reviving';
   document.getElementById('passedout-overlay').style.display = 'none';
-  playAction('Arise', { fade: 0.15, loop: false });
+  playAction(CLIP.alert, { fade: 0.15, loop: false }); // no 'Arise' clip in the new model — Alert reads as coming to
   // ensure a gabagool is nearby to greet him back
   if (gabagools.length === 0 && character) {
     spawnGabagool(character.position.x + 1.4, character.position.z + 0.6);
@@ -3603,7 +3624,7 @@ function showRadio(show) {
 let photoMode = false;
 function togglePhotoMode() {
   photoMode = !photoMode;
-  const hide = ['topbar','anim-panel','joystick-zone','run-toggle','autohunt-toggle','drive-toggle','status-panel','speedo','radio','hint','zoom-controls'];
+  const hide = ['topbar','anim-panel','joystick-zone','run-toggle','autohunt-toggle','drive-toggle','status-panel','speedo','radio','hint','zoom-controls','action-pad','game-clock','compass'];
   for (const id of hide) {
     const el = document.getElementById(id);
     if (el) el.style.visibility = photoMode ? 'hidden' : '';
@@ -4181,17 +4202,16 @@ function updateLeaves(t) {
 }
 
 /* ================= JUMP, IDLE MOTION, CIGAR =================
-   The model ships 12 Mixamo clips. 360_Power_Spin_Jump exists but plays in place
-   with no vertical movement, so it never read as a jump — this drives real height
-   under it. There is no idle clip and no crouch clip in the file, so idle is built
-   from procedural breathing plus occasional existing gestures. */
+   The model now ships 15 clips including a real Jump_Run, Idle_11 and a crouch walk.
+   The jump clip still has no vertical translation in it, so this drives real height
+   under it. Idle uses the actual idle clip with a little breathing on top. */
 
 let jumpVel = 0, jumpY = 0, isJumping = false;
 function startJump() {
   if (isJumping || !character || drivingMode) return;
   isJumping = true;
   jumpVel = 5.2;
-  playAction('360_Power_Spin_Jump', { loop: false, manual: true });
+  playAction(CLIP.jump, { loop: false, manual: true });
   if (ambientCtx && sfxOn) {
     // a small effort grunt: short filtered noise, nothing fancy
     const t = ambientCtx.currentTime;
@@ -4213,7 +4233,7 @@ function updateJump(dt) {
     jumpY += jumpVel * dt;
     if (jumpY <= 0) {
       jumpY = 0; jumpVel = 0; isJumping = false;
-      playAction(currentActionName === 'Running' ? 'Running' : 'Walking');
+      playAction(currentActionName === CLIP.run ? CLIP.run : CLIP.walk);
       // landing thud on whatever surface he's on
       playCarOneShot && playDoorSlam();
     }
@@ -4225,14 +4245,20 @@ function updateJump(dt) {
    an occasional real gesture from the clips that are there. Subtle on purpose —
    standing perfectly still is what made him look like a prop. */
 let idleTime = 0, nextFidgetAt = 6 + Math.random() * 8;
-const IDLE_GESTURES = ['Agree_Gesture', 'Boxing_Practice', 'Block2'];
+const IDLE_GESTURES = [CLIP.idleTurn, CLIP.alert, 'Boxing_Practice', 'golf_drive'];
 function updateIdleMotion(dt) {
   if (!character || drivingMode || isJumping) { idleTime = 0; return; }
   const moving = LOCOMOTION.has(currentActionName);
   if (moving) { idleTime = 0; nextFidgetAt = 6 + Math.random() * 8; return; }
   idleTime += dt;
-  // breathing: a slow vertical rise and fall, plus a touch of sway
-  const breath = Math.sin(idleTime * 1.6) * 0.012;
+  // There is a proper Idle clip in this model now, so drop into it rather than
+  // leaving him frozen on the last walk frame.
+  if (idleTime > 0.35 && currentActionName !== CLIP.idle && manualOverrideTimer <= 0
+      && !IDLE_GESTURES.includes(currentActionName)) {
+    playAction(CLIP.idle);
+  }
+  // breathing on top, kept small now that the clip does most of the work
+  const breath = Math.sin(idleTime * 1.6) * 0.006;
   character.position.y = (lastGroundY || 0) + breath;
   character.rotation.z = Math.sin(idleTime * 0.9) * 0.006;
   if (idleTime > nextFidgetAt) {
@@ -4544,6 +4570,78 @@ function updateCleanStreak(dt) {
   }
 }
 
+/* ================= CROUCH & SHOOTING ================= */
+
+/* Crouch is a hold, not a toggle — the clip is a crouch WALK, so it reads correctly
+   only while he's actually moving in it. Movement speed drops to match. */
+let crouching = false;
+function setCrouch(on) {
+  if (crouching === on || drivingMode) return;
+  crouching = on;
+  if (on) playAction(CLIP.crouch, { fade: 0.18 });
+  else playAction(LOCOMOTION.has(currentActionName) ? CLIP.walk : CLIP.idle, { fade: 0.18 });
+}
+
+/* Shooting. Draw_and_Shoot_Left is a one-shot, so the muzzle flash and report are
+   timed to land partway through the draw rather than on the button press. */
+let lastShotAt = 0;
+let muzzleFlash = null;
+function fireShot() {
+  if (drivingMode || !character) return;
+  const now = performance.now();
+  if (now - lastShotAt < 1100) return; // the clip needs room to play
+  lastShotAt = now;
+  playAction(CLIP.shoot, { loop: false, manual: true });
+  setTimeout(() => { spawnMuzzleFlash(); playGunshot(); }, 420); // after the draw
+}
+function spawnMuzzleFlash() {
+  if (!character) return;
+  if (!muzzleFlash) {
+    muzzleFlash = new THREE.PointLight(0xffd08a, 0, 9, 2);
+    scene.add(muzzleFlash);
+  }
+  // roughly at hand height, ahead of where he's facing
+  const fx = Math.sin(character.rotation.y), fz = Math.cos(character.rotation.y);
+  muzzleFlash.position.set(
+    character.position.x + fx * 0.75,
+    (character.position.y || 0) + 1.25,
+    character.position.z + fz * 0.75
+  );
+  muzzleFlash.intensity = 14;
+  addShake(0.28);
+}
+function updateMuzzleFlash(dt) {
+  if (muzzleFlash && muzzleFlash.intensity > 0.01) {
+    muzzleFlash.intensity *= Math.pow(0.0005, dt); // gone in a couple of frames
+  }
+}
+function playGunshot() {
+  if (!ambientCtx || !sfxOn) return;
+  const t = ambientCtx.currentTime;
+  // crack: very short bright noise burst
+  const n = Math.floor(ambientCtx.sampleRate * 0.25);
+  const b = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) { const k = 1 - i / n; d[i] = (Math.random() * 2 - 1) * Math.pow(k, 5); }
+  const src = ambientCtx.createBufferSource(); src.buffer = b;
+  const hp = ambientCtx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900;
+  const g = ambientCtx.createGain();
+  g.gain.setValueAtTime(0.34, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+  src.connect(hp); hp.connect(g); g.connect(ambientCtx.destination);
+  src.start(t);
+  // body: a low thump underneath so it isn't just a click
+  const o = ambientCtx.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(180, t);
+  o.frequency.exponentialRampToValueAtTime(45, t + 0.16);
+  const og = ambientCtx.createGain();
+  og.gain.setValueAtTime(0.22, t);
+  og.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+  o.connect(og); og.connect(ambientCtx.destination);
+  o.start(t); o.stop(t + 0.22);
+}
+
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
   const lanes = [-ROAD_ZONE.halfW * 0.55, -ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.55];
@@ -4849,6 +4947,7 @@ function enterDriveMode(withMission, overrideCar) {
       drivingMode = true;
       document.getElementById('status-panel').style.display = 'none'; // blocks too much screen while driving
       playDoorSlam(); screenFade();
+      { const ap = document.getElementById('action-pad'); if (ap) ap.style.display = 'none'; }
       document.getElementById('horn-btn').style.display = '';
       document.getElementById('handbrake-btn').style.display = '';
       showRadio(true);
@@ -4935,6 +5034,7 @@ function exitDriveMode() {
   savedCharacterPos = new THREE.Vector3(sideX, 0, sideZ);
   document.getElementById('status-panel').style.display = '';
   playDoorSlam(); screenFade();
+  { const ap = document.getElementById('action-pad'); if (ap) ap.style.display = 'flex'; }
   document.getElementById('horn-btn').style.display = 'none';
   { const hb = document.getElementById('handbrake-btn'); if (hb) hb.style.display = 'none'; }
   handbrakeDown = false;
@@ -5471,14 +5571,14 @@ loader.parse(buffer, '', (gltf) => {
   });
 
   buildAnimButtons(gltf.animations.map(c => c.name));
-  playAction('Walking', { fade: 0, loop: true });
+  playAction(CLIP.walk, { fade: 0, loop: true });
 
   mixer.addEventListener('finished', (e) => {
     const name = getActionName(e.action);
-    if (name === 'Arise' && gameState === 'reviving') {
+    if (name === CLIP.alert && gameState === 'reviving') {
       gameState = 'searching';
       hunger = MAX_HUNGER;
-      playAction('Walking', { fade: 0.2, loop: true });
+      playAction(CLIP.walk, { fade: 0.2, loop: true });
     }
   });
 
@@ -5502,7 +5602,7 @@ function buildAnimButtons(names) {
     btn.textContent = LABELS[name] || name;
     btn.addEventListener('click', () => {
       if (gameState === 'passedout') {
-        if (name === 'Arise') reviveCharacter();
+        if (name === CLIP.alert) reviveCharacter();
         return;
       }
       if (gameState === 'eating' || gameState === 'reviving') return;
@@ -5579,7 +5679,8 @@ function handleMovement(dt) {
   if (moving) {
     moveDir.normalize();
     const analogScale = joyManual && !keyManual ? Math.max(0.35, joyMag) : 1;
-    const speed = (manual && running) ? runSpeed : walkSpeed * analogScale;
+    let speed = (manual && running) ? runSpeed : walkSpeed * analogScale;
+  if (crouching) speed *= 0.45; // crouch-walking is slower, as the clip implies
     const blocked = isBlockedAheadThrottled(character.position, moveDir, 0.55);
     if (!blocked) {
       character.position.addScaledVector(moveDir, speed * dt);
@@ -5596,7 +5697,7 @@ function handleMovement(dt) {
 
     camTarget.lerp(character.position.clone().add(new THREE.Vector3(0, camTargetYOffset, 0)), Math.min(1, dt * 6));
 
-    const wanted = (manual && running) ? 'Running' : 'Walking';
+    const wanted = (manual && running) ? CLIP.run : CLIP.walk;
     if (actions[wanted] && currentActionName !== wanted) {
       playAction(wanted, { fade: 0.2, loop: true });
     }
@@ -5733,7 +5834,26 @@ RADIO_STATIONS[1].src = BG_TRACKS[1];
 RADIO_STATIONS[2].src = ASSETS.GEORGE_SONG;
 
 document.getElementById('horn-btn').addEventListener('click', (e) => { e.stopPropagation(); playHorn(); });
-document.getElementById('jump-btn').addEventListener('click', (e) => { e.stopPropagation(); startJump(); });
+document.querySelectorAll('.act-btn').forEach((btn) => {
+  const act = btn.dataset.act;
+  const press = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    btn.style.filter = 'brightness(1.5)';
+    if (act === 'jump') startJump();
+    else if (act === 'shoot') fireShot();
+    else if (act === 'crouch') setCrouch(true);
+  };
+  const release = (e) => {
+    if (e) e.stopPropagation();
+    btn.style.filter = '';
+    if (act === 'crouch') setCrouch(false); // crouch is held, the others are taps
+  };
+  btn.addEventListener('pointerdown', press);
+  btn.addEventListener('pointerup', release);
+  btn.addEventListener('pointercancel', release);
+  btn.addEventListener('pointerleave', release);
+});
+window.addEventListener('blur', () => setCrouch(false));
 document.getElementById('cigar-btn').addEventListener('click', (e) => { e.stopPropagation(); toggleCigar(); });
 
 const hbBtn = document.getElementById('handbrake-btn');
@@ -6207,11 +6327,12 @@ function tick() {
   updateJump(dt);
   updateIdleMotion(dt);
   updateCigar(dt);
+  updateMuzzleFlash(dt);
   updateBirdScatter(dt);
   if (!drivingMode) updateDuckBehaviour(dt);
   { const sh = dustMesh && dustMesh.material.userData.shader; if (sh) sh.uniforms.uTime.value = clock.elapsedTime; }
   applyShake(dt);
-  if (!drivingMode) updateFootsteps(dt, LOCOMOTION.has(currentActionName), currentActionName === 'Running');
+  if (!drivingMode) updateFootsteps(dt, LOCOMOTION.has(currentActionName), currentActionName === CLIP.run);
   if (drivingMode) {
     updateCarDriving(dt);
   } else {
