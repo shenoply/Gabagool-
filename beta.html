@@ -406,6 +406,8 @@
   <div id="autohunt-toggle"><span class="sw"></span> Auto-hunt</div>
   <div id="drive-toggle"><span class="sw"></span> Drive</div>
 
+  <div id="leave-house-btn" style="position:fixed;left:12px;top:104px;z-index:41;display:none;background:rgba(20,22,28,0.92);color:#ffb347;border:1px solid #ffb347;font:800 11px/1 -apple-system,sans-serif;padding:10px 14px;border-radius:999px;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">EXIT HOUSE</div>
+
   <div id="util-pad" style="position:fixed;right:16px;bottom:calc(86px + env(safe-area-inset-bottom,0px));z-index:11;display:flex;flex-direction:row;gap:8px;align-items:center;">
     <button id="horn-btn" title="Horn" style="display:none;">📢</button>
     <button id="photo-btn" title="Photo mode">📷</button>
@@ -1278,6 +1280,12 @@ function closePhoneRing() {
 }
 document.getElementById('phone-answer-btn').addEventListener('click', () => {
   closePhoneRing();
+  // Roughly one call in four, the Boss is testing you rather than sending you out.
+  // Indoors it's always a quiz, since a debt chase needs a car.
+  if (inInterior || Math.random() < 0.25) {
+    bossQuizCall();
+    return;
+  }
   nextPhoneRingAt = Infinity; // next ring is scheduled when this mission resolves
   if (drivingMode) {
     startChaseAudio();
@@ -2542,6 +2550,9 @@ function buildBackyardScene(bound, scale) {
 /* ---------- House model (replaces the procedural yard) ---------- */
 const groundRaycaster = new THREE.Raycaster();
 const wallRaycaster = new THREE.Raycaster();
+// Test both sides: single-sided wall materials would otherwise be invisible to the
+// ray from the inside, so you could walk out through a wall you were standing against.
+wallRaycaster.firstHitOnly = false;
 const DOWN = new THREE.Vector3(0, -1, 0);
 
 function getGroundHeightAt(x, z) {
@@ -2586,14 +2597,24 @@ function isBlockedAhead(fromPos, dir, lookahead) {
   // single waist-height ray would pass straight over.
   const targets = inInterior ? interiorSolids : houseColliders;
   if (targets.length === 0) return false;
-  const heights = inInterior ? [0.9, 0.35] : [0.9];
+  const heights = inInterior ? [0.25, 0.9, 1.5] : [0.9];
+  // Three rays across the body's width, not one down the centre. A single centre ray
+  // walks straight through door jambs, table legs and wall corners — you clip the
+  // edge of something the ray misses entirely.
+  const side = new THREE.Vector3(-dir.z, 0, dir.x).normalize().multiplyScalar(0.28);
+  const offsets = inInterior ? [0, 1, -1] : [0];
   for (const h of heights) {
-    wallRaycaster.set(new THREE.Vector3(fromPos.x, fromPos.y + h, fromPos.z), dir);
-    wallRaycaster.far = lookahead;
-    const hits = wallRaycaster.intersectObjects(targets, false);
-    for (const hit of hits) {
-      // ignore floors and ceilings; only near-vertical surfaces block movement
-      if (hit.face && Math.abs(hit.face.normal.y) < 0.55) return true;
+    for (const o of offsets) {
+      wallRaycaster.set(
+        new THREE.Vector3(fromPos.x + side.x * o, fromPos.y + h, fromPos.z + side.z * o),
+        dir
+      );
+      wallRaycaster.far = lookahead;
+      const hits = wallRaycaster.intersectObjects(targets, false);
+      for (const hit of hits) {
+        // ignore floors and ceilings; only near-vertical surfaces block movement
+        if (hit.face && Math.abs(hit.face.normal.y) < 0.62) return true;
+      }
     }
   }
   return false;
@@ -3770,6 +3791,7 @@ function saveGameState() {
       dayTime: dayTime,
       audioMode: audioMode,
       track: (typeof currentTrack !== 'undefined') ? currentTrack : 0,
+      quizBest: quizBest,
     }));
   } catch (e) { /* private mode or quota — not worth surfacing */ }
 }
@@ -3780,6 +3802,7 @@ function loadGameState() {
     const d = JSON.parse(raw);
     if (typeof d.dayTime === 'number') dayTime = d.dayTime;   // resume at the hour you left
     if (typeof d.debts === 'number') debtsCollected = d.debts;
+    if (typeof d.quizBest === 'number') quizBest = d.quizBest;
     if (typeof d.audioMode === 'number') { audioMode = d.audioMode; soundOn = audioMode === 0; sfxOn = audioMode !== 2; }
   } catch (e) { /* ignore corrupt saves rather than blocking startup */ }
 }
@@ -4961,8 +4984,10 @@ function loadInterior() {
         }
         // camera collides with structure only, so it can't jam on a sofa
         if (/level|wall|floor|ceil|roof|stair/i.test(n)) interiorColliders.push(o);
-        // the player collides with everything solid — glass and rugs excepted
-        if (!/glass|mirror|rug|carpet|picture|frame/i.test(n)) interiorSolids.push(o);
+        // Everything is solid except things you genuinely walk over. The previous
+        // filter also excluded "frame" and "glass", which threw away door frames,
+        // window frames and glazing — all of which are walls you could stroll through.
+        if (!/rug|carpet|mat_floor|^floor/i.test(o.name || '')) interiorSolids.push(o);
       });
       if (window.__gameNote) window.__gameNote('interior: ' + interiorColliders.length + ' wall meshes, ' + interiorSolids.length + ' solids, ' + doorsHidden + ' doors opened');
       if (window.__gameNote) window.__gameNote('interior colliders: ' + interiorColliders.length);
@@ -5077,6 +5102,8 @@ let actBtnAction = null;
 actBtn.addEventListener('click', (e) => { e.stopPropagation(); if (actBtnAction) actBtnAction(); });
 
 function updateInteriorActions() {
+  const leave = document.getElementById('leave-house-btn');
+  if (leave) leave.style.display = (inInterior && !photoMode) ? '' : 'none';
   if (!inInterior || !character || photoMode) { actBtn.style.display = 'none'; return; }
   const px = character.position.x, pz = character.position.z;
   const near = (p) => Math.hypot(px - (INTERIOR_ORIGIN.x + p.x), pz - (INTERIOR_ORIGIN.z + p.z));
@@ -5133,7 +5160,7 @@ const QUIZ = [
   { q: "Who is Tony's consigliere and closest advisor?", a: ["Silvio Dante", "Paulie Gualtieri", "Bobby Baccalieri", "Furio Giunta"], c: 0 },
   { q: "What is the name of Tony and Carmela's daughter?", a: ["Meadow", "Adriana", "Sophia", "Kelli"], c: 0 },
 ];
-let quizIndex = 0, quizScore = 0, quizAsked = 0, quizOrder = [];
+let quizIndex = 0, quizScore = 0, quizAsked = 0, quizOrder = [], quizBest = 0;
 const quizEl = document.createElement('div');
 quizEl.id = 'quiz-overlay';
 quizEl.style.cssText = 'position:fixed;inset:0;z-index:120;display:none;background:rgba(6,8,12,0.94);backdrop-filter:blur(6px);align-items:center;justify-content:center;padding:24px;';
@@ -5152,6 +5179,10 @@ function closeQuiz() { quizEl.style.display = 'none'; }
 function renderQuiz() {
   if (quizIndex >= 8 || quizIndex >= quizOrder.length) {
     const pct = Math.round((quizScore / Math.max(1, quizAsked)) * 100);
+    // personal best, kept with the rest of the saved state
+    if (quizScore > quizBest) { quizBest = quizScore; saveGameState(); }
+    // a clean sweep is worth something in the world, not just on the scoreboard
+    if (quizScore === quizAsked && quizAsked >= 8) grantGoldGabagool();
     const verdict = pct === 100 ? "You're in the family."
                   : pct >= 75 ? "Respectable. Sit down, have something."
                   : pct >= 50 ? "You've seen it, but you weren't paying attention."
@@ -5160,7 +5191,8 @@ function renderQuiz() {
     const box = document.createElement('div');
     box.style.cssText = 'max-width:420px;text-align:center;color:#fff;font:400 15px/1.6 -apple-system,sans-serif;';
     box.innerHTML = '<div style="font:800 30px/1 -apple-system,sans-serif;color:var(--accent);margin-bottom:10px;">' +
-      quizScore + ' / ' + quizAsked + '</div><div style="opacity:0.8;margin-bottom:22px;">' + verdict + '</div>';
+      quizScore + ' / ' + quizAsked + '</div><div style="opacity:0.8;margin-bottom:6px;">' + verdict + '</div>' +
+      '<div style="opacity:0.5;font-size:12px;margin-bottom:20px;">Best: ' + Math.max(quizBest, quizScore) + ' / 8</div>';
     const again = document.createElement('button');
     again.textContent = 'Play again';
     again.style.cssText = 'background:var(--accent);color:#1a1208;border:none;border-radius:999px;padding:12px 26px;font:800 14px -apple-system,sans-serif;margin-right:10px;';
@@ -5397,6 +5429,42 @@ function djSpeak() {
     if (en) u.voice = en;
     window.speechSynthesis.speak(u);
   } catch (e) { /* no voices available; skip silently */ }
+}
+
+/* A perfect round spawns a gold gabagool by the pool — worth more, and it makes the
+   quiz part of the game rather than a side panel. */
+function grantGoldGabagool() {
+  try {
+    const x = (Math.random() * 2 - 1) * 8;
+    const z = (Math.random() * 2 - 1) * 8;
+    spawnGabagool(x, z);
+    const g = gabagools[gabagools.length - 1];
+    if (g && g.group) {
+      g.group.traverse((o) => {
+        if (o.isMesh && o.material) {
+          o.material = o.material.clone();
+          o.material.color.setHex(0xffcf5a);
+          o.material.emissive = new THREE.Color(0xff9500);
+          o.material.emissiveIntensity = 0.8;
+          o.material.metalness = 0.9;
+          o.material.roughness = 0.15;
+        }
+      });
+      g.group.scale.multiplyScalar(1.4);
+      g.golden = true;
+    }
+    if (window.__gameNote) window.__gameNote('Perfect round — a gold gabagool is out by the pool');
+  } catch (e) { console.warn('gold gabagool failed:', e); }
+}
+
+/* The Boss doesn't only hand out work. Sometimes he just wants to know if you were
+   paying attention. */
+function bossQuizCall() {
+  const item = QUIZ[Math.floor(Math.random() * QUIZ.length)];
+  quizOrder = [QUIZ.indexOf(item)];
+  quizIndex = 0; quizScore = 0; quizAsked = 0;
+  quizEl.style.display = 'flex';
+  renderQuiz();
 }
 
 function laneX(index) {
@@ -6647,6 +6715,7 @@ document.querySelectorAll('.act-btn').forEach((btn) => {
 window.addEventListener('blur', () => setCrouch(false));
 document.getElementById('cigar-btn').addEventListener('click', (e) => { e.stopPropagation(); toggleCigar(); });
 document.getElementById('quiz-btn').addEventListener('click', (e) => { e.stopPropagation(); openQuiz(); });
+document.getElementById('leave-house-btn').addEventListener('click', (e) => { e.stopPropagation(); exitInterior(); });
 
 const hbBtn = document.getElementById('handbrake-btn');
 // pointer events rather than click: it has to be held, not tapped
