@@ -415,6 +415,7 @@
     <button id="horn-btn" title="Horn" style="display:none;">📢</button>
     <button id="photo-btn" title="Photo mode">📷</button>
     <button id="cigar-btn" title="Cigar">🚬</button>
+    <button id="pov-btn" title="First-person view" style="display:none;">👁</button>
     <button id="phone-btn" title="Phone">📱</button>
   </div>
 
@@ -3276,6 +3277,7 @@ function updateCarDriving(dt) {
     const speedFrac = carState.speed / CAR_MAX_SPEED;
     const dir = carState.speed >= 0 ? 1 : -1;
     carState.heading -= steer * CAR_TURN_RATE * dt * Math.min(1, Math.abs(speedFrac) * 2.2) * dir;
+  lastSteer = steer; // published for the first-person steering wheel
   }
 
   // Lateral grip. The car used to travel exactly along its heading, which is why it
@@ -5947,6 +5949,135 @@ function updateCallStrip() {
   if (hb) hb.onclick = (e) => { e.stopPropagation(); endVoiceCall(); };
 }
 
+/* ================= FIRST-PERSON DRIVING =================
+   The car models have body geometry spanning the cabin but nothing named as an
+   interior, so a real dashboard may or may not exist in the mesh. Two things make
+   this work either way:
+     1. The car's materials are switched to DoubleSide while inside, so the shell
+        renders from within instead of vanishing (single-sided faces are invisible
+        from behind).
+     2. A simple procedural dashboard and steering wheel are added, so there is
+        always a cabin to sit in — and the wheel turns with your steering.
+   The car itself stays visible: you see its own pillars and roof from inside. */
+let povMode = false, povRig = null, povWheel = null, savedCarSides = [];
+let lastSteer = 0;
+
+function buildPovRig() {
+  if (povRig || !car) return;
+  povRig = new THREE.Group();
+
+  const dashMat = new THREE.MeshStandardMaterial({ color: 0x16171a, roughness: 0.85, metalness: 0.1 });
+  const dash = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.34, 0.5), dashMat);
+  dash.position.set(0, 0.62, -0.85);
+  povRig.add(dash);
+
+  // instrument binnacle with two lit dials
+  const binn = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.22, 0.3), dashMat);
+  binn.position.set(-0.36, 0.8, -0.72);
+  povRig.add(binn);
+  for (const dx of [-0.13, 0.13]) {
+    const dial = new THREE.Mesh(
+      new THREE.CircleGeometry(0.085, 20),
+      new THREE.MeshBasicMaterial({ color: 0x1a1408 })
+    );
+    dial.position.set(-0.36 + dx, 0.8, -0.567);
+    povRig.add(dial);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.085, 0.098, 22),
+      new THREE.MeshBasicMaterial({ color: 0xffa33a })
+    );
+    ring.position.copy(dial.position);
+    ring.position.z += 0.002;
+    povRig.add(ring);
+  }
+
+  // steering wheel, on its own group so it can rotate with input
+  povWheel = new THREE.Group();
+  const rim = new THREE.Mesh(
+    new THREE.TorusGeometry(0.19, 0.022, 8, 26),
+    new THREE.MeshStandardMaterial({ color: 0x0e0e10, roughness: 0.6 })
+  );
+  povWheel.add(rim);
+  for (const ang of [0, Math.PI * 0.66, Math.PI * 1.34]) {
+    const spoke = new THREE.Mesh(
+      new THREE.BoxGeometry(0.17, 0.022, 0.014),
+      new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.7 })
+    );
+    spoke.position.set(Math.cos(ang) * 0.09, Math.sin(ang) * 0.09, 0);
+    spoke.rotation.z = ang;
+    povWheel.add(spoke);
+  }
+  const hub = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.045, 0.045, 0.03, 12),
+    new THREE.MeshStandardMaterial({ color: 0x1c1c20, roughness: 0.5, metalness: 0.4 })
+  );
+  hub.rotation.x = Math.PI / 2;
+  povWheel.add(hub);
+  povWheel.position.set(-0.36, 0.66, -0.5);
+  povWheel.rotation.x = -Math.PI * 0.32; // raked toward the driver, not vertical
+  povRig.add(povWheel);
+
+  povRig.visible = false;
+  scene.add(povRig);
+}
+
+function setPovMode(on) {
+  povMode = on;
+  buildPovRig();
+  if (!car) return;
+  if (on) {
+    /* Car body materials are almost always single-sided, which means from inside the
+       cabin you'd look straight through the roof and doors. Render both sides while
+       you're in there, and put it back on exit. */
+    savedCarSides = [];
+    car.traverse((o) => {
+      if (o.isMesh && o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) { savedCarSides.push([m, m.side]); m.side = THREE.DoubleSide; }
+      }
+    });
+    if (povRig) povRig.visible = true;
+  } else {
+    for (const [m, side] of savedCarSides) m.side = side;
+    savedCarSides = [];
+    if (povRig) povRig.visible = false;
+  }
+  const btn = document.getElementById('pov-btn');
+  if (btn) btn.style.borderColor = on ? 'var(--accent)' : '#3c4450';
+}
+
+function updatePovCamera() {
+  if (!povMode || !drivingMode) return;
+  const h = carState.heading;
+  const sin = Math.sin(h), cos = Math.cos(h);
+  // driver's seat: left of centre, at eye height, a little behind the windscreen
+  const ox = -0.36, oy = 1.02, oz = 0.12;
+  const wx = carState.x + ox * cos - oz * sin;
+  const wz = carState.z + ox * (-sin) - oz * cos;
+
+  if (povRig) {
+    povRig.position.set(carState.x, 0, carState.z);
+    povRig.rotation.y = h;
+    povRig.rotation.z = carState.roll * 0.6;
+    povRig.rotation.x = carState.pitch * 0.6;
+  }
+  if (povWheel) {
+    // the wheel turns with your steering, which sells the view more than anything else
+    povWheel.rotation.y = 0;
+    povWheel.rotation.z = -(lastSteer || 0) * 1.25 - (carState.slip || 0) * 0.8;
+  }
+
+  camera.position.set(wx, oy, wz);
+  // look down the bonnet, with body roll leaning the horizon
+  const lookAt = new THREE.Vector3(
+    wx - Math.sin(h) * 12,
+    oy - 0.6,
+    wz - Math.cos(h) * 12
+  );
+  camera.lookAt(lookAt);
+  camera.rotation.z += carState.roll * 0.35;
+}
+
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
   const lanes = [-ROAD_ZONE.halfW * 0.55, -ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.55];
@@ -6316,6 +6447,7 @@ function stopChaseAudio() {
 
 function exitDriveMode() {
   drivingMode = false;
+  if (povMode) setPovMode(false); // don't walk around with the cabin on screen
   updateEngineAudio(0, 0, false);
   { const el = document.getElementById('speedo'); if (el) el.style.display = 'none'; } // fade the engine out on foot rather than leaving it idling
   // Getting out leaves the car where you stopped it, and puts the player on the
@@ -7206,6 +7338,7 @@ document.querySelectorAll('.act-btn').forEach((btn) => {
 window.addEventListener('blur', () => setCrouch(false));
 document.getElementById('cigar-btn').addEventListener('click', (e) => { e.stopPropagation(); toggleCigar(); });
 document.getElementById('phone-btn').addEventListener('click', (e) => { e.stopPropagation(); openPhone(); });
+document.getElementById('pov-btn').addEventListener('click', (e) => { e.stopPropagation(); setPovMode(!povMode); });
 document.getElementById('leave-house-btn').addEventListener('click', (e) => { e.stopPropagation(); exitInterior(); });
 
 const hbBtn = document.getElementById('handbrake-btn');
@@ -7711,6 +7844,10 @@ function tick() {
   updateClouds(dt);
   updateGeorgeProximity();
   updateInteriorPrompt(dt);
+  {
+    const pb = document.getElementById('pov-btn');
+    if (pb) pb.style.display = drivingMode ? '' : 'none';
+  }
   updateCallStrip();
   updateCarDJ(dt);
   updateInteriorActions();
@@ -7729,6 +7866,7 @@ function tick() {
   updateAmbientAudio(dt);
   if (mixer) mixer.update(dt);
   updateCamera();
+  updatePovCamera(); // overrides the orbit camera while in first person
   if (character && !drivingMode) {
     spot.position.set(character.position.x, 5, character.position.z + 2);
     spot.target.position.copy(character.position);
