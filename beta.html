@@ -6907,7 +6907,10 @@ function endLoad(name) {
     setTimeout(() => { try { buildDust(); buildRain(); buildPuddles(); } catch (e) { console.warn('weather failed:', e); } }, 6200);
     setTimeout(() => { try { buildFireflies(); buildLeaves(); buildCelestialBodies(); } catch (e) { console.warn('ambient particles failed:', e); } }, 7200);
     setTimeout(loadInterior, 9000); // last in the queue — biggest file, least urgent
-    setTimeout(loadNJStreet, 12000); // after the interior; scenery, so lowest priority
+    /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
+       low-poly next to a photoscanned character reads as a different game, and I
+       made it worse by putting it 20 units from the road at 7.5x scale. Kept the
+       loader in case a recoloured, far-set version is worth trying. */
     setTimeout(() => { if (window.__reportGPU) window.__reportGPU(); }, 9000); // one-shot resource report once scenery has settled
   }
 }
