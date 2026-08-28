@@ -611,6 +611,17 @@ const ASSETS = {
   CALL_CARMINE: 'call_carmine.mp3',
   CALL_JUNIOR: 'call_junior.mp3',
   INTERIOR: 'interior.glb',
+  TONY_HOUSE: 'tony_house.glb',
+  PORK_STORE: 'pork_store.glb',
+  BARBER_SHOP: 'barber_shop.glb',
+  CHURCH: 'church.glb',
+  BRICK_WALL: 'brick_wall_a.glb',
+  DUMPSTER: 'dumpster.glb',
+  PORK_STORE_LOD: 'pork_store_lod.glb',
+  BARBER_SHOP_LOD: 'barber_shop_lod.glb',
+  CHURCH_LOD: 'church_lod.glb',
+  BRICK_WALL_LOD: 'brick_wall_a_lod.glb',
+
   GRASS_COLOR: 'grass_color.webp',   // photoscanned ground grass, 1024 — replaces the procedural canvas texture
   GRASS_NORMAL: 'grass_normal.webp', // 512 is plenty for a normal map at this viewing distance
   FOREST_NEAR: 'pine_near.glb', // pine patch, 47,920 verts, ~51 x 46 units — cloned across the map
@@ -985,7 +996,7 @@ function updateDayNight(dt) {
   }
 }
 
-scene.fog = new THREE.Fog(0xc9784a, 120, 420); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
+scene.fog = new THREE.Fog(0xc9784a, 160, 700); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
 /* ---------- Image-based lighting ----------
    scene.environment was never set, so every MeshStandardMaterial had nothing to
@@ -1583,7 +1594,7 @@ function applySharpenToObject(root, strength) {
   });
 }
 
-const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.2, 600); // far raised 220->600 to match the enlarged fog range. Near stays 0.2 (raised from 0.05 originally, since a 4400:1 ratio caused depth-buffer flicker on the city backdrop); 3000:1 is still comfortably safe.
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.2, 1100); // far raised 220->600 to match the enlarged fog range. Near stays 0.2 (raised from 0.05 originally, since a 4400:1 ratio caused depth-buffer flicker on the city backdrop); 3000:1 is still comfortably safe.
 let camYaw = Math.PI * 0.25;
 let camPitch = 0.32;
 let camDist = 5.5;
@@ -5219,7 +5230,7 @@ function exitInterior() {
     character.position.set(DOOR_POS.x + 1.2, 0, DOOR_POS.z + 2.2);
     character.rotation.y = Math.atan2(1.2, 2.2); // facing out, away from the door
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
-    if (scene.fog) { scene.fog.near = 120; scene.fog.far = 420; }
+    if (scene.fog) { scene.fog.near = 160; scene.fog.far = 700; }
     try { renderer.shadowMap.enabled = qualityLevel >= 1; } catch (e) {}
     try { renderer.setPixelRatio(qualityLevel >= 2 ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio, 1.5)); } catch (e) {}
     camDist = 7.5;
@@ -6256,6 +6267,99 @@ function buildRoadFurniture() {
   if (window.__gameNote) window.__gameNote('roadside: ' + poleZs.length + ' poles, ' + railZs.length * 2 + ' rail posts');
 }
 
+/* ================= MESHY BUILDINGS (BETA) =================
+   Generated in Meshy, decimated from ~120MB each to ~2MB, with real-world scale and
+   ground offset baked into the file.
+
+   The pop-in problem, properly solved. Three separate causes:
+
+   1. DRAW DISTANCE. Fog ended at 420 and the camera far plane at 600, so buildings
+      materialised out of haze in front of you. Fog now reaches 700, far plane 1100.
+      The far plane must exceed fog distance or they clip in hard instead of fading.
+
+   2. COST OF SEEING FURTHER. Showing more of the road means more buildings on
+      screen, and at 36K verts each that gets expensive fast. So each one is a
+      THREE.LOD: the full model within 170 units, a 12K-vert version beyond that.
+      A distant building costs a third as much, which is what buys the draw distance.
+
+   3. CULLING. Left ON deliberately. Rendering all 40 unconditionally would be 1.4M
+      verts a frame regardless of where you look. */
+const njBuildings = [];
+const meshyCache = {};
+
+function loadMeshyBuildings() {
+  const load = (key, cb) => {
+    if (meshyCache[key]) { cb(meshyCache[key]); return; }
+    loader.parse(key, '', (gltf) => { meshyCache[key] = gltf.scene; cb(gltf.scene); },
+                 (e) => console.warn('meshy load failed:', e));
+  };
+  // load a full/LOD pair, then hand back a factory that builds THREE.LOD instances
+  const loadPair = (hiKey, loKey, cb) => {
+    load(hiKey, (hi) => load(loKey, (lo) => cb(hi, lo)));
+  };
+
+  const putLOD = (hi, lo, x, z, rotY) => {
+    const l = new THREE.LOD();
+    const a = hi.clone(true), b = lo.clone(true);
+    for (const o of [a, b]) o.traverse((m) => {
+      if (!m.isMesh) return;
+      m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true;
+    });
+    l.addLevel(a, 0);
+    /* Switch deep inside the fog, not in clear air. Fog runs 160->700, so at 480
+       the building is already ~60% faded to fog colour and the swap is invisible.
+       At the old 170 the swap happened where you could still see it clearly, which
+       is exactly what you were watching "load". This is the San Andreas trick:
+       don't hide the pop, put it where nothing is legible. */
+    l.addLevel(b, 480);
+    l.position.set(x, 0, z);
+    l.rotation.y = rotY;
+    scene.add(l);
+    njBuildings.push(l);
+  };
+
+  const put = (src, x, z, rotY) => {
+    const o = src.clone(true);
+    o.position.set(x, 0, z);
+    o.rotation.y = rotY;
+    o.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true; } });
+    scene.add(o);
+    njBuildings.push(o);
+  };
+
+  load(ASSETS.TONY_HOUSE, (src) => put(src, -8, 62, Math.PI));
+
+  const EAST_X = 44, WEST_X = 10;
+  const FACE_W = -Math.PI / 2, FACE_E = Math.PI / 2;
+  const PAIRS = [
+    [ASSETS.PORK_STORE,  ASSETS.PORK_STORE_LOD],
+    [ASSETS.BARBER_SHOP, ASSETS.BARBER_SHOP_LOD],
+    [ASSETS.CHURCH,      ASSETS.CHURCH_LOD],
+    [ASSETS.BRICK_WALL,  ASSETS.BRICK_WALL_LOD],
+  ];
+  PAIRS.forEach(([hiKey, loKey], ki) => {
+    loadPair(hiKey, loKey, (hi, lo) => {
+      /* Start at z=48 rather than 96 — close enough that the street reads from the
+         house, while clearing the yard (which spans about +-22) and the garage at
+         z=26. 6 of each per side now the row is longer. */
+      for (let n = 0; n < 6; n++) putLOD(hi, lo, EAST_X, 48 + (n * 4 + ki) * 22, FACE_W);
+      for (let n = 0; n < 6; n++) putLOD(hi, lo, WEST_X, 59 + (n * 4 + ((ki + 2) % 4)) * 22, FACE_E);
+    });
+  });
+
+  load(ASSETS.DUMPSTER, (src) => {
+    for (let n = 0; n < 4; n++) {
+      put(src, EAST_X - 5, 90 + n * 130, 0.6);
+      put(src, WEST_X + 5, 150 + n * 130, 2.4);
+    }
+  });
+}
+
+/* THREE.LOD only switches level when update() is called with the camera. */
+function updateBuildingLOD() {
+  for (const b of njBuildings) if (b.isLOD) b.update(camera);
+}
+
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
   const lanes = [-ROAD_ZONE.halfW * 0.55, -ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.55];
@@ -6284,10 +6388,10 @@ function updateTraffic(dt) {
     t.mesh.position.z += t.speed * dt;
     // Keep it roughly around the player rather than driving off into the distance
     // forever or lagging permanently behind — recycles it back into a fresh gap.
-    if (t.mesh.position.z > car.position.z + 90) {
-      t.mesh.position.z = car.position.z - (60 + Math.random() * 40);
-    } else if (t.mesh.position.z < car.position.z - 90) {
-      t.mesh.position.z = car.position.z + 60 + Math.random() * 40;
+    if (t.mesh.position.z > car.position.z + 620) {
+      t.mesh.position.z = car.position.z - (560 + Math.random() * 60);
+    } else if (t.mesh.position.z < car.position.z - 620) {
+      t.mesh.position.z = car.position.z + 560 + Math.random() * 60;
     }
   }
 }
@@ -6986,7 +7090,8 @@ function endLoad(name) {
     setTimeout(() => { try { buildDust(); buildRain(); buildPuddles(); } catch (e) { console.warn('weather failed:', e); } }, 6200);
     setTimeout(() => { try { buildFireflies(); buildLeaves(); buildCelestialBodies(); } catch (e) { console.warn('ambient particles failed:', e); } }, 7200);
     setTimeout(loadInterior, 9000);
-    setTimeout(buildRoadFurniture, 6500); // procedural, no download // last in the queue — biggest file, least urgent
+    setTimeout(buildRoadFurniture, 6500); // procedural, no download
+    setTimeout(loadMeshyBuildings, 11000); // last in the queue — biggest file, least urgent
     setTimeout(() => { if (window.__reportGPU) window.__reportGPU(); }, 9000); // one-shot resource report once scenery has settled
   }
 }
@@ -8027,6 +8132,7 @@ function tick() {
     const pb = document.getElementById('pov-btn');
     if (pb) pb.style.display = drivingMode ? '' : 'none';
   }
+  updateBuildingLOD();
   updateCallStrip();
   updateCarDJ(dt);
   updateInteriorActions();
