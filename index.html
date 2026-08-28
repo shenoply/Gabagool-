@@ -4293,6 +4293,257 @@ function updateCigar(dt) {
   }
 }
 
+/* ================= PERFORMANCE ================= */
+
+/* 17. Stop rendering when the tab is hidden. It was running at full speed in the
+   background, burning battery — and low battery is behind most of the failures in
+   testing, so this is the highest-value item here. The clock is reset on return so
+   the day/night cycle and physics don't jump by however long you were away. */
+let renderPaused = false;
+document.addEventListener('visibilitychange', () => {
+  renderPaused = document.hidden;
+  if (!renderPaused) clock.getDelta(); // discard the gap
+  if (renderPaused && typeof engineNodes !== 'undefined' && engineNodes && engineNodes.started) {
+    try { engineNodes.main.el.pause(); engineNodes.body.el.pause(); engineNodes.started = false; } catch (e) {}
+  }
+});
+
+/* 18/19. Framerate tracking, an auto quality step-down, and an FPS readout in the
+   diagnostics panel — which reported geometry and draw calls but not the one number
+   that says whether it is actually running well. */
+let fpsSamples = [], fpsAvg = 60, qualityLevel = 2, lastQualityCheck = 0;
+function updatePerf(dt) {
+  if (dt > 0) fpsSamples.push(1 / dt);
+  if (fpsSamples.length > 90) fpsSamples.shift();
+  if (fpsSamples.length >= 30) {
+    fpsAvg = fpsSamples.reduce((a, b) => a + b, 0) / fpsSamples.length;
+  }
+  const now = performance.now();
+  if (now - lastQualityCheck < 6000 || fpsSamples.length < 60) return;
+  lastQualityCheck = now;
+  if (fpsAvg < 26 && qualityLevel > 0) setQuality(qualityLevel - 1);
+  else if (fpsAvg > 52 && qualityLevel < 2) setQuality(qualityLevel + 1);
+}
+function setQuality(level) {
+  qualityLevel = level;
+  // Shed the cheap-to-lose things first: particles, then shadow resolution.
+  if (dustMesh) dustMesh.visible = level >= 2;
+  if (leafMesh) leafMesh.visible = level >= 2;
+  if (fireflyMesh) fireflyMesh.userData.allowed = level >= 1;
+  if (rainMesh && level === 0) rainMesh.visible = false;
+  if (tallGrassMesh) tallGrassMesh.visible = level >= 1;
+  try {
+    renderer.shadowMap.enabled = level >= 1;
+    renderer.setPixelRatio(level >= 2 ? Math.min(window.devicePixelRatio, 2)
+                          : level === 1 ? Math.min(window.devicePixelRatio, 1.5) : 1);
+  } catch (e) { /* ignore */ }
+  if (window.__gameNote) window.__gameNote('QUALITY -> ' + ['low','medium','high'][level] + ' (fps ' + fpsAvg.toFixed(0) + ')');
+}
+
+/* ================= SOUND & VISUAL DETAIL ================= */
+
+/* 1. Door slam. Synthesized thunk: a short low body plus a metallic click. */
+function playDoorSlam() {
+  if (!ambientCtx || !sfxOn) return;
+  const t = ambientCtx.currentTime;
+  const o = ambientCtx.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(150, t);
+  o.frequency.exponentialRampToValueAtTime(48, t + 0.13);
+  const og = ambientCtx.createGain();
+  og.gain.setValueAtTime(0.28, t);
+  og.gain.exponentialRampToValueAtTime(0.001, t + 0.17);
+  o.connect(og); og.connect(ambientCtx.destination);
+  o.start(t); o.stop(t + 0.2);
+  const n = Math.floor(ambientCtx.sampleRate * 0.06);
+  const b = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) { const k = 1 - i / n; d[i] = (Math.random() * 2 - 1) * k * k * k; }
+  const src = ambientCtx.createBufferSource(); src.buffer = b;
+  const hp = ambientCtx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2200;
+  const g = ambientCtx.createGain(); g.gain.value = 0.10;
+  src.connect(hp); hp.connect(g); g.connect(ambientCtx.destination);
+  src.start(t);
+}
+
+/* 2. Footstep tone by surface — the pool deck and paving ring harder than grass. */
+function surfaceUnderCharacter() {
+  if (!character) return 'grass';
+  if (poolArea) {
+    const hw = poolArea.width / 2 + 1.6, hd = poolArea.depth / 2 + 1.6;
+    if (Math.abs(character.position.x - poolArea.x) < hw && Math.abs(character.position.z - poolArea.z) < hd) return 'deck';
+  }
+  if (Math.abs(character.position.x) < 15 && Math.abs(character.position.z) < 15) return 'paving';
+  return 'grass';
+}
+
+/* 4. Distant city hum, fading with distance from the skyline. */
+let cityHumGain = null, cityHumFilter = null;
+function ensureCityHum() {
+  if (cityHumGain || !ambientCtx) return;
+  const n = ambientCtx.sampleRate * 3;
+  const b = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * 0.4;
+  const src = ambientCtx.createBufferSource(); src.buffer = b; src.loop = true;
+  cityHumFilter = ambientCtx.createBiquadFilter();
+  cityHumFilter.type = 'lowpass'; cityHumFilter.frequency.value = 320; cityHumFilter.Q.value = 0.6;
+  cityHumGain = ambientCtx.createGain(); cityHumGain.gain.value = 0;
+  src.connect(cityHumFilter); cityHumFilter.connect(cityHumGain);
+  cityHumGain.connect(ambientCtx.destination);
+  src.start();
+}
+function updateCityHum() {
+  if (!ambientCtx) return;
+  ensureCityHum();
+  if (!cityHumGain) return;
+  const ref = drivingMode ? carState : (character ? character.position : { x: 0, z: 0 });
+  const d = Math.hypot((ref.x || 0) - CITY_BACKDROP_POS.x, (ref.z || 0) - CITY_BACKDROP_POS.z);
+  const near = Math.max(0, 1 - d / 160);
+  cityHumGain.gain.setTargetAtTime(sfxOn ? near * near * 0.05 : 0, ambientCtx.currentTime, 0.6);
+}
+
+/* 6. Sun and moon discs. The cycle already computes the sun direction for lighting,
+   so these just sit on it — no new maths, and it explains where the light comes from. */
+let sunDisc = null, moonDisc = null;
+function buildCelestialBodies() {
+  const mk = (color, size, opacity) => {
+    const m = new THREE.Sprite(new THREE.SpriteMaterial({ color, transparent: true, opacity, depthWrite: false, depthTest: false }));
+    m.scale.set(size, size, 1);
+    m.renderOrder = -1;
+    scene.add(m);
+    return m;
+  };
+  sunDisc = mk(0xffe9b8, 26, 0.95);
+  moonDisc = mk(0xdfe8ff, 16, 0.9);
+}
+function updateCelestialBodies() {
+  if (!sunDisc) return;
+  const dir = key.position.clone().normalize();
+  const R = 380; // sits inside the 600 far plane
+  sunDisc.position.copy(dir).multiplyScalar(R);
+  moonDisc.position.copy(dir).multiplyScalar(-R); // opposite the sun
+  sunDisc.material.opacity = Math.max(0, (1 - nightLightLevel)) * 0.95;
+  moonDisc.material.opacity = nightLightLevel * 0.9;
+  sunDisc.visible = sunDisc.position.y > -20;
+  moonDisc.visible = moonDisc.position.y > -20;
+}
+
+/* 7. Exhaust puff on hard throttle. Reuses the ripple pool trick — short-lived
+   sprites, recycled, no allocation churn. */
+const exhaustPuffs = [];
+let puffTex = null;
+function spawnPuff(x, y, z) {
+  if (!puffTex) {
+    const c = document.createElement('canvas'); c.width = c.height = 32;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    g.addColorStop(0, 'rgba(190,190,190,0.5)');
+    g.addColorStop(1, 'rgba(190,190,190,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 32, 32);
+    puffTex = new THREE.CanvasTexture(c);
+  }
+  let p;
+  if (exhaustPuffs.length >= 14) p = exhaustPuffs.shift();
+  else { p = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, transparent: true, depthWrite: false })); scene.add(p); }
+  p.position.set(x, y, z);
+  p.scale.set(0.5, 0.5, 1);
+  p.material.opacity = 0.45;
+  p.userData.life = 1.1;
+  exhaustPuffs.push(p);
+}
+function updatePuffs(dt) {
+  for (const p of exhaustPuffs) {
+    p.userData.life -= dt;
+    const k = Math.max(0, p.userData.life / 1.1);
+    p.material.opacity = 0.45 * k;
+    const sc = 0.5 + (1 - k) * 1.8;
+    p.scale.set(sc, sc, 1);
+    p.position.y += dt * 0.55;
+    p.visible = k > 0;
+  }
+}
+
+/* 8. Rain on the screen while driving — a CSS overlay, so it costs no GPU geometry. */
+let rainScreenEl = null;
+function updateRainScreen() {
+  if (!rainScreenEl) {
+    rainScreenEl = document.createElement('div');
+    rainScreenEl.style.cssText = 'position:fixed;inset:0;z-index:4;pointer-events:none;opacity:0;transition:opacity 0.8s ease;' +
+      'background:repeating-linear-gradient(102deg, rgba(255,255,255,0.06) 0 1px, rgba(255,255,255,0) 1px 9px);';
+    document.body.appendChild(rainScreenEl);
+  }
+  rainScreenEl.style.opacity = (drivingMode && rainWet > 0.15) ? String(rainWet * 0.5) : '0';
+}
+
+/* 11. Colour grading by time of day — a light screen tint, cheap and it ties the
+   whole palette to the clock. */
+let gradeEl = null;
+function updateColorGrade() {
+  if (!gradeEl) {
+    gradeEl = document.createElement('div');
+    gradeEl.style.cssText = 'position:fixed;inset:0;z-index:3;pointer-events:none;mix-blend-mode:soft-light;opacity:0.35;';
+    document.body.appendChild(gradeEl);
+  }
+  const s = sampleSky(dayTime);
+  const c = new THREE.Color(s.horizon);
+  gradeEl.style.background = `rgb(${(c.r*255)|0},${(c.g*255)|0},${(c.b*255)|0})`;
+  gradeEl.style.opacity = String(0.16 + nightLightLevel * 0.16);
+}
+
+/* 16. Fade to black when getting in or out of the car, instead of a hard cut. */
+let fadeEl = null;
+function screenFade() {
+  if (!fadeEl) {
+    fadeEl = document.createElement('div');
+    fadeEl.style.cssText = 'position:fixed;inset:0;z-index:90;pointer-events:none;background:#000;opacity:0;transition:opacity 0.22s ease;';
+    document.body.appendChild(fadeEl);
+  }
+  fadeEl.style.opacity = '1';
+  setTimeout(() => { fadeEl.style.opacity = '0'; }, 240);
+}
+
+/* 13/14. Compass and distance. Bearings are relative to which way you're facing, so
+   it reads as "turn left" rather than as an abstract map direction. */
+function bearingLabel(fromX, fromZ, facing, toX, toZ) {
+  const ang = Math.atan2(toX - fromX, toZ - fromZ) - facing;
+  const a = ((ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI; // normalise to -PI..PI
+  const d = Math.hypot(toX - fromX, toZ - fromZ);
+  const arrow = Math.abs(a) < 0.4 ? '\u2191' : Math.abs(a) > 2.6 ? '\u2193' : (a > 0 ? '\u2192' : '\u2190');
+  return { arrow, dist: Math.round(d) };
+}
+function updateCompass() {
+  const el = document.getElementById('compass');
+  if (!el) return;
+  if (photoMode || (!drivingMode && !character)) { el.style.display = 'none'; return; }
+  const x = drivingMode ? carState.x : character.position.x;
+  const z = drivingMode ? carState.z : character.position.z;
+  const facing = drivingMode ? carState.heading : (character ? character.rotation.y : 0);
+  const parts = [];
+  const home = bearingLabel(x, z, facing, 0, 0);
+  if (home.dist > 12) parts.push('HOME ' + home.arrow + ' ' + home.dist + 'm');
+  const g = bearingLabel(x, z, facing, GEORGE_POS.x, GEORGE_POS.z);
+  if (g.dist > 12 && !drivingMode) parts.push('GEORGE ' + g.arrow + ' ' + g.dist + 'm');
+  // the active mission target, when there is one
+  if (typeof debtorCar !== 'undefined' && debtorCar && debtorCar.visible) {
+    const t = bearingLabel(x, z, facing, debtorCar.position.x, debtorCar.position.z);
+    parts.push('TARGET ' + t.arrow + ' ' + t.dist + 'm');
+  }
+  el.style.display = parts.length ? '' : 'none';
+  el.textContent = parts.join('   ');
+}
+
+/* 15. Damage-free streak — counts how long you've driven without hitting anything. */
+let cleanStreak = 0;
+function updateCleanStreak(dt) {
+  if (!drivingMode) return;
+  if (Math.abs(carState.speed) > 1) cleanStreak += dt;
+  const el = document.getElementById('speedo-gear');
+  if (el && cleanStreak > 12) {
+    el.textContent = (carState.speed < -0.2 ? 'REVERSE' : 'GEAR ' + el.dataset.g) + '  \u2022  CLEAN ' + Math.floor(cleanStreak) + 's';
+  }
+}
+
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
   const lanes = [-ROAD_ZONE.halfW * 0.55, -ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.55];
