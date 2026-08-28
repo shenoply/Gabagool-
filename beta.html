@@ -333,6 +333,79 @@
     </div>
   </div>
 
+
+  <script>
+    /* Loading-screen tips. The #tip-line element existed but nothing was writing to
+       it, so no tips were ever shown. Three pools, cycled in a deliberate order:
+       the load-time and crash-avoidance advice first (that is when it matters), then
+       the show facts, then gameplay hints. */
+    (function () {
+      const LOAD_TIPS = [
+        'FIRST LOAD IS THE SLOW ONE. About 60 MB of models, textures and audio come down once. After that it is cached and starts in seconds.',
+        'Close your other browser tabs before playing. Each one holds memory this game needs, and that is the single most common cause of a crash.',
+        'On a phone, close background apps too. 3D in a browser competes with everything else for the same memory.',
+        'Stay on Wi-Fi for the first load if you can. On mobile data a dropped asset means waiting for a retry.',
+        'Plug in or charge above 20%. Low-power mode throttles the GPU and the frame rate goes with it.',
+        'If it stalls on the loading bar, reload the page rather than waiting. Downloads resume from cache.',
+        'Do not lock your screen mid-load. Backgrounded tabs get their downloads paused.',
+        'Getting a black screen? Add ?nosw=1 to the address to clear the cache and start clean.',
+        'Overheating causes stutter. If the phone is hot, give it a minute — performance comes back.',
+      ];
+      const TONY_FACTS = [
+        'The pork store the crew uses as a hangout was a real shop in Kearny, New Jersey, dressed for filming.',
+        'The ducks in the pool were written in as a symbol of family — the reason for the panic attacks in the first episode.',
+        'Steven Van Zandt, who plays the consigliere, had never acted before. He is Bruce Springsteen\'s guitarist.',
+        'The show ran six seasons on HBO, from 1999 to 2007.',
+        'Gabagool is a New Jersey Italian-American pronunciation of capicola, a cured pork shoulder.',
+        'The house used for exteriors is a private residence in North Caldwell, New Jersey.',
+        'James Gandolfini reportedly kept the character grounded by insisting Tony never be made likeable on purpose.',
+        'Many crew members were cast from real New Jersey locals rather than professional actors.',
+        'The opening title sequence follows the drive from the Lincoln Tunnel out to New Jersey.',
+        'Dr Melfi was written as the audience\'s way in — the only person Tony tells the truth to.',
+        'The final scene cuts to black mid-moment, and the ambiguity was deliberate.',
+        'Uncle Junior was based in part on old-school bosses who resented their nephews rising above them.',
+      ];
+      const PLAY_TIPS = [
+        'Answer the phone. Junior calls about ten seconds in, and the callers have real recordings.',
+        'Tap the eye button while driving for a first-person view from the driver\'s seat.',
+        'The glowing post by the house is the front door. Walk up to it to go inside.',
+        'Hold the handbrake button through a corner to break traction.',
+        'The phone has Snake in it. It is a 2005 phone, after all.',
+        'A perfect score on the pop quiz puts a gold gabagool out by the pool.',
+        'Double-tap anywhere in photo mode to exit it.',
+        'The day runs eight minutes end to end. Headlights come on by themselves after dark.',
+        'The fridge in the house has a gabagool in it. Obviously.',
+      ];
+
+      const POOLS = [
+        ['FOR BEST RESULTS', LOAD_TIPS],
+        ['DID YOU KNOW', TONY_FACTS],
+        ['TIPS', PLAY_TIPS],
+      ];
+      const head = document.getElementById('tips-head');
+      const line = document.getElementById('tip-line');
+      if (!head || !line) return;
+
+      const shuffle = (a) => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
+      // Load advice first, then facts, then hints — and shuffled within each pool so
+      // it is not the same three lines every session.
+      const queue = [];
+      POOLS.forEach(([title, list]) => shuffle(list).forEach((t) => queue.push([title, t])));
+
+      let i = 0;
+      function show() {
+        const [title, text] = queue[i % queue.length];
+        head.textContent = title;
+        line.style.opacity = '0';
+        setTimeout(() => { line.textContent = text; line.style.opacity = '1'; }, 220);
+        i++;
+      }
+      line.style.transition = 'opacity 0.22s ease';
+      show();
+      setInterval(show, 6500);
+    })();
+  </script>
+
   <div id="speed-vignette"></div>
   <div id="speed-lines"></div>
 
