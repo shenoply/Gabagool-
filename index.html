@@ -1615,11 +1615,8 @@ let currentActionName = null;
 // Secondary clips for the scrolling strip. Walk/Run/Crouch/Jump/Shoot are promoted
 // to their own buttons, so they are deliberately not repeated here.
 const ANIM_ORDER = [
-  "M_Jog_001", "Casual_Walk", "M_Run_Backwards_002", "M_Run_Strafe_Left_002",
-  "M_Crouch_Walk_003", "M_Falling_Idle_002",
-  "Idle_11", "M_Standing_Idle_001", "M_Standing_Idle_002",
-  "M_Standing_Idle_Variations_002", "M_Standing_Idle_Variations_005",
-  "Alert", "Idle_Turn_Left", "Boxing_Practice",
+  "Casual_Walk", "Idle_11", "Alert", "Idle_Turn_Left",
+  "Forward_Roll_and_Fire", "Boxing_Practice",
   "Boxing_Guard_Right_Straight_Kick", "Boxing_Guard_Step_Knee_Strike",
   "golf_drive", "Dead"
 ];
@@ -1628,12 +1625,6 @@ const ANIM_ORDER = [
    lowercase where the rest are not, so they're referenced exactly as exported. */
 const LABELS = {
   "walking_man": "Walk", "running": "Run", "Casual_Walk": "Stroll",
-  "M_Jog_001": "Jog", "M_Walk_Jump_003": "Standing Jump", "M_Run_Backwards_002": "Backwards",
-  "M_Crouch_Walk_003": "Crouch Walk", "M_CrouchedWalk_Backwards_002": "Crouch Back",
-  "M_Run_Strafe_Left_002": "Strafe", "M_Jog_Strafe_Left_001": "Jog Strafe",
-  "M_Falling_Idle_002": "Falling", "M_Standing_Idle_001": "Idle 1",
-  "M_Standing_Idle_002": "Idle 2", "M_Standing_Idle_Variations_002": "Idle 3",
-  "M_Standing_Idle_Variations_005": "Idle 4", "M_Standing_Idle_Variations_008": "Idle 5",
   "Cautious_Crouch_Walk_Forward_inplace": "Crouch", "Jump_Run": "Jump",
   "Draw_and_Shoot_Left": "Shoot", "Forward_Roll_and_Fire": "Roll + Fire",
   "Alert": "Alert", "Idle_11": "Idle", "Idle_Turn_Left": "Idle Turn",
@@ -1642,29 +1633,16 @@ const LABELS = {
   "Dead": "Dead"
 };
 const CLIP = {
-  walk: "walking_man",          // unchanged — the original walk, deliberately left alone
-  run: "running",               // unchanged
-  jog: "M_Jog_001",             // new middle gear between walk and run
-  stroll: "Casual_Walk",
-  crouch: "Cautious_Crouch_Walk_Forward_inplace",
-  crouchWalk: "M_Crouch_Walk_003",
-  crouchBack: "M_CrouchedWalk_Backwards_002",
-  back: "M_Run_Backwards_002",
-  strafe: "M_Run_Strafe_Left_002",
-  jogStrafe: "M_Jog_Strafe_Left_001",
-  jump: "Jump_Run",             // running jump
-  jumpStand: "M_Walk_Jump_003", // proper standing jump — this is what was missing
-  falling: "M_Falling_Idle_002",
+  walk: "walking_man", run: "running", stroll: "Casual_Walk",
+  crouch: "Cautious_Crouch_Walk_Forward_inplace", crouchWalk: "Cautious_Crouch_Walk_Forward_inplace",
+  jump: "Jump_Run", jumpStand: "Jump_Run",
   shoot: "Draw_and_Shoot_Left", roll: "Forward_Roll_and_Fire",
   idle: "Idle_11", idleTurn: "Idle_Turn_Left", alert: "Alert",
 };
 // Idle now cycles through real variations instead of repeating one clip.
-const IDLE_POOL = ["Idle_11", "M_Standing_Idle_001", "M_Standing_Idle_002",
-  "M_Standing_Idle_Variations_002", "M_Standing_Idle_Variations_005",
-  "M_Standing_Idle_Variations_008"];
+const IDLE_POOL = ["Idle_11"];
 // Anything that counts as "he is moving", so idle motion and footsteps behave.
-const LOCOMOTION = new Set([CLIP.walk, CLIP.run, CLIP.jog, CLIP.stroll, CLIP.crouch,
-  CLIP.crouchWalk, CLIP.crouchBack, CLIP.back, CLIP.strafe, CLIP.jogStrafe]);
+const LOCOMOTION = new Set([CLIP.walk, CLIP.run, CLIP.stroll, CLIP.crouch]);
 // Buttons promoted out of the scrolling strip into their own controls.
 const PRIMARY_CLIPS = [CLIP.walk, CLIP.run, CLIP.crouch, CLIP.jump, CLIP.shoot];
 
