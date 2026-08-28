@@ -464,7 +464,6 @@
     </div>
     <div class="row" style="flex-direction: column; align-items: stretch;">
       <span class="lbl">Size</span>
-      <div class="bar-track"><div class="bar-fill size" id="size-fill" style="width:0%"></div></div>
     </div>
     <div class="row" style="flex-direction: column; align-items: stretch; margin-top: 5px;">
       <span class="lbl">Music</span>
@@ -506,7 +505,7 @@
     <div class="act-btn" data-act="jump" style="width:58px;height:58px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/58px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">JUMP</div>
     <div class="act-btn" data-act="punch" style="width:52px;height:52px;border-radius:50%;background:var(--panel);border:2px solid var(--panel-border);color:var(--text-dim);font:800 10px/52px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;">KNEE</div>
   </div>
-  <div id="handbrake-btn" style="display:none;position:fixed;right:16px;bottom:calc(146px + env(safe-area-inset-bottom,0px));z-index:12;width:62px;height:62px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/62px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;touch-action:none;">HAND<br>BRAKE</div>
+  <div id="handbrake-btn" style="display:none;position:fixed;right:16px;bottom:calc(150px + env(safe-area-inset-bottom,0px));z-index:12;width:62px;height:62px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);font:800 11px/62px -apple-system,sans-serif;text-align:center;backdrop-filter:blur(6px);user-select:none;-webkit-user-select:none;touch-action:none;">HAND<br>BRAKE</div>
 
   <div id="joystick-zone">
     <div id="joystick-base">
@@ -1340,8 +1339,8 @@ function updateGeorgeProximity() {
    driving). Answer -> the job starts, auto-entering drive mode if needed.
    Decline -> he calls back later. */
 let nextPhoneRingAt = Infinity;
-let callRotation = 0;      // position in the fallback rotation
-let pendingCaller = null;  // forces the next ring to be a specific caller
+// Fixed call order, consumed once. Empty means the phone is done ringing.
+let callQueue = ['boss', 'junior', 'carmine'];
 let phoneRingPopupOpen = false;
 function scheduleNextPhoneRing(seconds) {
   // A second call must never interrupt one in progress.
@@ -1359,19 +1358,15 @@ phoneDialog.innerHTML =
   '</div>';
 document.body.appendChild(phoneDialog);
 function openPhoneRing() {
-  if (typeof onCall !== 'undefined' && onCall) { scheduleNextPhoneRing(10); return; }
+  if (typeof onCall !== 'undefined' && onCall) { scheduleNextPhoneRing(30); return; }
   phoneRingPopupOpen = true;
   // Handset first; the old popup only appears if the phone UI is missing.
   if (typeof showIncomingOnPhone === 'function') {
-    /* Scripted sequence rather than a rotation on a blind timer:
-         Junior 10s after load.
-         Answered  -> Carmine 30s after Junior's call ENDS.
-         Declined  -> Carmine 10s later.
-       After Carmine it falls back to the ordinary rotation. */
-    const order = ['junior', 'carmine', 'boss'];
-    const who = pendingCaller || order[callRotation % order.length];
-    if (!pendingCaller) callRotation++;
-    pendingCaller = null;
+    /* A finite queue, not a rotation: Boss, then Junior, then Carmine — one call
+       each, 30s apart. Declining is final; that caller does not try again. Once the
+       queue is empty the phone stops ringing altogether. */
+    if (callQueue.length === 0) { nextPhoneRingAt = Infinity; phoneRingPopupOpen = false; return; }
+    const who = callQueue.shift();
     showIncomingOnPhone(who);
     // The handset path used to return before this, so incoming calls were silent.
     playPhoneRing();
@@ -1401,7 +1396,7 @@ document.getElementById('phone-answer-btn').addEventListener('click', () => {
      abandoning one debt chase silenced the phone forever, Carmine and Junior
      included. A long fallback still lets the mission reschedule normally, but
      guarantees the phone comes back. */
-  scheduleNextPhoneRing(10); // next caller 10s later whether or not this one was answered
+  scheduleNextPhoneRing(30);
   if (drivingMode) {
     startChaseAudio();
     startDebtMission();
@@ -1414,7 +1409,7 @@ document.getElementById('phone-answer-btn').addEventListener('click', () => {
 document.getElementById('phone-decline-btn').addEventListener('click', () => {
   closePhoneRing();
   showMissionPopup('📵', 'Declined', 'The Boss will call back.', 2500);
-  scheduleNextPhoneRing(10);
+  scheduleNextPhoneRing(30);
 });
 
 /* ================= THE GARAGE — three classics you can actually drive =================
@@ -1529,7 +1524,7 @@ function updateGarageProximity() {
 function updatePhoneRinger() {
   if (phoneRingPopupOpen || missionState !== 'none' || !audioUnlocked) return;
   if (gameState === 'passedout' || georgeDialogOpen) return;
-  if (nextPhoneRingAt === Infinity) scheduleNextPhoneRing(10); // never stranded
+  // No safety net any more: an empty queue is meant to leave the phone silent.
   if (performance.now() >= nextPhoneRingAt) openPhoneRing();
 }
 
@@ -5856,9 +5851,9 @@ function showIncomingOnPhone(callerKey) {
           // next ring would land in the middle of this one.
           startVoiceCall(key);
         } else {
-          // Declined: Junior specifically hands off to Carmine 10s later.
-          if (key === 'junior') { pendingCaller = 'carmine'; scheduleNextPhoneRing(10); }
-          else scheduleNextPhoneRing(10);
+          // Declined is final for that caller — it was shifted off the queue when the
+          // ring opened, so it simply never comes back. Next one in 30s.
+          scheduleNextPhoneRing(30);
         }
         return;
       }
@@ -6009,8 +6004,6 @@ function endVoiceCall() {
   const finished = currentCaller;
   onCall = false;
   currentCaller = null;
-  // Junior answered and finished -> Carmine 30 seconds after the call ends.
-  if (finished && finished.name === CALLERS.junior.name) pendingCaller = 'carmine';
   callSuppressedEngine = false;
   callStrip.style.display = 'none';
   try { if (callAudio) { callAudio.pause(); callAudio.currentTime = 0; } } catch (e) {}
@@ -6018,7 +6011,7 @@ function endVoiceCall() {
     bgAudio.volume = 1;
     if (soundOn) bgAudio.play().catch(() => {}); // music back on, if it was on before
   }
-  scheduleNextPhoneRing(30); // 30s gap after a call ends
+  scheduleNextPhoneRing(30); // 30s until the next caller in the queue
 }
 function updateCallStrip() {
   if (!onCall || !currentCaller) return;
@@ -6050,26 +6043,26 @@ function buildPovRig() {
 
   const dashMat = new THREE.MeshStandardMaterial({ color: 0x16171a, roughness: 0.85, metalness: 0.1 });
   const dash = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.34, 0.5), dashMat);
-  dash.position.set(0, 0.62, -0.85);
+  dash.position.set(0, 0.72, 1.05); // ahead of the driver (+z is forward)
   povRig.add(dash);
 
   // instrument binnacle with two lit dials
   const binn = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.22, 0.3), dashMat);
-  binn.position.set(-0.36, 0.8, -0.72);
+  binn.position.set(-0.34, 0.9, 0.92);
   povRig.add(binn);
   for (const dx of [-0.13, 0.13]) {
     const dial = new THREE.Mesh(
       new THREE.CircleGeometry(0.085, 20),
       new THREE.MeshBasicMaterial({ color: 0x1a1408 })
     );
-    dial.position.set(-0.36 + dx, 0.8, -0.567);
+    dial.position.set(-0.34 + dx, 0.9, 0.775);
     povRig.add(dial);
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.085, 0.098, 22),
       new THREE.MeshBasicMaterial({ color: 0xffa33a })
     );
     ring.position.copy(dial.position);
-    ring.position.z += 0.002;
+    ring.position.z += 0.003;
     povRig.add(ring);
   }
 
@@ -6095,8 +6088,8 @@ function buildPovRig() {
   );
   hub.rotation.x = Math.PI / 2;
   povWheel.add(hub);
-  povWheel.position.set(-0.36, 0.66, -0.5);
-  povWheel.rotation.x = -Math.PI * 0.32; // raked toward the driver, not vertical
+  povWheel.position.set(-0.34, 0.78, 0.62);
+  povWheel.rotation.x = Math.PI * 0.32; // raked toward the driver
   povRig.add(povWheel);
 
   povRig.visible = false;
@@ -6108,20 +6101,15 @@ function setPovMode(on) {
   buildPovRig();
   if (!car) return;
   if (on) {
-    /* Car body materials are almost always single-sided, which means from inside the
-       cabin you'd look straight through the roof and doors. Render both sides while
-       you're in there, and put it back on exit. */
-    savedCarSides = [];
-    car.traverse((o) => {
-      if (o.isMesh && o.material) {
-        const mats = Array.isArray(o.material) ? o.material : [o.material];
-        for (const m of mats) { savedCarSides.push([m, m.side]); m.side = THREE.DoubleSide; }
-      }
-    });
+    /* Previous attempt made the body double-sided so the shell would render from
+       inside. That just filled the screen with the inside of the bodywork — the
+       camera sits within the mesh, so every direction is car. Hiding the car
+       outright and showing only the procedural cabin is both cheaper and actually
+       gives you a view out. */
+    car.visible = false;
     if (povRig) povRig.visible = true;
   } else {
-    for (const [m, side] of savedCarSides) m.side = side;
-    savedCarSides = [];
+    car.visible = true;
     if (povRig) povRig.visible = false;
   }
   const btn = document.getElementById('pov-btn');
@@ -6129,35 +6117,25 @@ function setPovMode(on) {
 }
 
 function updatePovCamera() {
-  if (!povMode || !drivingMode) return;
+  if (!povMode || !drivingMode) { return; }
   const h = carState.heading;
   const sin = Math.sin(h), cos = Math.cos(h);
-  // driver's seat: left of centre, at eye height, a little behind the windscreen
-  const ox = -0.36, oy = 1.02, oz = 0.12;
-  const wx = carState.x + ox * cos - oz * sin;
-  const wz = carState.z + ox * (-sin) - oz * cos;
+  /* The game's forward vector is (sin h, cos h) — confirmed against the driving
+     code. The first version negated it, so the camera looked out of the back of
+     the car. Local offsets: ox is right of centre, oz is forward. */
+  const ox = -0.34, oy = 1.12, oz = -0.15;
+  const wx = carState.x + ox * cos + oz * sin;
+  const wz = carState.z - ox * sin + oz * cos;
 
   if (povRig) {
     povRig.position.set(carState.x, 0, carState.z);
-    povRig.rotation.y = h;
-    povRig.rotation.z = carState.roll * 0.6;
-    povRig.rotation.x = carState.pitch * 0.6;
+    povRig.rotation.set(carState.pitch * 0.5, h, carState.roll * 0.5);
   }
-  if (povWheel) {
-    // the wheel turns with your steering, which sells the view more than anything else
-    povWheel.rotation.y = 0;
-    povWheel.rotation.z = -(lastSteer || 0) * 1.25 - (carState.slip || 0) * 0.8;
-  }
+  if (povWheel) povWheel.rotation.z = -(lastSteer || 0) * 1.25 - (carState.slip || 0) * 0.8;
 
   camera.position.set(wx, oy, wz);
-  // look down the bonnet, with body roll leaning the horizon
-  const lookAt = new THREE.Vector3(
-    wx - Math.sin(h) * 12,
-    oy - 0.6,
-    wz - Math.cos(h) * 12
-  );
-  camera.lookAt(lookAt);
-  camera.rotation.z += carState.roll * 0.35;
+  camera.lookAt(wx + sin * 20, oy - 0.9, wz + cos * 20); // down the bonnet, forward
+  camera.rotation.z += (carState.roll || 0) * 0.3;
 }
 
 function laneX(index) {
@@ -6409,7 +6387,7 @@ function updateMilfieWaypoint(dt) {
     missionState = 'none';
     stopChaseAudio();
     if (soundOn) bgAudio.play().catch(() => {});
-    scheduleNextPhoneRing(10);
+    scheduleNextPhoneRing(30);
   }
 }
 
@@ -6575,7 +6553,7 @@ function exitDriveMode() {
     if (debtorCar) { scene.remove(debtorCar); debtorCar = null; }
     if (milfieWaypoint) { scene.remove(milfieWaypoint.group); milfieWaypoint = null; }
     showMissionPopup('📵', 'Job abandoned', 'The Boss is not thrilled. He\'ll call again.', 3500);
-    scheduleNextPhoneRing(10);
+    scheduleNextPhoneRing(30);
   }
 }
 
@@ -6945,7 +6923,7 @@ function maybeFinishLoading() {
 tapToPlayBtn.addEventListener('click', () => {
   if (hasTappedStart) return;
   hasTappedStart = true;
-  scheduleNextPhoneRing(10); // first call 10s in — Uncle Junior, per the rotation
+  scheduleNextPhoneRing(30); // first call: the Boss, 30s in
   tapToPlayBtn.style.display = 'none';
   loadingSpinner.style.display = '';
   loadingLabel.style.display = '';
