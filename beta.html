@@ -904,7 +904,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 23:09';
+  window.__BUILD = '2026-08-29 23:31';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -6421,6 +6421,122 @@ function endVoiceCall() {
   }
   scheduleNextPhoneRing(30); // 30s until the next caller in the queue
 }
+
+/* ================= HOUSE AUDIO — Meadow, then Carmella =================
+   Not phone calls — meant to sound like it's happening INSIDE the house as you
+   walk up, so this runs through a lowpass filter for a through-the-wall feel
+   rather than playing clean. Sequenced, not simultaneous: Meadow's clip plays out
+   fully, THEN Tony's reaction popup, THEN a beat of silence, THEN Carmella's line
+   — which is a reaction to being overheard, so the gap matters for it to land.
+   Each clip is once ever, gated by houseAudioState so re-approaching the house
+   doesn't replay them. House position is effectively the origin — the house model
+   itself gets re-centered on (0,0) at load, there's no separate HOUSE_POS const. */
+let houseAudioEl = null, houseAudioState = 'idle'; // idle -> meadow -> gap -> carmella -> done
+function ensureHouseAudio() {
+  if (houseAudioEl || !ambientCtx) return;
+  houseAudioEl = new Audio();
+  try {
+    const src = ambientCtx.createMediaElementSource(houseAudioEl);
+    const filter = ambientCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 650; // muffled — through a wall, not in the room
+    const gain = ambientCtx.createGain();
+    gain.gain.value = 0.85;
+    src.connect(filter); filter.connect(gain); gain.connect(ambientCtx.destination);
+  } catch (e) { /* if routing fails, the element still plays, just not muffled */ }
+}
+function updateHouseAudio() {
+  if (houseAudioState === 'done' || houseAudioState === 'gap' || !character || drivingMode || onCall || !sfxOn) return;
+  if (houseAudioState === 'idle') {
+    const d = Math.hypot(character.position.x, character.position.z);
+    if (d > 18) return;
+    ensureHouseAudio();
+    if (!houseAudioEl) return;
+    houseAudioState = 'meadow';
+    houseAudioEl.src = 'meadow_talk.mp3';
+    houseAudioEl.currentTime = 0;
+    houseAudioEl.play().catch(() => {});
+    houseAudioEl.onended = () => {
+      showMissionPopup('🏠', 'Tony', 'He heard every word of that.', 4200);
+      houseAudioState = 'gap';
+      setTimeout(() => {
+        houseAudioState = 'carmella';
+        houseAudioEl.src = 'carmella_door.mp3';
+        houseAudioEl.currentTime = 0;
+        houseAudioEl.play().catch(() => {});
+        houseAudioEl.onended = () => { houseAudioState = 'done'; };
+      }, 2000); // clear gap so Carmella's line doesn't read as talking over Meadow's
+    };
+  }
+}
+
+/* ================= EXTRA VOICE CLIPS — Melfi/Vito/Christopher/Irina =================
+   Deliberately separate from CALLERS/callQueue above rather than merged into it —
+   that system has its own boss-quiz-vs-mission branching (fixed earlier this
+   session) and mixing new pure-voice-line callers into it risked disturbing that.
+   These just play, no answer/decline interaction, since the ask was to hear the
+   clips work, not build four new missions. Melfi/Vito/Christopher: one shuffled
+   pass, each once, order randomised per session. Irina: separate and night-gated,
+   excluded from that shuffle by request. Timings are short — "seconds window, a
+   minute tops" was explicit, so these are paced far tighter than the siren/alarm
+   timers built earlier, which assumed a much longer session. */
+const EXTRA_CALLERS = {
+  melfi: { name: 'DR. MELFI', src: 'melfi_calls.mp3' },
+  vito: { name: 'VITO', src: 'vito_call.mp3' },
+  christopher: { name: 'CHRISTOPHER', src: 'christopher_call.mp3' },
+  irina: { name: 'IRINA', src: 'irina_call.mp3' },
+};
+function shuffled(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+let extraCallQueue = shuffled(['melfi', 'vito', 'christopher']);
+let extraCallTimer = 12 + Math.random() * 8;     // first one soon — short session
+let extraCallAudio = null, extraCallActive = false;
+let irinaPlayed = false, irinaTimer = 20 + Math.random() * 15;
+function playExtraCall(key) {
+  const c = EXTRA_CALLERS[key];
+  if (!c) return;
+  if (!extraCallAudio) { extraCallAudio = new Audio(); extraCallAudio.preload = 'auto'; }
+  onCall = true;   // reuse the same flag the main call system gates on — ducks
+  extraCallActive = true;
+  if (bgAudio) bgAudio.pause();
+  extraCallAudio.src = c.src;
+  extraCallAudio.currentTime = 0;
+  extraCallAudio.volume = sfxOn ? 0.95 : 0;
+  extraCallAudio.play().catch(() => {});
+  extraCallAudio.onended = () => {
+    onCall = false;
+    extraCallActive = false;
+    if (bgAudio && soundOn) bgAudio.play().catch(() => {});
+  };
+  showMissionPopup('\uD83D\uDCDE', c.name, 'Incoming.', 2200);
+}
+function updateExtraCalls(dt) {
+  if (!sfxOn || inInterior || onCall || extraCallActive) return;
+  if (extraCallQueue.length > 0) {
+    extraCallTimer -= dt;
+    if (extraCallTimer <= 0) {
+      playExtraCall(extraCallQueue.shift());
+      extraCallTimer = 18 + Math.random() * 12;   // spaced apart, still short-session scale
+    }
+  }
+  if (!irinaPlayed) {
+    irinaTimer -= dt;
+    if (irinaTimer <= 0) {
+      if (typeof nightLightLevel === 'number' && nightLightLevel > 0.5) {
+        irinaPlayed = true;
+        playExtraCall('irina');
+      } else {
+        irinaTimer = 8;   // not night yet — recheck soon rather than losing a whole cycle
+      }
+    }
+  }
+}
 function updateCallStrip() {
   if (!onCall || !currentCaller) return;
   const left = Math.max(0, Math.round((callEndsAt - performance.now()) / 1000));
@@ -9856,6 +9972,8 @@ function tick() {
   updateBuildingLOD();
   updateCallStrip();
   updateAmbientEvents(dt);
+  updateHouseAudio();
+  updateExtraCalls(dt);
   updateCarDJ(dt);
   updateInteriorActions();
   updateInteriorLights();
