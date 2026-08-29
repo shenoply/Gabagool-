@@ -537,6 +537,18 @@
     <button id="radio-next" style="background:none;border:none;color:var(--text-dim);font-size:14px;padding:2px 6px;">▶</button>
   </div>
 
+  <!-- On-foot equivalent of the car radio pill above — same underlying RADIO_STATIONS
+       / bgAudio, just without the car's dashboard framing, since you're walking, not
+       driving. Never shown at the same time as #radio (drivingMode is mutually
+       exclusive), so it reuses the same on-screen slot. One tap advances station,
+       same as the two arrow buttons combined. Hidden on a call — bgAudio itself
+       already hard-pauses in startVoiceCall(), this just keeps the bar from
+       claiming to be playing something that's actually silenced. -->
+  <div id="music-bar" style="position:fixed;left:50%;transform:translateX(-50%);top:62px;z-index:12;display:none;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--panel-border);border-radius:999px;padding:6px 12px;backdrop-filter:blur(6px);">
+    <span style="font-size:12px;color:var(--accent);">♪</span>
+    <span id="music-bar-name" style="font:700 11px/1 -apple-system,sans-serif;color:var(--accent);min-width:96px;text-align:center;">MUSIC</span>
+  </div>
+
   <audio id="bg-audio" loop preload="auto"></audio>
   <audio id="chase-audio" preload="auto"></audio>
 
@@ -871,7 +883,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 19:02';
+  window.__BUILD = '2026-08-29 19:14';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -8540,6 +8552,7 @@ hbBtn.addEventListener('pointerleave', hbUp);
 window.addEventListener('blur', () => hbUp()); // don't leave it stuck on if the app loses focus
 document.getElementById('radio-prev').addEventListener('click', (e) => { e.stopPropagation(); setRadioStation(radioIndex - 1); });
 document.getElementById('radio-next').addEventListener('click', (e) => { e.stopPropagation(); setRadioStation(radioIndex + 1); });
+document.getElementById('music-bar').addEventListener('click', (e) => { e.stopPropagation(); setRadioStation(radioIndex + 1); });
 
 const photoBtn = document.getElementById('photo-btn');
 photoBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePhotoMode(); });
@@ -9035,6 +9048,16 @@ function tick() {
   {
     const pb = document.getElementById('pov-btn');
     if (pb) pb.style.display = drivingMode ? '' : 'none';
+  }
+  {
+    // Same call-priority rule as everywhere else in the audio system: hidden
+    // during a call, since bgAudio is already hard-paused for the duration.
+    const mb = document.getElementById('music-bar');
+    if (mb) {
+      mb.style.display = (!drivingMode && !onCall && !photoMode) ? 'flex' : 'none';
+      const nm = document.getElementById('music-bar-name');
+      if (nm) nm.textContent = RADIO_STATIONS[radioIndex].name;
+    }
   }
   if (scene.fog && !window.__fogManual) {
     const want = inInterior ? FOG_INDOOR : FOG_OUTDOOR;
