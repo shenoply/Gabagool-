@@ -883,7 +883,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 20:14';
+  window.__BUILD = '2026-08-29 20:19';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1496,12 +1496,14 @@ function closePhoneRing() {
 }
 document.getElementById('phone-answer-btn').addEventListener('click', () => {
   closePhoneRing();
-  /* Was 0.25. That was set back when Boss called at most once per session — the
-     call queue emptied for good after one round. Now it refills and Boss comes
-     back every 3rd call indefinitely, so the same odds landed far more often in
-     practice. Lowered to keep the quiz roughly as rare as it read before. */
-  if (inInterior || Math.random() < 0.12) {
-    bossQuizCall();
+  /* Quiz removed for now, per request — this always goes to the debt mission.
+     Indoors is the one exception: enterDriveMode() doesn't exit the interior
+     first (checked — no inInterior handling in it at all), so calling it from
+     in here would leave the scene in a broken half-transitioned state. Rather
+     than build that transition right now, indoors just reschedules the call. */
+  if (inInterior) {
+    showMissionPopup('📵', 'Missed call', "Can't take this from inside. He'll call back.", 2500);
+    scheduleNextPhoneRing(20);
     return;
   }
   /* Was Infinity, with the next ring scheduled only when the mission resolved — so
@@ -6046,7 +6048,9 @@ function phoneActivate() {
   renderPhone();
 }
 function phoneAction(act) {
-  if (act === 'callboss') { closePhone(); bossQuizCall(); }
+  // Quiz removed for now, same as the incoming-call path — calling him just
+  // isn't wired to anything yet rather than silently becoming a quiz.
+  if (act === 'callboss') { closePhone(); showMissionPopup('\uD83D\uDCDE', 'The Boss', "Line's busy. Try later.", 2200); }
   else if (act === 'playvid') { /* handled by the data-v listener below */ }
   else if (act === 'stopvid') { stopPhoneVideo(); phoneScreen = 'videos'; renderPhone(); }
   else if (act === 'carmine') { if (onCall) return; closePhone(); startVoiceCall('carmine'); }
