@@ -6439,6 +6439,71 @@ function updateBuildingLOD() {
   if (loadMeshyBuildings._fade) loadMeshyBuildings._fade();
 }
 
+/* ================= CROSS-STREETS AND PARKED CARS =================
+   Two rows of buildings either side read as walls. Side streets cutting through at
+   intervals make it a grid instead — you see gaps, and the depth behind becomes
+   legible. Pure geometry: a tarmac strip and a kerb, no download.
+
+   Parked cars reuse the traffic meshes already loaded, so they cost clones rather
+   than a new asset. */
+let crossStreets = null;
+function buildCrossStreets() {
+  if (crossStreets) return;
+  crossStreets = new THREE.Group();
+
+  const tarmac = new THREE.MeshStandardMaterial({ color: 0x2b2d31, roughness: 0.95, metalness: 0.0 });
+  const kerb   = new THREE.MeshStandardMaterial({ color: 0x6f6c66, roughness: 1.0, metalness: 0.0 });
+
+  // side streets run east-west, cutting between building groups
+  const AT_Z = [92, 180, 268, 356, 444, 532];
+  for (const z of AT_Z) {
+    for (const side of [1, -1]) {
+      const len = 90;
+      const cx = ROAD_CX + side * (ROAD_HW + 6 + len / 2);
+      const road = new THREE.Mesh(new THREE.PlaneGeometry(len, 9), tarmac);
+      road.rotation.x = -Math.PI / 2;
+      road.position.set(cx, 0.03, z);
+      crossStreets.add(road);
+      // kerbs either edge, slightly proud of the tarmac
+      for (const off of [-5.0, 5.0]) {
+        const k = new THREE.Mesh(new THREE.BoxGeometry(len, 0.18, 0.5), kerb);
+        k.position.set(cx, 0.09, z + off);
+        crossStreets.add(k);
+      }
+    }
+  }
+  crossStreets.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; o.frustumCulled = true; } });
+  scene.add(crossStreets);
+  if (window.__gameNote) window.__gameNote('cross-streets: ' + AT_Z.length * 2);
+}
+
+/* Parked cars along the kerb, cloned from the traffic models already in memory. */
+let parkedCars = null;
+function buildParkedCars() {
+  if (parkedCars || typeof trafficCars === 'undefined' || trafficCars.length === 0) return;
+  parkedCars = new THREE.Group();
+  let seed = 4711;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+
+  for (let i = 0; i < 26; i++) {
+    const src = trafficCars[Math.floor(rnd() * trafficCars.length)];
+    if (!src || !src.mesh) continue;
+    const c = src.mesh.clone(true);
+    const side = rnd() < 0.5 ? 1 : -1;
+    // tucked just inside the kerb line, nose-to-tail, with a little scatter
+    c.position.set(
+      ROAD_CX + side * (ROAD_HW + 2.6 + rnd() * 0.6),
+      0,
+      60 + i * 19 + (rnd() - 0.5) * 5
+    );
+    c.rotation.y = (side > 0 ? 0 : Math.PI) + (rnd() - 0.5) * 0.06;
+    c.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+    parkedCars.add(c);
+  }
+  scene.add(parkedCars);
+  if (window.__gameNote) window.__gameNote('parked cars: ' + parkedCars.children.length);
+}
+
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
   const lanes = [-ROAD_ZONE.halfW * 0.55, -ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.55];
@@ -7173,7 +7238,9 @@ function endLoad(name) {
     setTimeout(() => { try { buildFireflies(); buildLeaves(); buildCelestialBodies(); } catch (e) { console.warn('ambient particles failed:', e); } }, 7200);
     setTimeout(loadInterior, 9000); // last in the queue — biggest file, least urgent
     setTimeout(buildRoadFurniture, 6500); // procedural, no download
-    setTimeout(loadMeshyBuildings, 11000); // ~14MB of scenery, lowest priority — safe to build early
+    setTimeout(loadMeshyBuildings, 11000);
+    setTimeout(buildCrossStreets, 12500); // geometry only
+    setTimeout(buildParkedCars, 13500);   // clones existing traffic meshes // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
        low-poly next to a photoscanned character reads as a different game, and I
        made it worse by putting it 20 units from the road at 7.5x scale. Kept the
