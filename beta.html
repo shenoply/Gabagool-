@@ -883,7 +883,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 20:19';
+  window.__BUILD = '2026-08-29 21:05';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -4013,27 +4013,39 @@ function playStatic() {
 function playDistantSiren() {
   if (!ambientCtx || !sfxOn) return;
   const now = ambientCtx.currentTime;
+  const dur = 6.5;
   const osc = ambientCtx.createOscillator();
   const g = ambientCtx.createGain();
   osc.type = 'sine';
   osc.frequency.setValueAtTime(500, now);
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 5; i++) {
     osc.frequency.linearRampToValueAtTime(900, now + i + 0.5);
     osc.frequency.linearRampToValueAtTime(500, now + i + 1);
   }
+  // Swell up then fall away, like it's actually passing rather than a fixed drone.
   g.gain.setValueAtTime(0, now);
-  g.gain.linearRampToValueAtTime(0.05, now + 0.5);   // distant — kept quiet
-  g.gain.setValueAtTime(0.05, now + 3.5);
-  g.gain.linearRampToValueAtTime(0, now + 4.5);
-  osc.connect(g); g.connect(ambientCtx.destination);
-  osc.start(now); osc.stop(now + 4.6);
+  g.gain.linearRampToValueAtTime(0.09, now + dur * 0.4);
+  g.gain.linearRampToValueAtTime(0.09, now + dur * 0.55);
+  g.gain.linearRampToValueAtTime(0, now + dur);
+  // A real stereo sweep — left-to-right or the reverse, picked at random each
+  // time, so it actually reads as passing through rather than sitting in place.
+  const pan = ambientCtx.createStereoPanner();
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  pan.pan.setValueAtTime(-1 * dir, now);
+  pan.pan.linearRampToValueAtTime(1 * dir, now + dur);
+  osc.connect(g); g.connect(pan); pan.connect(ambientCtx.destination);
+  osc.start(now); osc.stop(now + dur + 0.1);
 }
 function playCarAlarm() {
   if (!ambientCtx || !sfxOn) return;
   const now = ambientCtx.currentTime;
   const g = ambientCtx.createGain();
-  g.gain.value = 0.06;
-  g.connect(ambientCtx.destination);
+  g.gain.value = 0.09;
+  // Fixed pan, not swept — it's one parked car, not something driving past.
+  // Random each time so it doesn't always seem to come from the same direction.
+  const pan = ambientCtx.createStereoPanner();
+  pan.pan.value = (Math.random() * 2 - 1) * 0.7;
+  g.connect(pan); pan.connect(ambientCtx.destination);
   for (let i = 0; i < 6; i++) {
     const osc = ambientCtx.createOscillator();
     osc.type = 'square';
@@ -4065,13 +4077,13 @@ function playChurchBell(strikes) {
     }
   }
 }
-let sirenTimer = 60 + Math.random() * 90, alarmTimer = 80 + Math.random() * 100, lastBellHour = -1;
+let sirenTimer = 18 + Math.random() * 25, alarmTimer = 25 + Math.random() * 30, lastBellHour = -1;
 function updateAmbientEvents(dt) {
   if (!sfxOn || inInterior || onCall) return;
   sirenTimer -= dt;
-  if (sirenTimer <= 0) { playDistantSiren(); sirenTimer = 60 + Math.random() * 90; }
+  if (sirenTimer <= 0) { playDistantSiren(); sirenTimer = 35 + Math.random() * 40; }
   alarmTimer -= dt;
-  if (alarmTimer <= 0) { playCarAlarm(); alarmTimer = 80 + Math.random() * 100; }
+  if (alarmTimer <= 0) { playCarAlarm(); alarmTimer = 45 + Math.random() * 55; }
   if (typeof dayTime === 'number') {
     const hour = Math.floor(dayTime * 24);
     const hour12 = ((hour + 11) % 12) + 1;
@@ -4937,8 +4949,12 @@ function updateCityHum() {
   if (!cityHumGain) return;
   const ref = drivingMode ? carState : (character ? character.position : { x: 0, z: 0 });
   const d = Math.hypot((ref.x || 0) - CITY_BACKDROP_POS.x, (ref.z || 0) - CITY_BACKDROP_POS.z);
-  const near = Math.max(0, 1 - d / 160);
-  cityHumGain.gain.setTargetAtTime(sfxOn ? near * near * 0.05 : 0, ambientCtx.currentTime, 0.6);
+  /* Was radius 160 — the backdrop sits near the house (-15,-62), so almost the
+     entire avenue (z 48 to 1500+, where all the actual driving happens) was
+     outside that radius and got zero hum, ever. Widened to 700 so it reaches
+     down the avenue instead of being tied to one prop's exact position. */
+  const near = Math.max(0, 1 - d / 700);
+  cityHumGain.gain.setTargetAtTime(sfxOn ? near * near * 0.06 : 0, ambientCtx.currentTime, 0.6);
 }
 
 /* 6. Sun and moon discs. The cycle already computes the sun direction for lighting,
@@ -6952,7 +6968,7 @@ function buildParkedCars() {
    is an InstancedMesh, so the whole set is roughly a dozen draw calls rather than
    several hundred. Nothing here downloads anything. */
 let streetDetail = null, trafficLights = [], pigeons = [], steamPuffs = [], kerbPuddles = null;
-let litterMesh = null, nightLights = [], flockBirds = null, windowGlows = [];
+let litterMesh = null, nightLights = [], flockBirds = null, windowGlows = [], perchedBirds = [];
 function buildStreetDetail() {
   if (streetDetail) return;
   streetDetail = new THREE.Group();
@@ -7149,13 +7165,16 @@ function buildStreetDetail() {
   scene.add(streetDetail);
 
   // 11. A few birds perched on the utility wires instead of only kerb pigeons —
-  // same mesh, same material, no scatter behaviour needed since they're static.
+  // same mesh, same material. Not fully static any more — a small idle bob so
+  // they read as alive rather than blending into the scenery.
   for (let i = 0; i < 8; i++) {
     const side = i % 2 ? 1 : -1;
     const perched = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), birdMat);
     perched.scale.set(1, 0.85, 1.4);
-    perched.position.set(41.5 + side * 0.3, 10.6, 60 + i * 130 + rnd() * 20);   // 41.5 matches the pole line
+    const baseY = 10.6;
+    perched.position.set(41.5 + side * 0.3, baseY, 60 + i * 130 + rnd() * 20);   // 41.5 matches the pole line
     streetDetail.add(perched);
+    perchedBirds.push({ mesh: perched, baseY, phase: rnd() * 6.28 });
   }
 
   // 12. A loose flock drifting overhead, only visible in the dawn/dusk window —
@@ -7204,13 +7223,16 @@ function buildStreetDetail() {
     scene.add(pl);
     nightLights.push({ light: pl, base: 0.55, flicker: false });
   }
-  // 15. One flickering streetlamp — the utility poles carry wires, not fixtures,
-  // so this is a new small light rather than toggling something that already
-  // existed. Deliberately just one; the rest of the street stays steady.
-  const lamp = new THREE.PointLight(0xd9e8ff, 0, 14, 2);
-  lamp.position.set(41.5, 9.5, 224);   // matches the pole line and spacing
-  scene.add(lamp);
-  nightLights.push({ light: lamp, base: 0.9, flicker: true });
+  // 15. Flickering streetlamps — was just one at a fixed spot, easy to miss on a
+  // ~1500-unit street. Five now, spread along the pole line, each with its own
+  // phase offset so they flicker independently rather than all blinking together
+  // (which would read as fake/synchronized instead of alive).
+  for (let i = 0; i < 5; i++) {
+    const lamp = new THREE.PointLight(0xd9e8ff, 0, 14, 2);
+    lamp.position.set(41.5, 9.5, 130 + i * 260);
+    scene.add(lamp);
+    nightLights.push({ light: lamp, base: 0.9, flicker: true, phase: i * 17.3 });
+  }
 
   // 16. Steam near the factory landmarks — same sprite technique as the manhole
   // steam above, just two more emitter clusters out past the built frontage.
@@ -7261,6 +7283,11 @@ function updateStreetDetail(dt) {
       b.position.y += Math.sin(t * 3 + b.userData.phase) * 0.002;
     }
   }
+  // perched birds — a small idle bob, each on its own phase so the row doesn't
+  // move as one block
+  for (const pb of perchedBirds) {
+    pb.mesh.position.y = pb.baseY + Math.sin(t * 1.4 + pb.phase) * 0.025;
+  }
   // kerb puddles follow the existing rain wetness rather than their own timer
   if (kerbPuddles) {
     const wet = (typeof rainWet === 'number') ? rainWet : 0;  // same value the wet road uses
@@ -7280,7 +7307,10 @@ function updateStreetDetail(dt) {
   }
   // overhead flock — visible only in the dawn/dusk window, drifting in a slow circle
   if (flockBirds) {
-    const dusk = typeof dayTime === 'number' && ((dayTime > 0.22 && dayTime < 0.3) || (dayTime > 0.72 && dayTime < 0.8));
+    // Was 0.22-0.30 / 0.72-0.80 — a combined 16% of the day, which is why it was
+    // never showing up in testing. Widened to 40%, still excluding full midday
+    // and full midnight rather than making it constant.
+    const dusk = typeof dayTime === 'number' && ((dayTime > 0.15 && dayTime < 0.35) || (dayTime > 0.65 && dayTime < 0.85));
     flockBirds.visible = dusk;
     if (dusk) {
       const mm = new THREE.Matrix4(), qq = new THREE.Quaternion();
@@ -7300,7 +7330,7 @@ function updateStreetDetail(dt) {
   // also gets a irregular flicker on top so it reads as failing, not just dim
   for (const nl of nightLights) {
     let k = nl.base * (typeof nightLightLevel === 'number' ? nightLightLevel : 0);
-    if (nl.flicker) k *= 0.75 + 0.25 * Math.sin(t * 37) * (Math.sin(t * 5.3) > 0.7 ? 0.2 : 1);
+    if (nl.flicker) { const ph = nl.phase || 0; k *= 0.75 + 0.25 * Math.sin((t + ph) * 37) * (Math.sin((t + ph) * 5.3) > 0.7 ? 0.2 : 1); }
     nl.light.intensity = k * 3;
   }
   // window glows — same nightLightLevel fade, small per-window phase so the
