@@ -6401,6 +6401,12 @@ function loadMeshyBuildings() {
     [ASSETS.CHURCH,      ASSETS.CHURCH_LOD],
     [ASSETS.BRICK_WALL,  ASSETS.BRICK_WALL_LOD],
   ];
+  /* Second row behind the first, built from the LOD meshes — 12K verts instead of
+     36K. Those files were already in the repo and unused once the LOD swap was
+     disabled, so depth costs a third of what the front row does. Set back 34 units
+     and offset in z so you see gaps between front buildings rather than a wall. */
+  const BACK_E = 78, BACK_W = -24;
+
   PAIRS.forEach(([hiKey, loKey], ki) => {
     loadPair(hiKey, loKey, (hi, lo) => {
       /* Start at z=48 rather than 96 — close enough that the street reads from the
@@ -6408,6 +6414,14 @@ function loadMeshyBuildings() {
          z=26. 6 of each per side now the row is longer. */
       for (let n = 0; n < 6; n++) putLOD(hi, lo, EAST_X, 48 + (n * 4 + ki) * 22, FACE_W);
       for (let n = 0; n < 6; n++) putLOD(hi, lo, WEST_X, 59 + (n * 4 + ((ki + 2) % 4)) * 22, FACE_E);
+
+      // back row: cheap meshes, offset by half a building so they fill the gaps
+      for (let n = 0; n < 6; n++) put(lo, BACK_E, 59 + (n * 4 + ((ki + 1) % 4)) * 22, FACE_W);
+      for (let n = 0; n < 6; n++) put(lo, BACK_W, 70 + (n * 4 + ((ki + 3) % 4)) * 22, FACE_E);
+
+      // and a third row further still, rotated to face away — pure silhouette
+      for (let n = 0; n < 4; n++) put(lo, BACK_E + 30, 80 + (n * 6 + ki) * 30, FACE_E);
+      for (let n = 0; n < 4; n++) put(lo, BACK_W - 30, 95 + (n * 6 + ((ki + 2) % 4)) * 30, FACE_W);
     });
   });
 
