@@ -621,6 +621,7 @@ const ASSETS = {
      same filename never reaches anyone who already loaded it. Any model I fix from
      here on gets a new name. */
   STREET_TREE: 'street_tree_v2.glb',
+  STREET_TREE_B: 'street_tree_b.glb', // mature deciduous — Meshy 2.6M tris knocked to 20K, 10m height + ground offset baked in
   /* _hq: 1024px textures instead of 512. New filenames because the service worker
      caches .glb cache-first and would keep serving the blurry ones. */
   ROW_FIVE_A: 'row_five_a_hq.glb',
@@ -854,7 +855,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 12:29';
+  window.__BUILD = '2026-08-29 15:13';
   if (window.__gameNote) window.__gameNote('BUILD 2026-08-29 12:29');
 
   window.__reportGPU = () => {
@@ -6468,6 +6469,8 @@ function loadMeshyBuildings() {
     for (const o of [a, b]) o.traverse((m) => {
       if (!m.isMesh) return;
       m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true;
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) if (mat && mat.map) { mat.map.anisotropy = maxAniso; mat.map.needsUpdate = true; }
     });
     l.addLevel(a, 0);
     /* No LOD swap. The fog here is tinted to match the sky, so it never actually
@@ -6484,12 +6487,33 @@ function loadMeshyBuildings() {
   };
 
   let placedCount = 0;
+  /* Hard rule, measured rather than assumed: no building stands in the carriageway
+     or on the gravel shoulder. Models are placed by their CENTRE, and a deep model
+     placed at the same centre-line as a shallow one walks straight into the road —
+     corner_block is 33.3 deep, which put its front wall at x≈27, the centreline.
+     So: place, measure the world bounding box, and push any offender back until
+     its road-facing wall sits behind the shoulder. Models that already comply do
+     not move a millimetre, so the rows and singles keep their exact frontage. */
+  const FRONT_FACE_E = 39.8, FRONT_FACE_W = 14.2;
   const put = (src, x, z, rotY) => {
     placedCount++;
     const o = src.clone(true);
     o.position.set(x, 0, z);
     o.rotation.y = rotY;
-    o.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true; } });
+    o.updateMatrixWorld(true);
+    const bb = new THREE.Box3().setFromObject(o);
+    if (x > ROAD_CX && bb.min.x < FRONT_FACE_E) o.position.x += FRONT_FACE_E - bb.min.x;
+    else if (x < ROAD_CX && bb.max.x > FRONT_FACE_W) o.position.x -= bb.max.x - FRONT_FACE_W;
+    o.traverse((m) => {
+      if (!m.isMesh) return;
+      m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true;
+      /* Facades are viewed edge-on down a long street — the harshest angle there is
+         for mipmapping. Without anisotropic filtering every texture collapses to mud
+         a few metres out, which is most of why the street buildings read as lower
+         quality than the yard-era ones ever did. */
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) if (mat && mat.map) { mat.map.anisotropy = maxAniso; mat.map.needsUpdate = true; }
+    });
     scene.add(o);
     njBuildings.push(o);
   };
@@ -6502,33 +6526,51 @@ function loadMeshyBuildings() {
      read as a repeated model. Skipped where a cross-street cuts through. */
   /* Trees carry alpha-masked leaves; without alphaTest set on the Three material
      they render as solid green cards. The GLB says MASK but Three needs it told. */
-  load(ASSETS.STREET_TREE, (src) => {
+  /* Two species share the avenue now. Both load callbacks walk the IDENTICAL
+     deterministic sequence — same seed, same five rnd() draws per slot — and each
+     plants only its own slots. The mix is therefore stable across loads, the two
+     downloads stay independent, and if one model fails you get half the trees,
+     visibly, rather than none — or a silent fallback that would hide the failure. */
+  const plantAvenue = (src, wantB) => {
     let seed = 90210;
     const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
     const CROSS_Z = JUNCTION_Z;
     for (let z = 40; z < 600; z += 15) {
       if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
       for (const side of [1, -1]) {
-        const t = src.clone(true);
+        const isB = rnd() < 0.45;      // ~45% mature deciduous; drawn FIRST so both walks stay in step
         const s2 = 0.85 + rnd() * 0.4;
-        t.position.set(ROAD_CX + side * (ROAD_HW + 3.4 + rnd() * 0.8), 0, z + (rnd() - 0.5) * 3);
+        const px = ROAD_CX + side * (ROAD_HW + 3.4 + rnd() * 0.8);
+        const pz = z + (rnd() - 0.5) * 3;
+        const ry = rnd() * Math.PI * 2;
+        if (isB !== wantB) continue;   // all five draws above happen either way, in both callbacks
+        const t = src.clone(true);
+        t.position.set(px, 0, pz);
         t.scale.setScalar(s2);
-        t.rotation.y = rnd() * Math.PI * 2;
+        t.rotation.y = ry;
         t.traverse((m) => {
           if (!m.isMesh) return;
           m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true;
           const mats = Array.isArray(m.material) ? m.material : [m.material];
           for (const mat of mats) {
             if (!mat) continue;
+            if (mat.map) { mat.map.anisotropy = maxAniso; mat.map.needsUpdate = true; }
             if (mat.map && mat.map.image) { mat.alphaTest = 0.35; mat.transparent = false; }
-            mat.side = THREE.DoubleSide;   // leaf cards are single-sided planes
+            mat.side = THREE.DoubleSide;   // leaf cards are single-sided planes; harmless on the solid tree
           }
         });
         scene.add(t);
         njBuildings.push(t);
       }
     }
-  });
+  };
+  load(ASSETS.STREET_TREE, (src) => plantAvenue(src, false));
+  /* street_tree_b is solid geometry, no alpha cards — the alphaTest above discards
+     nothing on it. Meshy shipped it at 2.6M tris / 189MB; gltf-transform's simplify
+     refused it (the corner_block failure mode) but gltfpack's sloppy mode
+     (-si 0.01 -sa) took it to 20K tris / 425KB. Scale and ground offset baked in
+     the file, same convention as the buildings. */
+  load(ASSETS.STREET_TREE_B, (src) => plantAvenue(src, true));
 
   const EAST_X = 44, WEST_X = 10;
   const FACE_W = -Math.PI / 2, FACE_E = Math.PI / 2;
