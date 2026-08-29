@@ -3035,6 +3035,11 @@ function buildRoadZone() {
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.set(ROAD_ZONE.centerX, 0, ROAD_ZONE.centerZ);
+  /* The road is a single 20 x 1680 plane. Three culls by bounding sphere, and for a
+     shape this long and thin that sphere leaves the frustum long before the visible
+     part of the road does — so the tarmac blinks out and you see grass. Never cull
+     the road surface; it is two triangles. */
+  mesh.frustumCulled = false;
   mesh.receiveShadow = true;
   scene.add(mesh);
 
@@ -3051,6 +3056,7 @@ function buildRoadZone() {
   [-1, 1].forEach((side) => {
     const shoulder = new THREE.Mesh(new THREE.PlaneGeometry(shoulderW, d), grassMat);
     shoulder.rotation.x = -Math.PI / 2;
+    shoulder.frustumCulled = false;
     shoulder.position.set(ROAD_ZONE.centerX + side * (ROAD_ZONE.halfW + shoulderW / 2), -0.01, ROAD_ZONE.centerZ);
     shoulder.receiveShadow = true;
     scene.add(shoulder);
@@ -3061,6 +3067,7 @@ function buildRoadZone() {
   const curbH = 0.1;
   [-1, 1].forEach((side) => {
     const curb = new THREE.Mesh(new THREE.BoxGeometry(0.25, curbH, d), curbMat);
+    curb.frustumCulled = false;
     curb.position.set(ROAD_ZONE.centerX + side * ROAD_ZONE.halfW, curbH / 2, ROAD_ZONE.centerZ);
     curb.castShadow = true; curb.receiveShadow = true;
     scene.add(curb);
@@ -6572,7 +6579,10 @@ function buildCrossStreets() {
   const AT_Z = JUNCTION_Z;
   for (const z of AT_Z) {
     for (const side of [1, -1]) {
-      const len = 90;
+      /* 90 units stopped just past the second row of buildings, so every side road
+         visibly ended in grass. 260 runs them out past everything and into the fog,
+         which reads as "that goes somewhere" without needing anything built there. */
+      const len = 260;
       const cx = ROAD_CX + side * (ROAD_HW + 6 + len / 2);
       const road = new THREE.Mesh(new THREE.PlaneGeometry(len, 9), tarmac);
       road.rotation.x = -Math.PI / 2;
@@ -6857,7 +6867,9 @@ function updateStreetDetail(dt) {
 */
 const JUNCTION_Z = [];
 for (let z = 92; z < 1560; z += 88) JUNCTION_Z.push(z);
-const CYCLE_SECONDS = 22;
+/* 22s was frantic — a light barely settled before flipping. 52s reads as a real
+   junction: about 26s of main green, 4s amber, 19s cross green, 3s amber. */
+const CYCLE_SECONDS = 52;
 
 function junctionPhase(z) {
   const offset = ((z / 88) * 0.37) % 1;      // stagger so they don't all switch together
