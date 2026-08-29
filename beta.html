@@ -1791,6 +1791,7 @@ groundMat.map.anisotropy = maxAniso;
 const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
+ground.frustumCulled = false;   // same reason as the road: culled by a bounding sphere that leaves view early
 scene.add(ground);
 
 /* Swap the procedural canvas grass for the photoscanned texture once it arrives.
