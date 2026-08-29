@@ -852,8 +852,8 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 11:17';
-  if (window.__gameNote) window.__gameNote('BUILD 2026-08-29 11:17');
+  window.__BUILD = '2026-08-29 11:26';
+  if (window.__gameNote) window.__gameNote('BUILD 2026-08-29 11:26');
 
   window.__reportGPU = () => {
     try {
@@ -6540,58 +6540,56 @@ function loadMeshyBuildings() {
      and offset in z so you see gaps between front buildings rather than a wall. */
   const BACK_E = 78, BACK_W = -24;
 
-  /* Rows fill the frontage between junctions; the singles now punctuate rather than
-     carry the street. A 32m row covers five shopfronts for the cost of one building,
-     which is why these are the better value.
+  /* FRONT LINE — one continuous sequence, both sides.
 
-     Placement is anchored to JUNCTION_Z so nothing lands in a road: each block gets
-     a row set back from the kerb, and the corner pieces sit at the junction mouths
-     where a real corner building would. */
-  const ROWS = [
-    [ASSETS.ROW_FIVE_A, 32], [ASSETS.ROW_FIVE_B, 32], [ASSETS.ROW_FOUR, 40],
+     Previous version put the rows at x=50 and x=4, which is BEHIND the singles at
+     44 and 10 — so the best new models were hidden behind the old ones. Now the
+     rows are the street and the singles punctuate it.
+
+     Placement walks z from 48 to 1500 pulling from a repeating pattern that never
+     puts the same model next to itself, with each entry advancing z by its own
+     width plus a small gap. That is what stops the street reading as one building
+     copied over and over. */
+  const FRONT = [
+    { key: ASSETS.ROW_FIVE_A,   w: 32 },
+    { key: ASSETS.PORK_STORE,   w: 11 },
+    { key: ASSETS.ROW_FOUR,     w: 40 },
+    { key: ASSETS.BARBER_SHOP,  w: 10 },
+    { key: ASSETS.ROW_FIVE_B,   w: 32 },
+    { key: ASSETS.CHURCH,       w: 14 },
+    { key: ASSETS.CORNER_BLOCK, w: 33 },
+    { key: ASSETS.BRICK_WALL,   w: 16 },
+    { key: ASSETS.ROW_FIVE_A,   w: 32 },
+    { key: ASSETS.CORNER_ROUND, w: 25 },
+    { key: ASSETS.ROW_FOUR,     w: 40 },
+    { key: ASSETS.PORK_STORE,   w: 11 },
   ];
-  ROWS.forEach(([key, w], ri) => {
-    load(key, (src) => {
-      for (let i = ri; i < JUNCTION_Z.length - 1; i += ROWS.length) {
-        const mid = (JUNCTION_Z[i] + JUNCTION_Z[i + 1]) / 2;
-        put(src, EAST_X + 6, mid, -Math.PI / 2);
-        put(src, WEST_X - 6, mid + 14, Math.PI / 2);
+
+  // work out every slot up front, so each model is loaded once and placed many times
+  const slots = { };
+  for (const side of [1, -1]) {
+    let z = side > 0 ? 48 : 66;          // offset the two sides so they don't line up
+    let i = side > 0 ? 0 : 5;            // and start each side mid-pattern
+    while (z < 1500) {
+      const item = FRONT[i % FRONT.length];
+      // leave the junction mouths clear
+      const clash = JUNCTION_Z.some((jz) => Math.abs(jz - (z + item.w / 2)) < item.w / 2 + 7);
+      if (!clash) {
+        (slots[item.key] = slots[item.key] || []).push({
+          x: side > 0 ? EAST_X : WEST_X,
+          z: z + item.w / 2,
+          rot: side > 0 ? -Math.PI / 2 : Math.PI / 2,
+        });
+        z += item.w + 3;
+      } else {
+        z += 12;                          // step past the junction and try again
       }
-    });
-  });
-  /* Corners are 9.3MB and 6.9MB — the two most expensive models here — so they are
-     used sparingly, at four junctions rather than seventeen. */
-  load(ASSETS.CORNER_BLOCK, (src) => {
-    [1, 6, 11].forEach((i) => { if (JUNCTION_Z[i]) put(src, EAST_X + 22, JUNCTION_Z[i] + 26, -Math.PI / 2); });
-  });
-  load(ASSETS.CORNER_ROUND, (src) => {
-    [3, 9, 14].forEach((i) => { if (JUNCTION_Z[i]) put(src, WEST_X - 22, JUNCTION_Z[i] - 26, Math.PI / 2); });
-  });
-
-  PAIRS.forEach(([hiKey, loKey], ki) => {
-    loadPair(hiKey, loKey, (hi, lo) => {
-      /* Start at z=48 rather than 96 — close enough that the street reads from the
-         house, while clearing the yard (which spans about +-22) and the garage at
-         z=26. 6 of each per side now the row is longer. */
-      for (let n = 0; n < 6; n++) putLOD(hi, lo, EAST_X, 48 + (n * 4 + ki) * 22, FACE_W);
-      for (let n = 0; n < 6; n++) putLOD(hi, lo, WEST_X, 59 + (n * 4 + ((ki + 2) % 4)) * 22, FACE_E);
-
-      // back row: cheap meshes, offset by half a building so they fill the gaps
-      for (let n = 0; n < 6; n++) put(lo, BACK_E, 59 + (n * 4 + ((ki + 1) % 4)) * 22, FACE_W);
-      for (let n = 0; n < 6; n++) put(lo, BACK_W, 70 + (n * 4 + ((ki + 3) % 4)) * 22, FACE_E);
-
-      // and a third row further still, rotated to face away — pure silhouette
-      for (let n = 0; n < 4; n++) put(lo, BACK_E + 30, 80 + (n * 6 + ki) * 30, FACE_E);
-      for (let n = 0; n < 4; n++) put(lo, BACK_W - 30, 95 + (n * 6 + ((ki + 2) % 4)) * 30, FACE_W);
-    });
-  });
-
-  /* Dumpsters belong down the side, not on the kerb in front of a church. These sit
-     in the gap between the front and back rows, along the cross-street mouths, where
-     a real one would be. */
-  setTimeout(() => {
-    if (window.__gameNote) window.__gameNote('meshy placed: ' + placedCount + ' objects');
-  }, 9000);
+      i++;
+    }
+  }
+  for (const key of Object.keys(slots)) {
+    load(key, (src) => { for (const p of slots[key]) put(src, p.x, p.z, p.rot); });
+  }
 
   load(ASSETS.DUMPSTER, (src) => {
     const ALLEY_Z = JUNCTION_Z.slice(0, 8);
