@@ -855,7 +855,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 18:19';
+  window.__BUILD = '2026-08-29 18:32';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -3940,11 +3940,20 @@ function updateReverseLight() {
 /* 3. Radio — local tracks for now, cycled with a burst of static between stations.
    Live internet streams are the eventual plan; those need HTTPS-only station URLs
    and must stay off the Web Audio graph to avoid CORS tainting, so they are a
-   separate job. This is the shell they will slot into. */
+   separate job. This is the shell they will slot into.
+
+   Each station holds a TRACK LIST, not a single src — tuning back into a station
+   advances to its next track and wraps around, so a station with several songs
+   plays a different one each time rather than looping the same file. trackIdx
+   starts at -1 so the very first tune-in lands on track 0, not track 1. */
 const RADIO_STATIONS = [
-  { name: 'WGAB 101.7', src: null },   // filled from BG_TRACKS below
-  { name: 'THE POCKET', src: null },
-  { name: 'GEORGE FM', src: null },
+  { name: 'WGAB 101.7', tracks: [], trackIdx: -1 },   // filled from BG_TRACKS below
+  { name: 'THE POCKET', tracks: [], trackIdx: -1 },
+  { name: 'GEORGE FM', tracks: [], trackIdx: -1 },
+  { name: 'CLASSIC ROCK', tracks: [], trackIdx: -1 },
+  { name: 'ARABIC FM', tracks: [], trackIdx: -1 },
+  { name: 'THE LOUNGE', tracks: [], trackIdx: -1 },   // Latin / jazz
+  { name: 'AM TALK', tracks: [], trackIdx: -1 },      // Sopranos podcast clips
 ];
 let radioIndex = 0, radioActive = false;
 function playStatic() {
@@ -3968,10 +3977,14 @@ function setRadioStation(i) {
   document.getElementById('radio-name').textContent = st.name;
   playStatic();
   setTimeout(djSpeak, 420); // after the static settles
-  if (bgAudio && st.src) {
-    const wasOn = soundOn;
-    bgAudio.src = st.src;
-    if (wasOn) setTimeout(() => bgAudio.play().catch(() => {}), 260); // let the static land first
+  if (st.tracks.length) {
+    st.trackIdx = (st.trackIdx + 1) % st.tracks.length;
+    const trackSrc = st.tracks[st.trackIdx];
+    if (bgAudio) {
+      const wasOn = soundOn;
+      bgAudio.src = trackSrc;
+      if (wasOn) setTimeout(() => bgAudio.play().catch(() => {}), 260); // let the static land first
+    }
   }
 }
 function showRadio(show) {
@@ -8431,9 +8444,13 @@ soundToggle.addEventListener('click', () => {
 // the audio flags above are all already defined) ----
 CALLERS.carmine.src = ASSETS.CALL_CARMINE;
 CALLERS.junior.src = ASSETS.CALL_JUNIOR;
-RADIO_STATIONS[0].src = BG_TRACKS[0];
-RADIO_STATIONS[1].src = BG_TRACKS[1];
-RADIO_STATIONS[2].src = ASSETS.GEORGE_SONG;
+RADIO_STATIONS[0].tracks = [BG_TRACKS[0]];
+RADIO_STATIONS[1].tracks = [BG_TRACKS[1]];
+RADIO_STATIONS[2].tracks = [ASSETS.GEORGE_SONG];
+RADIO_STATIONS[3].tracks = ['white_room.mp3', 'symphony_of_destruction.mp3'];
+RADIO_STATIONS[4].tracks = ['sabah_fakhri_ah_ya_helou.mp3'];
+RADIO_STATIONS[5].tracks = ['i_like_it_like_that.mp3', 'james_brown_payback.mp3', 'you_make_me_feel_so_young.mp3'];
+RADIO_STATIONS[6].tracks = ['podcast_sopranos_nj_joey_diaz.mp3', 'podcast_schirripa_imperioli_gandolfini.mp3'];
 
 document.getElementById('horn-btn').addEventListener('click', (e) => { e.stopPropagation(); playHorn(); });
 document.querySelectorAll('.act-btn').forEach((btn) => {
