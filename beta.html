@@ -621,9 +621,11 @@ const ASSETS = {
      same filename never reaches anyone who already loaded it. Any model I fix from
      here on gets a new name. */
   STREET_TREE: 'street_tree_v2.glb',
-  ROW_FIVE_A: 'row_five_a.glb',
-  ROW_FIVE_B: 'row_five_b.glb',
-  ROW_FOUR: 'row_four.glb',
+  /* _hq: 1024px textures instead of 512. New filenames because the service worker
+     caches .glb cache-first and would keep serving the blurry ones. */
+  ROW_FIVE_A: 'row_five_a_hq.glb',
+  ROW_FIVE_B: 'row_five_b_hq.glb',
+  ROW_FOUR: 'row_four_hq.glb',
   CORNER_BLOCK: 'corner_block.glb',
   CORNER_ROUND: 'corner_round.glb',
   PORK_STORE_LOD: 'pork_store_lod.glb',
@@ -852,8 +854,8 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 11:26';
-  if (window.__gameNote) window.__gameNote('BUILD 2026-08-29 11:26');
+  window.__BUILD = '2026-08-29 12:29';
+  if (window.__gameNote) window.__gameNote('BUILD 2026-08-29 12:29');
 
   window.__reportGPU = () => {
     try {
@@ -1804,6 +1806,7 @@ groundMat.map.anisotropy = maxAniso;
 const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
+  ground.position.y = -0.02;   // sit below the road so the two can never z-fight
 ground.frustumCulled = false;   // same reason as the road: culled by a bounding sphere that leaves view early
 scene.add(ground);
 
@@ -3049,10 +3052,15 @@ function buildRoadZone() {
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.set(ROAD_ZONE.centerX, 0, ROAD_ZONE.centerZ);
-  /* The road is a single 20 x 1680 plane. Three culls by bounding sphere, and for a
-     shape this long and thin that sphere leaves the frustum long before the visible
-     part of the road does — so the tarmac blinks out and you see grass. Never cull
-     the road surface; it is two triangles. */
+  /* The grass flicker was Z-FIGHTING, not culling. The road and the ground plane
+     both sat at y=0, so the depth buffer could not separate them and the GPU picked
+     a winner per-pixel, per-frame — tarmac one moment, grass the next, worst while
+     the camera moves. Lift the road clear of the ground and give it a polygon
+     offset so it always wins. Culling stays off too; that part was still correct. */
+  mesh.position.y = 0.012;
+  mat.polygonOffset = true;
+  mat.polygonOffsetFactor = -2;
+  mat.polygonOffsetUnits = -2;
   mesh.frustumCulled = false;
   mesh.receiveShadow = true;
   scene.add(mesh);
@@ -6444,16 +6452,12 @@ function loadMeshyBuildings() {
     for (const b of njBuildings) {
       const d = Math.abs(b.position.z - camera.position.z) + Math.abs(b.position.x - camera.position.x) * 0.4;
       const t = 1 - Math.max(0, Math.min(1, (d - FADE_START) / (FADE_END - FADE_START)));
-      b.traverse((m) => {
-        if (!m.isMesh || !m.material) return;
-        const mats = Array.isArray(m.material) ? m.material : [m.material];
-        for (const mat of mats) {
-          if (!mat.userData.fadeReady) { mat.transparent = true; mat.userData.fadeReady = true; }
-          mat.opacity = t;
-          mat.depthWrite = t > 0.95;   // full-opacity buildings still write depth
-        }
-      });
-      b.visible = t > 0.01;
+      /* The opacity fade is off. Marking every building material transparent — even
+         at opacity 1 — moves it into the alpha pass, where it no longer sorts
+         reliably against the road and other buildings. That is the see-through
+         geometry overlapping the tarmac. FogExp2 handles distance now, so nothing
+         here needs alpha at all. */
+      b.visible = true;
     }
   };
   loadMeshyBuildings._fade = fadeBuildings;
@@ -6576,7 +6580,10 @@ function loadMeshyBuildings() {
       const clash = JUNCTION_Z.some((jz) => Math.abs(jz - (z + item.w / 2)) < item.w / 2 + 7);
       if (!clash) {
         (slots[item.key] = slots[item.key] || []).push({
-          x: side > 0 ? EAST_X : WEST_X,
+          /* Sit right on the pavement line. The rows are shallow, so a uniform
+             setback made them look like a flat wall; a small alternating jog gives
+             the frontage some relief. */
+          x: (side > 0 ? EAST_X : WEST_X) + (side > 0 ? 1 : -1) * ((i % 3) * 1.4),
           z: z + item.w / 2,
           rot: side > 0 ? -Math.PI / 2 : Math.PI / 2,
         });
