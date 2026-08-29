@@ -612,7 +612,6 @@ const ASSETS = {
   PUTTING_GREEN: 'putting_green.glb',
   GOLF_COURSE: 'golf_course.glb',
   JUNKYARD: 'junkyard.glb',
-  OLD_SCHOOL: 'old_school.glb',
   TREE_GROVE: 'tree_grove.glb',
   STREET_TREE_D: 'street_tree_d.glb',
   TRAFFIC_PACK: 'traffic.glb',
@@ -905,7 +904,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 00:08';
+  window.__BUILD = '2026-08-30 00:25';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1812,17 +1811,25 @@ document.getElementById('freecam-btn').addEventListener('click', toggleFreeCam);
    with nothing there, that placement's asset failed to load — if the marker
    itself is what's missing, something's wrong with this list, not the asset. */
 const DEBUG_MARKERS = [
-  { n: 'bird 1', x: 38.5, z: 150, anim: true }, { n: 'bird 2', x: 15.5, z: 340, anim: true }, { n: 'bird 3', x: 38.5, z: 520, anim: true },
-  { n: 'rat 1', x: 61, z: 98, anim: true }, { n: 'rat 2', x: -7, z: 274, anim: true }, { n: 'rat 3', x: 61, z: 450, anim: true },
-  { n: 'puppy 1', x: 6, z: -8, anim: true }, { n: 'puppy 2', x: -10, z: 6, anim: true },
+  { n: 'bird 1', x: 38.5, z: 130, anim: true }, { n: 'bird 2', x: 15.5, z: 270, anim: true }, { n: 'bird 3', x: 38.5, z: 410, anim: true },
+  { n: 'bird 4', x: 15.5, z: 550, anim: true }, { n: 'bird 5', x: 38.5, z: 690, anim: true }, { n: 'bird 6', x: 15.5, z: 830, anim: true },
+  { n: 'bird 7', x: 38.5, z: 970, anim: true }, { n: 'bird 8', x: 15.5, z: 1110, anim: true }, { n: 'bird 9', x: 38.5, z: 1250, anim: true },
+  { n: 'bird 10', x: 15.5, z: 1390, anim: true },
+  { n: 'rat 1', x: 15.5, z: 110, anim: true }, { n: 'rat 2', x: 38.5, z: 240, anim: true }, { n: 'rat 3', x: 15.5, z: 380, anim: true },
+  { n: 'rat 4', x: 38.5, z: 520, anim: true }, { n: 'rat 5', x: 15.5, z: 660, anim: true }, { n: 'rat 6', x: 38.5, z: 800, anim: true },
+  { n: 'rat 7', x: 15.5, z: 940, anim: true }, { n: 'rat 8', x: 38.5, z: 1080, anim: true },
+  { n: 'puppy 1', x: 38.5, z: 180, anim: true }, { n: 'puppy 2', x: 15.5, z: 320, anim: true }, { n: 'puppy 3', x: 38.5, z: 460, anim: true },
+  { n: 'puppy 4', x: 15.5, z: 600, anim: true }, { n: 'puppy 5', x: 38.5, z: 740, anim: true }, { n: 'puppy 6', x: 15.5, z: 880, anim: true },
   { n: 'texter 1', x: 41, z: 210, anim: false }, { n: 'texter 2', x: 12.5, z: 460, anim: false },
   { n: 'vehicle lot', x: 105, z: 700, anim: false },
+  { n: 'parking lot 1', x: 58, z: 400, anim: false }, { n: 'parking lot 2', x: -8, z: 550, anim: false },
+  { n: 'parking lot 3', x: 58, z: 750, anim: false }, { n: 'parking lot 4', x: -8, z: 950, anim: false },
   { n: 'golf course', x: 380, z: 450, anim: false },
   { n: 'putting green', x: 150, z: 280, anim: false },
-  { n: 'street court', x: 105, z: 220, anim: false },
+  { n: 'street court 1', x: 58, z: 220, anim: false }, { n: 'street court 2', x: -5, z: 600, anim: false },
+  { n: 'street court 3', x: 58, z: 900, anim: false },
   { n: 'junkyard', x: 110, z: 1500, anim: false },
   { n: 'downtown skyline', x: CITY_BACKDROP_POS.x, z: CITY_BACKDROP_POS.z, anim: false },
-  { n: 'old school', x: 64, z: 1470, anim: false },
   { n: 'tree grove', x: 60, z: 320, anim: false },
   { n: 'street tree D', x: 52, z: 1455, anim: false },
 ];
@@ -6586,21 +6593,21 @@ function updateHouseAudio() {
 }
 
 /* ================= EXTRA VOICE CLIPS — Melfi/Vito/Christopher/Irina =================
-   Deliberately separate from CALLERS/callQueue above rather than merged into it —
-   that system has its own boss-quiz-vs-mission branching (fixed earlier this
-   session) and mixing new pure-voice-line callers into it risked disturbing that.
-   These just play, no answer/decline interaction, since the ask was to hear the
-   clips work, not build four new missions. Melfi/Vito/Christopher: one shuffled
-   pass, each once, order randomised per session. Irina: separate and night-gated,
-   excluded from that shuffle by request. Timings are short — "seconds window, a
-   minute tops" was explicit, so these are paced far tighter than the siren/alarm
-   timers built earlier, which assumed a much longer session. */
-const EXTRA_CALLERS = {
-  melfi: { name: 'DR. MELFI', src: 'melfi_calls.mp3' },
-  vito: { name: 'VITO', src: 'vito_call.mp3' },
-  christopher: { name: 'CHRISTOPHER', src: 'christopher_call.mp3' },
-  irina: { name: 'IRINA', src: 'irina_call.mp3' },
-};
+   Previously played as an ad-hoc audio blast with no ring/answer UI, which read as
+   coming from the radio rather than as a call — fair complaint. Rewritten to go
+   through the real system: added to CALLERS (same table Junior/Carmine use) and
+   triggered via showIncomingOnPhone(), which already branches correctly for any
+   CALLERS-table key (checked — the boss-quiz/mission logic only runs for keys NOT
+   in CALLERS, so this can't cross into that). Ringing, Answer/Decline, the callStrip
+   during playback — all the genuine mechanism, not a lookalike.
+   Timing is my own separate trigger (not merged into callQueue), since that keeps
+   the "short session, seconds window" pacing this was built for without changing
+   how often Boss/Junior/Carmine ring. Melfi/Vito/Christopher: one shuffled pass,
+   each once. Irina: separate, night-gated, excluded from that shuffle. */
+CALLERS.melfi = { name: 'DR. MELFI', src: 'melfi_calls.mp3', secs: 60 };
+CALLERS.vito = { name: 'VITO', src: 'vito_call.mp3', secs: 46 };
+CALLERS.christopher = { name: 'CHRISTOPHER', src: 'christopher_call.mp3', secs: 7 };
+CALLERS.irina = { name: 'IRINA', src: 'irina_call.mp3', secs: 42 };
 function shuffled(arr) {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -6611,32 +6618,21 @@ function shuffled(arr) {
 }
 let extraCallQueue = shuffled(['melfi', 'vito', 'christopher']);
 let extraCallTimer = 12 + Math.random() * 8;     // first one soon — short session
-let extraCallAudio = null, extraCallActive = false;
 let irinaPlayed = false, irinaTimer = 20 + Math.random() * 15;
-function playExtraCall(key) {
-  const c = EXTRA_CALLERS[key];
-  if (!c) return;
-  if (!extraCallAudio) { extraCallAudio = new Audio(); extraCallAudio.preload = 'auto'; }
-  onCall = true;   // reuse the same flag the main call system gates on — ducks
-  extraCallActive = true;
-  if (bgAudio) bgAudio.pause();
-  extraCallAudio.src = c.src;
-  extraCallAudio.currentTime = 0;
-  extraCallAudio.volume = sfxOn ? 0.95 : 0;
-  extraCallAudio.play().catch(() => {});
-  extraCallAudio.onended = () => {
-    onCall = false;
-    extraCallActive = false;
-    if (bgAudio && soundOn) bgAudio.play().catch(() => {});
-  };
-  showMissionPopup('\uD83D\uDCDE', c.name, 'Incoming.', 2200);
+function ringExtraCall(key) {
+  // Same three calls openPhoneRing makes for the main queue, minus the queue-shift
+  // (this isn't in callQueue) — real ring, real Answer/Decline, real callStrip.
+  showIncomingOnPhone(key);
+  phoneRingPopupOpen = true;
+  playPhoneRing();
+  openPhoneRing._ringLoop = setInterval(() => { if (phoneRingPopupOpen) playPhoneRing(); }, 3500);
 }
 function updateExtraCalls(dt) {
-  if (!sfxOn || inInterior || onCall || extraCallActive) return;
+  if (!sfxOn || inInterior || onCall || phoneRingPopupOpen) return;
   if (extraCallQueue.length > 0) {
     extraCallTimer -= dt;
     if (extraCallTimer <= 0) {
-      playExtraCall(extraCallQueue.shift());
+      ringExtraCall(extraCallQueue.shift());
       extraCallTimer = 18 + Math.random() * 12;   // spaced apart, still short-session scale
     }
   }
@@ -6645,7 +6641,7 @@ function updateExtraCalls(dt) {
     if (irinaTimer <= 0) {
       if (typeof nightLightLevel === 'number' && nightLightLevel > 0.5) {
         irinaPlayed = true;
-        playExtraCall('irina');
+        ringExtraCall('irina');
       } else {
         irinaTimer = 8;   // not night yet — recheck soon rather than losing a whole cycle
       }
@@ -7378,25 +7374,32 @@ function buildHoop(x, z, facing) {
   scene.add(rim);
 }
 function buildRecreationAreas() {
-  // Basketball court, east side, behind the front building line. Was a procedural
-  // plane + primitive hoops; replaced with the real uploaded asset, whose native
-  // dimensions (13.3 x 27m) already matched a real court almost exactly — barely
-  // needed rescaling, unlike the Meshy-generated assets that need scale supplied
-  // externally. Same spot as the procedural version.
-  const courtX = 105, courtZ = 220;
+  // Basketball courts — repositioned. Was at x=105, which is past the back
+  // building row (~x=78) — invisible from the road, behind a second wall of
+  // buildings. Moved into the actual gap between front row (~x=40) and back row
+  // (~x=78) so it's visible from the avenue as requested. Three now instead of
+  // one, alternating sides.
+  const courts = [
+    { x: 58, z: 220 }, { x: -5, z: 600 }, { x: 58, z: 900 },
+  ];
   loader.parse(ASSETS.STREET_COURT, '', (gltf) => {
-    const court = gltf.scene;
-    court.position.set(courtX, 0, courtZ);
-    court.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
-    scene.add(court);
-    if (window.__gameNote) window.__gameNote('street court loaded OK at x' + courtX + ' z' + courtZ);
+    for (const cpos of courts) {
+      const court = gltf.scene.clone(true);
+      court.position.set(cpos.x, 0, cpos.z);
+      court.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+      scene.add(court);
+    }
+    if (window.__gameNote) window.__gameNote('street court loaded OK, ' + courts.length + ' placed');
   }, (e) => { console.warn('street court load failed:', e); if (window.__gameNote) window.__gameNote('COURT FAILED: ' + ((e && e.message) || e)); });
 
-  // Two parking lots, painted stalls, a few parked cars if traffic meshes are
-  // already loaded by the time this runs (same guard buildParkedCars uses).
+  // Parking lots — same repositioning fix as the courts (x=105/-42 were both past
+  // the back row). Four now instead of two, alternating sides, painted stalls, a
+  // few parked cars if traffic meshes are already loaded by the time this runs.
   const lots = [
-    { x: 105, z: 400, w: 30, d: 18, stalls: 9 },
-    { x: -42, z: 550, w: 30, d: 18, stalls: 9 },
+    { x: 58, z: 400, w: 30, d: 18, stalls: 9 },
+    { x: -8, z: 550, w: 30, d: 18, stalls: 9 },
+    { x: 58, z: 750, w: 30, d: 18, stalls: 9 },
+    { x: -8, z: 950, w: 30, d: 18, stalls: 9 },
   ];
   for (const lot of lots) {
     const pav = new THREE.Mesh(
@@ -7463,19 +7466,10 @@ function buildRecreationAreas() {
   // more vulnerable to that failure mode. Not investigating further right now;
   // pulling it was the priority. downtown_skyline is untouched and still there.
 
-  // Old school — landmark building, placed adjacent to the road corridor rather
-  // than off in the recreation cluster ("merge with the main road where suitable").
-  // East side, past the current far end of the front building line (which stops
-  // at z=1500) but before the factories at z~1540, so it reads as part of the
-  // built-up road rather than a disconnected set-piece.
-  loader.parse(ASSETS.OLD_SCHOOL, '', (gltf) => {
-    const school = gltf.scene;
-    school.position.set(64, 0, 1470);   // EAST_X(44) + 20 — EAST_X is local to loadMeshyBuildings, not this function
-    school.rotation.y = -Math.PI / 2;
-    school.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
-    scene.add(school);
-    if (window.__gameNote) window.__gameNote('old school loaded OK');
-  }, (e) => { console.warn('old school load failed:', e); if (window.__gameNote) window.__gameNote('OLD SCHOOL FAILED: ' + ((e && e.message) || e)); });
+  // Old school building REMOVED per request — retaining buildings as they were
+  // before 6pm today; this was added at ~19:09 local, after that cutoff. Nothing
+  // else in the avenue's own building set (FRONT[]) has changed since ~15:02
+  // local, well before 6pm, so nothing else needed touching here.
 
   // Tree grove — landscaping for the recreation cluster (court/lots/green), rather
   // than added into the avenue's own tree rotation, which was deliberately pared
@@ -7488,7 +7482,7 @@ function buildRecreationAreas() {
     if (window.__gameNote) window.__gameNote('tree grove loaded OK');
   }, (e) => { console.warn('tree grove load failed:', e); if (window.__gameNote) window.__gameNote('TREE GROVE FAILED: ' + ((e && e.message) || e)); });
 
-  // Single tree — next to the old school, same "merge with the road" logic.
+  // Single tree — near the east frontage, "merge with the road" placement.
   loader.parse(ASSETS.STREET_TREE_D, '', (gltf) => {
     const t = gltf.scene;
     t.position.set(52, 0, 1455);   // EAST_X(44) + 8
@@ -7529,18 +7523,26 @@ function loadStreetNPCs() {
   // not a wholesale replacement (this one has 5 skins bundled in the file, so a
   // single clone already reads as a small cluster).
   spawnAnimatedNPC(ASSETS.STREET_BIRD, [
-    { x: 38.5, z: 150 }, { x: 15.5, z: 340 }, { x: 38.5, z: 520 },
+    { x: 38.5, z: 130 }, { x: 15.5, z: 270 }, { x: 38.5, z: 410 }, { x: 15.5, z: 550 },
+    { x: 38.5, z: 690 }, { x: 15.5, z: 830 }, { x: 38.5, z: 970 }, { x: 15.5, z: 1110 },
+    { x: 38.5, z: 1250 }, { x: 15.5, z: 1390 },
   ]);
-  // Rat — alley spots, same z-family the dumpsters and fence already use. "Run" is
-  // the only clip in the file; it plays as an in-place loop rather than a path, an
-  // easy thing to upgrade to real movement later if it doesn't read well as-is.
+  // Rat — moved onto the avenue sidewalk bands per request, overriding the earlier
+  // alley-only placement. "Run" is the only clip in the file; it plays as an
+  // in-place loop rather than a path, an easy thing to upgrade to real movement
+  // later if it doesn't read well as-is.
   spawnAnimatedNPC(ASSETS.STREET_RAT, [
-    { x: 61, z: 98, rotY: Math.PI * 0.3 }, { x: -7, z: 274, rotY: -Math.PI * 0.6 },
-    { x: 61, z: 450, rotY: Math.PI * 0.8 },
+    { x: 15.5, z: 110, rotY: Math.PI * 0.3 }, { x: 38.5, z: 240, rotY: -Math.PI * 0.6 },
+    { x: 15.5, z: 380, rotY: Math.PI * 0.8 }, { x: 38.5, z: 520, rotY: -Math.PI * 0.2 },
+    { x: 15.5, z: 660, rotY: Math.PI * 0.5 }, { x: 38.5, z: 800, rotY: -Math.PI * 0.7 },
+    { x: 15.5, z: 940, rotY: Math.PI * 0.4 }, { x: 38.5, z: 1080, rotY: -Math.PI * 0.3 },
   ], 'Run');
-  // Puppy — near the yard, residential rather than avenue.
+  // Puppy — moved onto the avenue sidewalk bands per request, overriding the
+  // earlier yard-only placement.
   spawnAnimatedNPC(ASSETS.STREET_PUPPY, [
-    { x: 6, z: -8, rotY: Math.PI * 0.4 }, { x: -10, z: 6, rotY: -Math.PI * 0.2 },
+    { x: 38.5, z: 180, rotY: Math.PI * 0.4 }, { x: 15.5, z: 320, rotY: -Math.PI * 0.2 },
+    { x: 38.5, z: 460, rotY: Math.PI * 0.6 }, { x: 15.5, z: 600, rotY: -Math.PI * 0.4 },
+    { x: 38.5, z: 740, rotY: Math.PI * 0.3 }, { x: 15.5, z: 880, rotY: -Math.PI * 0.5 },
   ]);
 
   // Texting pedestrian — uploaded with no animation despite the name (checked: 0
