@@ -610,6 +610,10 @@ const ASSETS = {
   PUTTING_GREEN: 'putting_green.glb',
   GOLF_COURSE: 'golf_course.glb',
   JUNKYARD: 'junkyard.glb',
+  CITY_NIGHT: 'city_night.glb',       // has real emissive window/sign materials — activated by nightLightLevel, not just geometry
+  OLD_SCHOOL: 'old_school.glb',
+  TREE_GROVE: 'tree_grove.glb',
+  STREET_TREE_D: 'street_tree_d.glb',
   TRAFFIC_PACK: 'traffic.glb',
   HOUSE: 'house.glb',
   COLLISION: 'collision.glb', // position-only, low-poly proxy — used for raycasting, never rendered
@@ -900,7 +904,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 22:09';
+  window.__BUILD = '2026-08-29 23:09';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7154,7 +7158,8 @@ function buildRecreationAreas() {
     court.position.set(courtX, 0, courtZ);
     court.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
     scene.add(court);
-  }, (e) => console.warn('street court load failed:', e));
+    if (window.__gameNote) window.__gameNote('street court loaded OK at x' + courtX + ' z' + courtZ);
+  }, (e) => { console.warn('street court load failed:', e); if (window.__gameNote) window.__gameNote('COURT FAILED: ' + ((e && e.message) || e)); });
 
   // Two parking lots, painted stalls, a few parked cars if traffic meshes are
   // already loaded by the time this runs (same guard buildParkedCars uses).
@@ -7194,19 +7199,20 @@ function buildRecreationAreas() {
     green.position.set(150, 0, 280);
     green.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
     scene.add(green);
-  }, (e) => console.warn('putting green load failed:', e));
+    if (window.__gameNote) window.__gameNote('putting green loaded OK');
+  }, (e) => { console.warn('putting green load failed:', e); if (window.__gameNote) window.__gameNote('PUTTING GREEN FAILED: ' + ((e && e.message) || e)); });
 
-  // Golf course — native scale suggested a genuinely large real course (635m long
-  // even after scaling down), so this is placed as distant scenery to glimpse
-  // rather than a walkable area, the same treatment the downtown skyline gets.
-  // West side, past the existing world's edge.
+  // Golf course — was placed far out on the west side (-220, 600), effectively
+  // along the road corridor. Moved northeast of the house instead, off the road
+  // entirely, closer in — long axis (635m) runs parallel to the road so it doesn't
+  // sprawl across it.
   loader.parse(ASSETS.GOLF_COURSE, '', (gltf) => {
     const course = gltf.scene;
-    course.position.set(-220, 0, 600);
-    course.rotation.y = Math.PI / 2;
+    course.position.set(380, 0, 450);
     course.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true; } });
     scene.add(course);
-  }, (e) => console.warn('golf course load failed:', e));
+    if (window.__gameNote) window.__gameNote('golf course loaded OK');
+  }, (e) => { console.warn('golf course load failed:', e); if (window.__gameNote) window.__gameNote('GOLF COURSE FAILED: ' + ((e && e.message) || e)); });
 
   // Junkyard — wrecked cars, placed near the factory landmarks for the same
   // industrial-end-of-the-road reason the factories themselves went there.
@@ -7216,7 +7222,70 @@ function buildRecreationAreas() {
     yard.rotation.y = -Math.PI / 2;
     yard.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true; } });
     scene.add(yard);
-  }, (e) => console.warn('junkyard load failed:', e));
+    if (window.__gameNote) window.__gameNote('junkyard loaded OK');
+  }, (e) => { console.warn('junkyard load failed:', e); if (window.__gameNote) window.__gameNote('JUNKYARD FAILED: ' + ((e && e.message) || e)); });
+
+  // Second skyline cluster — ADDED alongside downtown_skyline, not replacing it
+  // (that one stays exactly as it was). This file genuinely has baked emissive
+  // window/sign/logo materials (checked: 4 materials with real emissive textures,
+  // one solid-red beacon) — the actual "lights that activate at night" ask, not
+  // just geometry. Tracked in nightEmissiveMats and scaled by nightLightLevel each
+  // frame in updateStreetDetail, same pattern as every other night light this
+  // session. Placed next to CITY_BACKDROP_POS, not on top of it.
+  loader.parse(ASSETS.CITY_NIGHT, '', (gltf) => {
+    const city2 = gltf.scene;
+    city2.position.set(CITY_BACKDROP_POS.x + 70, -1, CITY_BACKDROP_POS.z);
+    city2.rotation.y = Math.atan2(-CITY_BACKDROP_POS.x, -CITY_BACKDROP_POS.z);
+    city2.traverse((o) => {
+      if (!o.isMesh || !o.material) return;
+      o.castShadow = false; o.receiveShadow = false;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const mat of mats) {
+        const hasEmissiveTex = !!mat.emissiveMap;
+        const hasEmissiveColor = mat.emissive && (mat.emissive.r + mat.emissive.g + mat.emissive.b) > 0.01;
+        if (hasEmissiveTex || hasEmissiveColor) {
+          mat.emissiveIntensity = 0;   // starts dark, updateStreetDetail brings it up at night
+          nightEmissiveMats.push(mat);
+        }
+      }
+    });
+    scene.add(city2);
+    if (window.__gameNote) window.__gameNote('city_night loaded OK, ' + nightEmissiveMats.length + ' emissive materials tracked');
+  }, (e) => { console.warn('city_night load failed:', e); if (window.__gameNote) window.__gameNote('CITY NIGHT FAILED: ' + ((e && e.message) || e)); });
+
+  // Old school — landmark building, placed adjacent to the road corridor rather
+  // than off in the recreation cluster ("merge with the main road where suitable").
+  // East side, past the current far end of the front building line (which stops
+  // at z=1500) but before the factories at z~1540, so it reads as part of the
+  // built-up road rather than a disconnected set-piece.
+  loader.parse(ASSETS.OLD_SCHOOL, '', (gltf) => {
+    const school = gltf.scene;
+    school.position.set(64, 0, 1470);   // EAST_X(44) + 20 — EAST_X is local to loadMeshyBuildings, not this function
+    school.rotation.y = -Math.PI / 2;
+    school.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(school);
+    if (window.__gameNote) window.__gameNote('old school loaded OK');
+  }, (e) => { console.warn('old school load failed:', e); if (window.__gameNote) window.__gameNote('OLD SCHOOL FAILED: ' + ((e && e.message) || e)); });
+
+  // Tree grove — landscaping for the recreation cluster (court/lots/green), rather
+  // than added into the avenue's own tree rotation, which was deliberately pared
+  // down to one species by request a few turns back.
+  loader.parse(ASSETS.TREE_GROVE, '', (gltf) => {
+    const grove = gltf.scene;
+    grove.position.set(60, 0, 320);
+    grove.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+    scene.add(grove);
+    if (window.__gameNote) window.__gameNote('tree grove loaded OK');
+  }, (e) => { console.warn('tree grove load failed:', e); if (window.__gameNote) window.__gameNote('TREE GROVE FAILED: ' + ((e && e.message) || e)); });
+
+  // Single tree — next to the old school, same "merge with the road" logic.
+  loader.parse(ASSETS.STREET_TREE_D, '', (gltf) => {
+    const t = gltf.scene;
+    t.position.set(52, 0, 1455);   // EAST_X(44) + 8
+    t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+    scene.add(t);
+    if (window.__gameNote) window.__gameNote('street_tree_d loaded OK');
+  }, (e) => { console.warn('street_tree_d load failed:', e); if (window.__gameNote) window.__gameNote('TREE D FAILED: ' + ((e && e.message) || e)); });
 }
 
 /* ================= ANIMATED STREET NPCs =================
@@ -7242,7 +7311,8 @@ function spawnAnimatedNPC(assetKey, positions, animName) {
         npcMixers.push(mixer);
       }
     }
-  }, (e) => console.warn('NPC load failed:', assetKey, e));
+    if (window.__gameNote) window.__gameNote(assetKey + ' loaded OK (' + positions.length + ' placed)');
+  }, (e) => { console.warn('NPC load failed:', assetKey, e); if (window.__gameNote) window.__gameNote('NPC FAILED (' + assetKey + '): ' + ((e && e.message) || e)); });
 }
 function loadStreetNPCs() {
   // Bird — a few detailed instances mixed among the existing cheap sphere-birds,
@@ -7277,7 +7347,8 @@ function loadStreetNPCs() {
       scene.add(clone);
       perchedBirds.push({ mesh: clone, baseY: 0, phase: Math.random() * 6.28 });   // reuses the idle-bob update loop below
     }
-  }, (e) => console.warn('texter load failed:', e));
+    if (window.__gameNote) window.__gameNote('texting pedestrian loaded OK');
+  }, (e) => { console.warn('texter load failed:', e); if (window.__gameNote) window.__gameNote('TEXTER FAILED: ' + ((e && e.message) || e)); });
 
   // Vehicle display — reframed as a small used-car-lot scene rather than
   // traffic-integrated NPCs (the file is one 57m-wide compound Sketchfab scene, 76
@@ -7288,7 +7359,8 @@ function loadStreetNPCs() {
     disp.rotation.y = -Math.PI / 2;
     disp.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
     scene.add(disp);
-  }, (e) => console.warn('vehicle display load failed:', e));
+    if (window.__gameNote) window.__gameNote('vehicle display loaded OK');
+  }, (e) => { console.warn('vehicle display load failed:', e); if (window.__gameNote) window.__gameNote('VEHICLE DISPLAY FAILED: ' + ((e && e.message) || e)); });
 
   // Pedestrian signals — every other junction rather than all 17, so it reads as
   // detail rather than clutter.
@@ -7303,7 +7375,8 @@ function loadStreetNPCs() {
         scene.add(clone);
       }
     });
-  }, (e) => console.warn('signal load failed:', e));
+    if (window.__gameNote) window.__gameNote('pedestrian signals loaded OK');
+  }, (e) => { console.warn('signal load failed:', e); if (window.__gameNote) window.__gameNote('SIGNALS FAILED: ' + ((e && e.message) || e)); });
 }
 
 /* ================= STREET DETAIL =================
@@ -7311,7 +7384,7 @@ function loadStreetNPCs() {
    is an InstancedMesh, so the whole set is roughly a dozen draw calls rather than
    several hundred. Nothing here downloads anything. */
 let streetDetail = null, trafficLights = [], pigeons = [], steamPuffs = [], kerbPuddles = null;
-let litterMesh = null, nightLights = [], flockBirds = null, windowGlows = [], perchedBirds = [];
+let litterMesh = null, nightLights = [], flockBirds = null, windowGlows = [], perchedBirds = [], nightEmissiveMats = [];
 let newspaperMesh = null, newspaperTimer = 20 + Math.random() * 30, newspaperActive = false, newspaperT = 0;
 function buildStreetDetail() {
   if (streetDetail) return;
@@ -7724,6 +7797,9 @@ function updateStreetDetail(dt) {
   for (const wg of windowGlows) {
     wg.mesh.material.opacity = nll * (0.5 + 0.5 * Math.sin(t * 0.3 + wg.phase)) * 0.65;
   }
+  // city_night's real emissive materials — the actual "lights that activate at
+  // night" ask, driven by the same nightLightLevel every other night light uses
+  for (const mat of nightEmissiveMats) mat.emissiveIntensity = nll;
 }
 
 /* ================= JUNCTIONS AND SIGNALS =================
