@@ -585,7 +585,8 @@
   "imports": {
     "three": "./three.module.js",
     "three/addons/loaders/GLTFLoader.js": "./GLTFLoader.js",
-    "three/addons/utils/BufferGeometryUtils.js": "./BufferGeometryUtils.js"
+    "three/addons/utils/BufferGeometryUtils.js": "./BufferGeometryUtils.js",
+    "three/addons/utils/SkeletonUtils.js": "./SkeletonUtils.js"
   }
 }
 </script>
@@ -593,6 +594,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
 
 /* ---------- Hosted asset paths (fetched at runtime instead of embedded base64) ----------
    Switched from the single-file embedded format: real binary files are ~25% smaller
@@ -657,6 +659,16 @@ const ASSETS = {
   FACTORY_A: 'factory_a.glb',
   FACTORY_B: 'factory_b.glb',
   CHAIN_LINK_FENCE: 'chain_link_fence.glb',
+  // Animated NPC batch: real skinned+animated bird/rat/puppy (AnimationMixer,
+  // not the sphere-primitive pigeons), a static texting pedestrian (uploaded
+  // with no animation despite the name — checked, 0 skins/0 clips, it's a
+  // frozen pose), a multi-vehicle display scene, and a pedestrian signal.
+  STREET_BIRD: 'street_bird.glb',
+  STREET_RAT: 'street_rat.glb',
+  STREET_PUPPY: 'street_puppy.glb',
+  STREET_TEXTER: 'street_texter.glb',
+  VEHICLE_LOT_DISPLAY: 'vehicle_lot_display.glb',
+  PEDESTRIAN_SIGNAL: 'pedestrian_signal.glb',
   PORK_STORE_LOD: 'pork_store_lod.glb',
   BARBER_SHOP_LOD: 'barber_shop_lod.glb',
   CHURCH_LOD: 'church_lod.glb',
@@ -883,7 +895,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 21:23';
+  window.__BUILD = '2026-08-29 21:43';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7192,6 +7204,93 @@ function buildRecreationAreas() {
   }
 }
 
+/* ================= ANIMATED STREET NPCs =================
+   First real skinned+animated NPCs in the scene — everything before this (pigeons,
+   perched birds, the flock) was primitive geometry with code-driven motion, not an
+   actual animation clip. Regular clone() does not correctly share a skeleton across
+   instances (all copies would move as one), so this uses SkeletonUtils.clone() —
+   newly vendored in (three@0.160.1's copy, matching the pinned three.module.js
+   revision exactly) since nothing here needed it before. */
+let npcMixers = [];
+function spawnAnimatedNPC(assetKey, positions, animName) {
+  loader.parse(assetKey, '', (gltf) => {
+    for (const pos of positions) {
+      const clone = SkeletonUtils.clone(gltf.scene);
+      clone.position.set(pos.x, 0, pos.z);
+      if (pos.rotY !== undefined) clone.rotation.y = pos.rotY;
+      clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+      scene.add(clone);
+      if (gltf.animations && gltf.animations.length) {
+        const mixer = new THREE.AnimationMixer(clone);
+        const clip = (animName && THREE.AnimationClip.findByName(gltf.animations, animName)) || gltf.animations[0];
+        if (clip) mixer.clipAction(clip).play();
+        npcMixers.push(mixer);
+      }
+    }
+  }, (e) => console.warn('NPC load failed:', assetKey, e));
+}
+function loadStreetNPCs() {
+  // Bird — a few detailed instances mixed among the existing cheap sphere-birds,
+  // not a wholesale replacement (this one has 5 skins bundled in the file, so a
+  // single clone already reads as a small cluster).
+  spawnAnimatedNPC(ASSETS.STREET_BIRD, [
+    { x: 44, z: 150 }, { x: 10, z: 340 }, { x: 44, z: 520 },
+  ]);
+  // Rat — alley spots, same z-family the dumpsters and fence already use. "Run" is
+  // the only clip in the file; it plays as an in-place loop rather than a path, an
+  // easy thing to upgrade to real movement later if it doesn't read well as-is.
+  spawnAnimatedNPC(ASSETS.STREET_RAT, [
+    { x: 61, z: 98, rotY: Math.PI * 0.3 }, { x: -7, z: 274, rotY: -Math.PI * 0.6 },
+    { x: 61, z: 450, rotY: Math.PI * 0.8 },
+  ], 'Run');
+  // Puppy — near the yard, residential rather than avenue.
+  spawnAnimatedNPC(ASSETS.STREET_PUPPY, [
+    { x: 6, z: -8, rotY: Math.PI * 0.4 }, { x: -10, z: 6, rotY: -Math.PI * 0.2 },
+  ]);
+
+  // Texting pedestrian — uploaded with no animation despite the name (checked: 0
+  // skins, 0 clips — a frozen pose, not a walk cycle). Static placement, with the
+  // same small idle bob the perched birds already use so it doesn't read as
+  // completely inert.
+  loader.parse(ASSETS.STREET_TEXTER, '', (gltf) => {
+    const spots = [{ x: 41, z: 210, rotY: -Math.PI / 2 }, { x: 12.5, z: 460, rotY: Math.PI / 2 }];
+    for (const s of spots) {
+      const clone = gltf.scene.clone(true);   // no skeleton to worry about — unrigged
+      clone.position.set(s.x, 0, s.z);
+      clone.rotation.y = s.rotY;
+      clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+      scene.add(clone);
+      perchedBirds.push({ mesh: clone, baseY: 0, phase: Math.random() * 6.28 });   // reuses the idle-bob update loop below
+    }
+  }, (e) => console.warn('texter load failed:', e));
+
+  // Vehicle display — reframed as a small used-car-lot scene rather than
+  // traffic-integrated NPCs (the file is one 57m-wide compound Sketchfab scene, 76
+  // meshes with no clean per-vehicle split — checked). Placed as its own set-piece.
+  loader.parse(ASSETS.VEHICLE_LOT_DISPLAY, '', (gltf) => {
+    const disp = gltf.scene.clone(true);
+    disp.position.set(105, 0, 700);
+    disp.rotation.y = -Math.PI / 2;
+    disp.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+    scene.add(disp);
+  }, (e) => console.warn('vehicle display load failed:', e));
+
+  // Pedestrian signals — every other junction rather than all 17, so it reads as
+  // detail rather than clutter.
+  loader.parse(ASSETS.PEDESTRIAN_SIGNAL, '', (gltf) => {
+    JUNCTION_Z.forEach((jz, i) => {
+      if (i % 2 !== 0) return;
+      for (const side of [1, -1]) {
+        const clone = gltf.scene.clone(true);
+        clone.position.set(ROAD_CX + side * (ROAD_HW + 1.8), 0, jz + side * 8);
+        clone.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
+        clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+        scene.add(clone);
+      }
+    });
+  }, (e) => console.warn('signal load failed:', e));
+}
+
 /* ================= STREET DETAIL =================
    Ten small additions that make the road read as a real one. Everything that repeats
    is an InstancedMesh, so the whole set is roughly a dozen draw calls rather than
@@ -8582,6 +8681,7 @@ function endLoad(name) {
     buildSideRoadBarriers();
     setTimeout(buildParkedCars, 2500);    // needs traffic meshes to exist first
     setTimeout(buildRecreationAreas, 2600);   // court + lots; lot cars use the same traffic meshes if ready
+    setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
     setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
        low-poly next to a photoscanned character reads as a different game, and I
@@ -9681,6 +9781,7 @@ function tick() {
   updateVoiceBarks(dt);
   updateAmbientAudio(dt);
   if (mixer) mixer.update(dt);
+  for (const m of npcMixers) m.update(dt);
   updateCamera();
   updatePovCamera(); // overrides the orbit camera while in first person
   if (character && !drivingMode) {
