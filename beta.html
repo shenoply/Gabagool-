@@ -617,7 +617,10 @@ const ASSETS = {
   CHURCH: 'church.glb',
   BRICK_WALL: 'brick_wall_a.glb',
   DUMPSTER: 'dumpster.glb',
-  STREET_TREE: 'street_tree.glb',
+  /* v2: the service worker caches .glb cache-first, so replacing a model under the
+     same filename never reaches anyone who already loaded it. Any model I fix from
+     here on gets a new name. */
+  STREET_TREE: 'street_tree_v2.glb',
   PORK_STORE_LOD: 'pork_store_lod.glb',
   BARBER_SHOP_LOD: 'barber_shop_lod.glb',
   CHURCH_LOD: 'church_lod.glb',
