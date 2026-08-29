@@ -607,12 +607,9 @@ const ASSETS = {
   CHASE_AUDIO: 'chase_audio.m4a',
   CUTSCENE: 'cutscene.mp4',
   CITY2: 'city2.glb',
-  DOWNTOWN_SKYLINE: 'downtown_skyline.glb',
   STREET_COURT: 'street_court.glb',
-  PUTTING_GREEN: 'putting_green.glb',
-  GOLF_COURSE: 'golf_course.glb',
   JUNKYARD: 'junkyard.glb',
-  TREE_GROVE: 'tree_grove.glb',
+  OLD_SCHOOL: 'old_school.glb',
   STREET_TREE_D: 'street_tree_d.glb',
   TRAFFIC_PACK: 'traffic.glb',
   HOUSE: 'house.glb',
@@ -904,7 +901,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 00:25';
+  window.__BUILD = '2026-08-30 00:52';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1299,40 +1296,15 @@ function updateClouds(dt) {
     }
   }
 }
-// Trying an actual authored low-poly city asset (genuinely modeled low-poly, not a
-// decimated dense scan like the earlier attempt) instead of the procedural skyline.
-// If this doesn't pan out either, buildCitySkyline() above is still fully intact —
-// just swap this call back to that.
-function loadRealCityBackdrop() {
-  const loader = new GLTFLoader();
-  const buffer = ASSETS.DOWNTOWN_SKYLINE; // URL — fetched by the parse shim
-  loader.parse(buffer, '', (gltf) => {
-    try {
-      const city = gltf.scene;
-      city.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
-      // Already baked to a real skyline scale (60m tall) and it's a genuinely
-      // varied multi-building set on its own — no artificial scale-up and no
-      // clone-3x-for-variety hack needed like the old single-block CITY2 did.
-      city.position.set(CITY_BACKDROP_POS.x, -1, CITY_BACKDROP_POS.z);
-      city.rotation.y = Math.atan2(-CITY_BACKDROP_POS.x, -CITY_BACKDROP_POS.z);
-      scene.add(city);
-    } catch (e) {
-      showFatalError('City backdrop placement failed after loading:\n' + ((e && (e.stack || e.message)) || String(e)));
-    }
-  }, (err) => {
-    showFatalError('City GLB failed to parse:\n' + ((err && (err.stack || err.message)) || String(err)));
-    try { buildCitySkyline(); } catch (e2) {
-      showFatalError('Procedural skyline fallback ALSO failed:\n' + ((e2 && (e2.stack || e2.message)) || String(e2)));
-    }
-  });
-}
-// Switched to the procedural skyline (0 asset bytes) to cut real download size —
-// it's confirmed to render and be positioned correctly at this point anyway, so
-// there's no visual downside, only a ~1.2MB size win.
-// Real city model restored — it's the only version CONFIRMED rendering in actual
-// screenshots; the procedural skyline has failed to appear twice despite fixes, so
-// the 1.2MB asset cost is worth it for the certainty.
-loadRealCityBackdrop();
+// loadRealCityBackdrop() REMOVED — downtown_skyline.glb is no longer loaded at
+// all, per explicit request to keep behind-the-house as the pre-upload procedural
+// skyline. buildCitySkyline() below is what's actually called at boot now.
+// Switched back to the procedural skyline per explicit request — behind the house
+// should be exactly how it was in the live version before any of today's uploads.
+// downtown_skyline.glb is no longer loaded here at all (also removed as a separate
+// ask); buildCitySkyline() is the zero-asset procedural version, same one that was
+// live before any of this session's skyline work started.
+buildCitySkyline();
 buildClouds();
 
 /* ================= GEORGE — the singing lowrider guy =================
@@ -1824,14 +1796,11 @@ const DEBUG_MARKERS = [
   { n: 'vehicle lot', x: 105, z: 700, anim: false },
   { n: 'parking lot 1', x: 58, z: 400, anim: false }, { n: 'parking lot 2', x: -8, z: 550, anim: false },
   { n: 'parking lot 3', x: 58, z: 750, anim: false }, { n: 'parking lot 4', x: -8, z: 950, anim: false },
-  { n: 'golf course', x: 380, z: 450, anim: false },
-  { n: 'putting green', x: 150, z: 280, anim: false },
   { n: 'street court 1', x: 58, z: 220, anim: false }, { n: 'street court 2', x: -5, z: 600, anim: false },
   { n: 'street court 3', x: 58, z: 900, anim: false },
   { n: 'junkyard', x: 110, z: 1500, anim: false },
-  { n: 'downtown skyline', x: CITY_BACKDROP_POS.x, z: CITY_BACKDROP_POS.z, anim: false },
-  { n: 'tree grove', x: 60, z: 320, anim: false },
-  { n: 'street tree D', x: 52, z: 1455, anim: false },
+  { n: 'old school', x: 58, z: 1080, anim: false },
+  { n: 'street tree D (1 of 10)', x: 43, z: 100, anim: false }, { n: 'street tree D (2 of 10)', x: 12, z: 220, anim: false },
 ];
 let debugMarkerGroup = null;
 function buildDebugMarkers() {
@@ -7427,26 +7396,9 @@ function buildRecreationAreas() {
     }
   }
 
-  // Putting green — new recreation area, same general zone as the court/lots.
-  loader.parse(ASSETS.PUTTING_GREEN, '', (gltf) => {
-    const green = gltf.scene;
-    green.position.set(150, 0, 280);
-    green.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
-    scene.add(green);
-    if (window.__gameNote) window.__gameNote('putting green loaded OK');
-  }, (e) => { console.warn('putting green load failed:', e); if (window.__gameNote) window.__gameNote('PUTTING GREEN FAILED: ' + ((e && e.message) || e)); });
+  // Putting green REMOVED per request.
 
-  // Golf course — was placed far out on the west side (-220, 600), effectively
-  // along the road corridor. Moved northeast of the house instead, off the road
-  // entirely, closer in — long axis (635m) runs parallel to the road so it doesn't
-  // sprawl across it.
-  loader.parse(ASSETS.GOLF_COURSE, '', (gltf) => {
-    const course = gltf.scene;
-    course.position.set(380, 0, 450);
-    course.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true; } });
-    scene.add(course);
-    if (window.__gameNote) window.__gameNote('golf course loaded OK');
-  }, (e) => { console.warn('golf course load failed:', e); if (window.__gameNote) window.__gameNote('GOLF COURSE FAILED: ' + ((e && e.message) || e)); });
+  // Golf course REMOVED per request.
 
   // Junkyard — wrecked cars, placed near the factory landmarks for the same
   // industrial-end-of-the-road reason the factories themselves went there.
@@ -7471,24 +7423,40 @@ function buildRecreationAreas() {
   // else in the avenue's own building set (FRONT[]) has changed since ~15:02
   // local, well before 6pm, so nothing else needed touching here.
 
-  // Tree grove — landscaping for the recreation cluster (court/lots/green), rather
-  // than added into the avenue's own tree rotation, which was deliberately pared
-  // down to one species by request a few turns back.
-  loader.parse(ASSETS.TREE_GROVE, '', (gltf) => {
-    const grove = gltf.scene;
-    grove.position.set(60, 0, 320);
-    grove.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
-    scene.add(grove);
-    if (window.__gameNote) window.__gameNote('tree grove loaded OK');
-  }, (e) => { console.warn('tree grove load failed:', e); if (window.__gameNote) window.__gameNote('TREE GROVE FAILED: ' + ((e && e.message) || e)); });
+  // Tree grove REMOVED per request.
 
-  // Single tree — near the east frontage, "merge with the road" placement.
+  // Old school — re-added, now on the avenue itself rather than behind the house.
+  // Same "visible gap between front and back building rows" zone the courts/lots
+  // use (x~58 east side), well clear of CITY_BACKDROP_POS (x-15/z-62, behind the
+  // house) — explicitly never there again per request.
+  loader.parse(ASSETS.OLD_SCHOOL, '', (gltf) => {
+    const school = gltf.scene;
+    school.position.set(58, 0, 1080);
+    school.rotation.y = -Math.PI / 2;
+    school.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(school);
+    if (window.__gameNote) window.__gameNote('old school loaded OK');
+  }, (e) => { console.warn('old school load failed:', e); if (window.__gameNote) window.__gameNote('OLD SCHOOL FAILED: ' + ((e && e.message) || e)); });
+
+  // Street tree D — scattered along both avenue sidewalks next to the existing
+  // tree line (plantAvenue plants at x~40.4-41.2 east / x~13.4-14.2 west, z=40 to
+  // 1200 step 11) rather than one single spot. Offset ~2 units further from the
+  // road than the existing trees so the two species sit side by side, not
+  // overlapping. One fetch, multiple clones.
   loader.parse(ASSETS.STREET_TREE_D, '', (gltf) => {
-    const t = gltf.scene;
-    t.position.set(52, 0, 1455);   // EAST_X(44) + 8
-    t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
-    scene.add(t);
-    if (window.__gameNote) window.__gameNote('street_tree_d loaded OK');
+    const spots = [
+      { x: 43, z: 100 }, { x: 12, z: 220 }, { x: 43, z: 340 }, { x: 12, z: 460 },
+      { x: 43, z: 580 }, { x: 12, z: 700 }, { x: 43, z: 820 }, { x: 12, z: 940 },
+      { x: 43, z: 1060 }, { x: 12, z: 1180 },
+    ];
+    for (const s of spots) {
+      const t = gltf.scene.clone(true);
+      t.position.set(s.x, 0, s.z);
+      t.rotation.y = Math.random() * Math.PI * 2;
+      t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+      scene.add(t);
+    }
+    if (window.__gameNote) window.__gameNote('street_tree_d loaded OK, ' + spots.length + ' placed');
   }, (e) => { console.warn('street_tree_d load failed:', e); if (window.__gameNote) window.__gameNote('TREE D FAILED: ' + ((e && e.message) || e)); });
 }
 
