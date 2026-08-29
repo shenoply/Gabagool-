@@ -612,7 +612,6 @@ const ASSETS = {
   PUTTING_GREEN: 'putting_green.glb',
   GOLF_COURSE: 'golf_course.glb',
   JUNKYARD: 'junkyard.glb',
-  CITY_NIGHT: 'city_night.glb',       // has real emissive window/sign materials — activated by nightLightLevel, not just geometry
   OLD_SCHOOL: 'old_school.glb',
   TREE_GROVE: 'tree_grove.glb',
   STREET_TREE_D: 'street_tree_d.glb',
@@ -906,7 +905,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 23:57';
+  window.__BUILD = '2026-08-30 00:02';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1823,7 +1822,6 @@ const DEBUG_MARKERS = [
   { n: 'street court', x: 105, z: 220, anim: false },
   { n: 'junkyard', x: 110, z: 1500, anim: false },
   { n: 'downtown skyline', x: CITY_BACKDROP_POS.x, z: CITY_BACKDROP_POS.z, anim: false },
-  { n: 'city night', x: CITY_BACKDROP_POS.x + 70, z: CITY_BACKDROP_POS.z, anim: false },
   { n: 'old school', x: 64, z: 1470, anim: false },
   { n: 'tree grove', x: 60, z: 320, anim: false },
   { n: 'street tree D', x: 52, z: 1455, anim: false },
@@ -7596,7 +7594,7 @@ function loadStreetNPCs() {
    is an InstancedMesh, so the whole set is roughly a dozen draw calls rather than
    several hundred. Nothing here downloads anything. */
 let streetDetail = null, trafficLights = [], pigeons = [], steamPuffs = [], kerbPuddles = null;
-let litterMesh = null, nightLights = [], flockBirds = null, windowGlows = [], perchedBirds = [], nightEmissiveMats = [];
+let litterMesh = null, nightLights = [], flockBirds = null, windowGlows = [], perchedBirds = [];
 let newspaperMesh = null, newspaperTimer = 20 + Math.random() * 30, newspaperActive = false, newspaperT = 0;
 function buildStreetDetail() {
   if (streetDetail) return;
@@ -8009,9 +8007,6 @@ function updateStreetDetail(dt) {
   for (const wg of windowGlows) {
     wg.mesh.material.opacity = nll * (0.5 + 0.5 * Math.sin(t * 0.3 + wg.phase)) * 0.65;
   }
-  // city_night's real emissive materials — the actual "lights that activate at
-  // night" ask, driven by the same nightLightLevel every other night light uses
-  for (const mat of nightEmissiveMats) mat.emissiveIntensity = nll;
 }
 
 /* ================= JUNCTIONS AND SIGNALS =================
