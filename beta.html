@@ -605,6 +605,11 @@ const ASSETS = {
   CHASE_AUDIO: 'chase_audio.m4a',
   CUTSCENE: 'cutscene.mp4',
   CITY2: 'city2.glb',
+  DOWNTOWN_SKYLINE: 'downtown_skyline.glb',
+  STREET_COURT: 'street_court.glb',
+  PUTTING_GREEN: 'putting_green.glb',
+  GOLF_COURSE: 'golf_course.glb',
+  JUNKYARD: 'junkyard.glb',
   TRAFFIC_PACK: 'traffic.glb',
   HOUSE: 'house.glb',
   COLLISION: 'collision.glb', // position-only, low-poly proxy — used for raycasting, never rendered
@@ -895,7 +900,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 21:43';
+  window.__BUILD = '2026-08-29 22:09';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1296,37 +1301,17 @@ function updateClouds(dt) {
 // just swap this call back to that.
 function loadRealCityBackdrop() {
   const loader = new GLTFLoader();
-  const buffer = ASSETS.CITY2; // URL — fetched by the parse shim
+  const buffer = ASSETS.DOWNTOWN_SKYLINE; // URL — fetched by the parse shim
   loader.parse(buffer, '', (gltf) => {
     try {
       const city = gltf.scene;
       city.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
-      // Native bbox is roughly 5.7 x 2.8 x 4.6 units — scale up to a believable skyline size.
-      // Scale 32 -> 20 alongside the move closer: 32 was sized for the old ~110-unit
-      // distance; at ~64 units that would tower absurdly. 20 at this range keeps a
-      // similar apparent size while clearing the house roofline (~41° vs ~34°).
-      city.scale.setScalar(20);
+      // Already baked to a real skyline scale (60m tall) and it's a genuinely
+      // varied multi-building set on its own — no artificial scale-up and no
+      // clone-3x-for-variety hack needed like the old single-block CITY2 did.
       city.position.set(CITY_BACKDROP_POS.x, -1, CITY_BACKDROP_POS.z);
       city.rotation.y = Math.atan2(-CITY_BACKDROP_POS.x, -CITY_BACKDROP_POS.z);
       scene.add(city);
-      // Widen the skyline: two cloned blocks flanking the original at varied
-      // rotation/scale, so the horizon reads as a city rather than one lonely
-      // block. Cost is negligible (~13K verts each, shared textures via clone).
-      const flankL = city.clone();
-      flankL.position.x -= 68; flankL.position.z -= 14; // pulled closer per feedback
-      flankL.rotation.y += 0.9;
-      flankL.scale.multiplyScalar(0.85);
-      scene.add(flankL);
-      const flankR = city.clone();
-      flankR.position.x += 68; flankR.position.z -= 12; // pulled closer per feedback
-      flankR.rotation.y -= 1.2;
-      flankR.scale.multiplyScalar(0.75);
-      scene.add(flankR);
-      // Visible, temporary confirmation that this path actually ran and added
-      // something to the scene — the recurring "no city" reports despite fixes to
-      // position/material suggest we need to actually verify this step completes,
-      // not just assume it based on code review.
-      showMissionPopup && showMissionPopup('🏙️', 'City backdrop loaded', 'Added ' + city.children.length + ' object(s) to the scene at (' + CITY_BACKDROP_POS.x + ',' + CITY_BACKDROP_POS.z + ')', 6000);
     } catch (e) {
       showFatalError('City backdrop placement failed after loading:\n' + ((e && (e.stack || e.message)) || String(e)));
     }
@@ -7158,18 +7143,18 @@ function buildHoop(x, z, facing) {
   scene.add(rim);
 }
 function buildRecreationAreas() {
-  // Basketball court, east side, behind the front building line.
-  const courtW = 24, courtD = 13, courtX = 105, courtZ = 220;
-  const court = new THREE.Mesh(
-    new THREE.PlaneGeometry(courtW, courtD),
-    new THREE.MeshStandardMaterial({ map: courtLinesTexture(courtW, courtD), roughness: 0.95 })
-  );
-  court.rotation.x = -Math.PI / 2;
-  court.position.set(courtX, 0.02, courtZ);
-  court.receiveShadow = true;
-  scene.add(court);
-  buildHoop(courtX - courtW / 2 + 1.5, courtZ, 1);
-  buildHoop(courtX + courtW / 2 - 1.5, courtZ, -1);
+  // Basketball court, east side, behind the front building line. Was a procedural
+  // plane + primitive hoops; replaced with the real uploaded asset, whose native
+  // dimensions (13.3 x 27m) already matched a real court almost exactly — barely
+  // needed rescaling, unlike the Meshy-generated assets that need scale supplied
+  // externally. Same spot as the procedural version.
+  const courtX = 105, courtZ = 220;
+  loader.parse(ASSETS.STREET_COURT, '', (gltf) => {
+    const court = gltf.scene;
+    court.position.set(courtX, 0, courtZ);
+    court.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(court);
+  }, (e) => console.warn('street court load failed:', e));
 
   // Two parking lots, painted stalls, a few parked cars if traffic meshes are
   // already loaded by the time this runs (same guard buildParkedCars uses).
@@ -7202,6 +7187,36 @@ function buildRecreationAreas() {
       }
     }
   }
+
+  // Putting green — new recreation area, same general zone as the court/lots.
+  loader.parse(ASSETS.PUTTING_GREEN, '', (gltf) => {
+    const green = gltf.scene;
+    green.position.set(150, 0, 280);
+    green.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(green);
+  }, (e) => console.warn('putting green load failed:', e));
+
+  // Golf course — native scale suggested a genuinely large real course (635m long
+  // even after scaling down), so this is placed as distant scenery to glimpse
+  // rather than a walkable area, the same treatment the downtown skyline gets.
+  // West side, past the existing world's edge.
+  loader.parse(ASSETS.GOLF_COURSE, '', (gltf) => {
+    const course = gltf.scene;
+    course.position.set(-220, 0, 600);
+    course.rotation.y = Math.PI / 2;
+    course.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true; } });
+    scene.add(course);
+  }, (e) => console.warn('golf course load failed:', e));
+
+  // Junkyard — wrecked cars, placed near the factory landmarks for the same
+  // industrial-end-of-the-road reason the factories themselves went there.
+  loader.parse(ASSETS.JUNKYARD, '', (gltf) => {
+    const yard = gltf.scene;
+    yard.position.set(110, 0, 1500);
+    yard.rotation.y = -Math.PI / 2;
+    yard.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true; } });
+    scene.add(yard);
+  }, (e) => console.warn('junkyard load failed:', e));
 }
 
 /* ================= ANIMATED STREET NPCs =================
