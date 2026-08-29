@@ -6349,7 +6349,7 @@ function buildRoadFurniture() {
     g.fillText('35', 128, 206);
   });
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x8b8f95, roughness: 0.5, metalness: 0.7 });
-  const CROSS = [92, 180, 268, 356, 444, 532];
+  const CROSS = JUNCTION_Z.slice(0, 8);
   const addSign = (mat, w, h, x, z, y, rotY) => {
     const g = new THREE.Group();
     const p = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, y + h / 2, 6), poleMat);
@@ -7002,7 +7002,21 @@ function spawnTrafficCars() {
 function updateTraffic(dt) {
   if (!drivingMode || !car) return;
   for (const t of trafficCars) {
-    t.mesh.position.z += t.speed * dt;
+    /* Obey the signal: brake for a red or a late amber, hold at the line, then go.
+       t.v is a smoothed speed so cars ease into the stop instead of snapping to it,
+       and the same junctionPhase() the lights use decides — so a light can never
+       show green while the cars in front of it sit still. */
+    const stop = mainRoadStopZ(t.mesh.position.z, true);
+    if (t.v === undefined) t.v = t.speed;
+    let target = t.speed;
+    if (stop) {
+      const gap = stop.stopAt - t.mesh.position.z;
+      if (gap < 0) target = t.speed;          // already in the box: clear it
+      else if (gap < 1.2) target = 0;         // at the line
+      else target = Math.min(t.speed, gap * 0.5);
+    }
+    t.v += (target - t.v) * Math.min(1, dt * (target < t.v ? 2.6 : 1.2));
+    t.mesh.position.z += t.v * dt;
     /* Recycle FAR outside the fog, not at 90 units. At 90 the car vanished and
        reappeared in completely clear air — fog does not begin until 160 — which is
        the popping you could see while driving. Now it recycles past 620, where fog
