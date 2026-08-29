@@ -621,6 +621,11 @@ const ASSETS = {
      same filename never reaches anyone who already loaded it. Any model I fix from
      here on gets a new name. */
   STREET_TREE: 'street_tree_v2.glb',
+  ROW_FIVE_A: 'row_five_a.glb',
+  ROW_FIVE_B: 'row_five_b.glb',
+  ROW_FOUR: 'row_four.glb',
+  CORNER_BLOCK: 'corner_block.glb',
+  CORNER_ROUND: 'corner_round.glb',
   PORK_STORE_LOD: 'pork_store_lod.glb',
   BARBER_SHOP_LOD: 'barber_shop_lod.glb',
   CHURCH_LOD: 'church_lod.glb',
@@ -6524,6 +6529,34 @@ function loadMeshyBuildings() {
      disabled, so depth costs a third of what the front row does. Set back 34 units
      and offset in z so you see gaps between front buildings rather than a wall. */
   const BACK_E = 78, BACK_W = -24;
+
+  /* Rows fill the frontage between junctions; the singles now punctuate rather than
+     carry the street. A 32m row covers five shopfronts for the cost of one building,
+     which is why these are the better value.
+
+     Placement is anchored to JUNCTION_Z so nothing lands in a road: each block gets
+     a row set back from the kerb, and the corner pieces sit at the junction mouths
+     where a real corner building would. */
+  const ROWS = [
+    [ASSETS.ROW_FIVE_A, 32], [ASSETS.ROW_FIVE_B, 32], [ASSETS.ROW_FOUR, 40],
+  ];
+  ROWS.forEach(([key, w], ri) => {
+    load(key, (src) => {
+      for (let i = ri; i < JUNCTION_Z.length - 1; i += ROWS.length) {
+        const mid = (JUNCTION_Z[i] + JUNCTION_Z[i + 1]) / 2;
+        put(src, EAST_X + 6, mid, -Math.PI / 2);
+        put(src, WEST_X - 6, mid + 14, Math.PI / 2);
+      }
+    });
+  });
+  /* Corners are 9.3MB and 6.9MB — the two most expensive models here — so they are
+     used sparingly, at four junctions rather than seventeen. */
+  load(ASSETS.CORNER_BLOCK, (src) => {
+    [1, 6, 11].forEach((i) => { if (JUNCTION_Z[i]) put(src, EAST_X + 22, JUNCTION_Z[i] + 26, -Math.PI / 2); });
+  });
+  load(ASSETS.CORNER_ROUND, (src) => {
+    [3, 9, 14].forEach((i) => { if (JUNCTION_Z[i]) put(src, WEST_X - 22, JUNCTION_Z[i] - 26, Math.PI / 2); });
+  });
 
   PAIRS.forEach(([hiKey, loKey], ki) => {
     loadPair(hiKey, loKey, (hi, lo) => {
