@@ -617,6 +617,7 @@ const ASSETS = {
   CHURCH: 'church.glb',
   BRICK_WALL: 'brick_wall_a.glb',
   DUMPSTER: 'dumpster.glb',
+  STREET_TREE: 'street_tree.glb',
   PORK_STORE_LOD: 'pork_store_lod.glb',
   BARBER_SHOP_LOD: 'barber_shop_lod.glb',
   CHURCH_LOD: 'church_lod.glb',
@@ -6243,8 +6244,11 @@ function buildRoadFurniture() {
   wireGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   roadFurniture.add(new THREE.LineSegments(wireGeo, new THREE.LineBasicMaterial({ color: 0x24262a, fog: true })));
 
+  /* Guardrail only past z=600, where the street trees end. Along the avenue itself
+     the trees mark the verge, which is how a real one looks — a barrier there would
+     fight them. */
   const railZs = [];
-  for (let z = Z0; z < Z1; z += 4) railZs.push(z);
+  for (let z = 600; z < Z1; z += 4) railZs.push(z);
   const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 0.75, 0.12), darkMat, railZs.length * 2);
   const beams = new THREE.InstancedMesh(new THREE.BoxGeometry(0.06, 0.32, 4.02), steelMat, railZs.length * 2);
   let k = 0;
@@ -6293,6 +6297,62 @@ function buildRoadFurniture() {
     }
     g.position.set(ROAD_CX - ROAD_HW - 3.2, 0, s.z);
     roadFurniture.add(g);
+  }
+
+  /* Street-level signage: stop signs at the cross-street junctions, plus speed and
+     one-way plates. Small, cheap, and they read as a real road rather than a strip
+     of tarmac. */
+  function signFace(draw) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    draw(c.getContext('2d'));
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return new THREE.MeshStandardMaterial({ map: t, roughness: 0.6, metalness: 0.1, side: THREE.DoubleSide });
+  }
+  const stopMat = signFace((g) => {
+    g.fillStyle = '#b3141c';
+    g.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const a = Math.PI / 8 + i * Math.PI / 4;
+      g[i ? 'lineTo' : 'moveTo'](128 + Math.cos(a) * 124, 128 + Math.sin(a) * 124);
+    }
+    g.closePath(); g.fill();
+    g.strokeStyle = '#fff'; g.lineWidth = 7; g.stroke();
+    g.fillStyle = '#fff'; g.textAlign = 'center';
+    g.font = '800 74px -apple-system, Helvetica, Arial, sans-serif';
+    g.fillText('STOP', 128, 154);
+  });
+  const speedMat = signFace((g) => {
+    g.fillStyle = '#fff'; g.fillRect(28, 8, 200, 240);
+    g.strokeStyle = '#111'; g.lineWidth = 8; g.strokeRect(28, 8, 200, 240);
+    g.fillStyle = '#111'; g.textAlign = 'center';
+    g.font = '700 34px -apple-system, Helvetica, Arial, sans-serif';
+    g.fillText('SPEED', 128, 66); g.fillText('LIMIT', 128, 104);
+    g.font = '800 108px -apple-system, Helvetica, Arial, sans-serif';
+    g.fillText('35', 128, 206);
+  });
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x8b8f95, roughness: 0.5, metalness: 0.7 });
+  const CROSS = [92, 180, 268, 356, 444, 532];
+  const addSign = (mat, w, h, x, z, y, rotY) => {
+    const g = new THREE.Group();
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, y + h / 2, 6), poleMat);
+    p.position.y = (y + h / 2) / 2;
+    g.add(p);
+    const f = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    f.position.y = y + h / 2;
+    g.add(f);
+    g.position.set(x, 0, z);
+    g.rotation.y = rotY;
+    roadFurniture.add(g);
+  };
+  for (const z of CROSS) {
+    addSign(stopMat, 0.9, 0.9, ROAD_CX + ROAD_HW + 2.2, z - 6.5, 2.1, -Math.PI / 2);
+    addSign(stopMat, 0.9, 0.9, ROAD_CX - ROAD_HW - 2.2, z + 6.5, 2.1, Math.PI / 2);
+  }
+  for (const z of [140, 320, 500]) {
+    addSign(speedMat, 0.75, 0.95, ROAD_CX + ROAD_HW + 2.4, z, 2.3, -Math.PI / 2);
+    addSign(speedMat, 0.75, 0.95, ROAD_CX - ROAD_HW - 2.4, z + 90, 2.3, Math.PI / 2);
   }
 
   const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x6d6a63, roughness: 1, metalness: 0 });
@@ -6393,6 +6453,29 @@ function loadMeshyBuildings() {
 
   load(ASSETS.TONY_HOUSE, (src) => put(src, -8, 62, Math.PI));
 
+  /* Avenue trees down both verges, between the kerb and the buildings — the way a
+     Jersey avenue actually looks. Deterministic scatter so the street is identical
+     every load, and each is scaled and turned slightly so a repeated model does not
+     read as a repeated model. Skipped where a cross-street cuts through. */
+  load(ASSETS.STREET_TREE, (src) => {
+    let seed = 90210;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+    const CROSS_Z = [92, 180, 268, 356, 444, 532];
+    for (let z = 40; z < 600; z += 15) {
+      if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
+      for (const side of [1, -1]) {
+        const t = src.clone(true);
+        const s2 = 0.85 + rnd() * 0.4;
+        t.position.set(ROAD_CX + side * (ROAD_HW + 3.4 + rnd() * 0.8), 0, z + (rnd() - 0.5) * 3);
+        t.scale.setScalar(s2);
+        t.rotation.y = rnd() * Math.PI * 2;
+        t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true; } });
+        scene.add(t);
+        njBuildings.push(t);
+      }
+    }
+  });
+
   const EAST_X = 44, WEST_X = 10;
   const FACE_W = -Math.PI / 2, FACE_E = Math.PI / 2;
   const PAIRS = [
@@ -6425,11 +6508,15 @@ function loadMeshyBuildings() {
     });
   });
 
+  /* Dumpsters belong down the side, not on the kerb in front of a church. These sit
+     in the gap between the front and back rows, along the cross-street mouths, where
+     a real one would be. */
   load(ASSETS.DUMPSTER, (src) => {
-    for (let n = 0; n < 4; n++) {
-      put(src, EAST_X - 5, 90 + n * 130, 0.6);
-      put(src, WEST_X + 5, 150 + n * 130, 2.4);
-    }
+    const ALLEY_Z = [92, 180, 268, 356, 444, 532];
+    ALLEY_Z.forEach((z, i) => {
+      put(src, EAST_X + 17 + (i % 2) * 4, z + 6, 1.55 + (i % 3) * 0.2);
+      put(src, WEST_X - 17 - (i % 2) * 4, z - 6, 1.55 + (i % 3) * 0.2);
+    });
   });
 }
 
@@ -7186,9 +7273,18 @@ const FOREST_PATCHES = [
   [154, 156, 5.94],
 ];
 
+/* The road corridor now holds three rows of buildings and 62 street trees. These
+   patch positions were chosen when it was empty, so several (x=82, 118, -26, -62)
+   sit inside the buildings. Skip anything in the corridor rather than editing the
+   list, so the patches outside it are untouched. */
+function inRoadCorridor(x, z) {
+  return x > -70 && x < 125 && z > 10 && z < 620;
+}
 function placeForest(nearScene) {
   const group = new THREE.Group();
+  let skipped = 0;
   for (const p of FOREST_PATCHES) {
+    if (inRoadCorridor(p[0], p[1])) { skipped++; continue; }
     const patch = nearScene.clone(); // shares geometry + material — no extra VRAM per patch
     patch.position.set(p[0], 0, p[1]);
     patch.rotation.y = p[2];
@@ -7202,7 +7298,7 @@ function placeForest(nearScene) {
     group.add(patch);
   }
   scene.add(group);
-  console.log('forest placed:', FOREST_PATCHES.length, 'patches');
+  console.log('forest placed:', FOREST_PATCHES.length - skipped, 'patches,', skipped, 'skipped in the road corridor');
 }
 
 function loadForest() {
