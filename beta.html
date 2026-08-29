@@ -883,7 +883,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 19:54';
+  window.__BUILD = '2026-08-29 20:14';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1496,9 +1496,11 @@ function closePhoneRing() {
 }
 document.getElementById('phone-answer-btn').addEventListener('click', () => {
   closePhoneRing();
-  // Roughly one call in four, the Boss is testing you rather than sending you out.
-  // Indoors it's always a quiz, since a debt chase needs a car.
-  if (inInterior || Math.random() < 0.25) {
+  /* Was 0.25. That was set back when Boss called at most once per session — the
+     call queue emptied for good after one round. Now it refills and Boss comes
+     back every 3rd call indefinitely, so the same odds landed far more often in
+     practice. Lowered to keep the quiz roughly as rare as it read before. */
+  if (inInterior || Math.random() < 0.12) {
     bossQuizCall();
     return;
   }
@@ -3753,21 +3755,16 @@ function buildTallGrass() {
   const tex = createBladeTexture();
   tex.anisotropy = maxAniso;
 
-  // Two crossed quads per tuft (was three). All three used to pivot on the exact
-  // same vertical line — rotateY spins a plane around its own centre, and only the
-  // Y translate had been applied before it, so the seam never moved off (0,0)
-  // regardless of angle. Three cutout layers fighting for the same pixels at that
-  // seam is very likely the "texture changes as the camera moves" report: which
-  // layer wins flips as the view angle does. Two planes, each nudged a hair off
-  // that shared line after rotating, means no two seams ever exactly coincide.
-  // Cheaper too. Trade-off: two planes read thinner from the two angles where
-  // you're looking straight down one of them, versus three's better all-angle
-  // coverage — worth it if this was the actual cause, easy to revert if not.
+  // Reverted to three crossed quads, back to how this was originally. The 2-plane
+  // version I tried was a blind guess at the "texture changes as camera moves"
+  // report, and it made things worse — a new tearing artifact ("breaks under")
+  // that wasn't there before, on top of not confirming the original issue was
+  // fixed. Not touching this again without being able to see it.
   const quads = [];
-  for (let k = 0; k < 2; k++) {
+  for (let k = 0; k < 3; k++) {
     const g = new THREE.PlaneGeometry(1.5, 1.15);
-    g.rotateY((k / 2) * Math.PI);
-    g.translate((k === 0 ? -1 : 1) * 0.02, 0.575, (k === 0 ? -1 : 1) * 0.02);
+    g.translate(0, 0.575, 0);
+    g.rotateY((k / 3) * Math.PI);
     quads.push(g);
   }
   const tuftGeo = mergeGeometries(quads);
