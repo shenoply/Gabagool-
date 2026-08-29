@@ -883,7 +883,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 21:05';
+  window.__BUILD = '2026-08-29 21:10';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -4077,13 +4077,120 @@ function playChurchBell(strikes) {
     }
   }
 }
+/* Four more, same fully-synthesized approach as everything above. */
+function playTrainRumble() {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  const dur = 9;
+  const n = ambientCtx.sampleRate * 2;
+  const b = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  const src = ambientCtx.createBufferSource(); src.buffer = b; src.loop = true;
+  const f = ambientCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 90;
+  const osc = ambientCtx.createOscillator();   // a low fundamental under the rumble
+  osc.type = 'sine'; osc.frequency.value = 42;
+  const oscGain = ambientCtx.createGain(); oscGain.gain.value = 0.4;
+  const g = ambientCtx.createGain();
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.08, now + dur * 0.35);
+  g.gain.linearRampToValueAtTime(0.08, now + dur * 0.6);
+  g.gain.linearRampToValueAtTime(0, now + dur);
+  const pan = ambientCtx.createStereoPanner();
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  pan.pan.setValueAtTime(-1 * dir, now);
+  pan.pan.linearRampToValueAtTime(1 * dir, now + dur);
+  src.connect(f); f.connect(g);
+  osc.connect(oscGain); oscGain.connect(g);
+  g.connect(pan); pan.connect(ambientCtx.destination);
+  src.start(now); src.stop(now + dur + 0.1);
+  osc.start(now); osc.stop(now + dur + 0.1);
+}
+function playIceCreamTruck() {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  // An original waltz-time tune, not a transcription of any real jingle — just
+  // major-scale steps in 3, which is what reads as "ice cream truck" generically.
+  const notes = [784, 880, 988, 1047, 988, 880, 784, 659, 784];
+  const g = ambientCtx.createGain();
+  g.gain.value = 0.05;
+  g.connect(ambientCtx.destination);
+  notes.forEach((f, i) => {
+    const t0 = now + i * 0.32;
+    const osc = ambientCtx.createOscillator();
+    osc.type = 'triangle'; osc.frequency.value = f;   // tinny, music-box-ish
+    const ng = ambientCtx.createGain();
+    ng.gain.setValueAtTime(0.9, t0);
+    ng.gain.exponentialRampToValueAtTime(0.05, t0 + 0.28);
+    osc.connect(ng); ng.connect(g);
+    osc.start(t0); osc.stop(t0 + 0.3);
+  });
+}
+function playDogBark() {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  const barks = 1 + Math.floor(Math.random() * 3);
+  const pan = ambientCtx.createStereoPanner();
+  pan.pan.value = (Math.random() * 2 - 1) * 0.8;
+  pan.connect(ambientCtx.destination);
+  for (let i = 0; i < barks; i++) {
+    const t0 = now + i * 0.22;
+    const n = ambientCtx.sampleRate * 0.12;
+    const b = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+    const d = b.getChannelData(0);
+    for (let j = 0; j < n; j++) { const k = 1 - j / n; d[j] = (Math.random() * 2 - 1) * k; }
+    const src = ambientCtx.createBufferSource(); src.buffer = b;
+    const f = ambientCtx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 500; f.Q.value = 0.9;
+    const g = ambientCtx.createGain(); g.gain.value = 0.05;
+    src.connect(f); f.connect(g); g.connect(pan);
+    src.start(t0);
+  }
+}
+function playHonk() {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  const pan = ambientCtx.createStereoPanner();
+  pan.pan.value = (Math.random() * 2 - 1) * 0.8;
+  pan.connect(ambientCtx.destination);
+  const osc = ambientCtx.createOscillator();
+  osc.type = 'sawtooth'; osc.frequency.value = 340;
+  const g = ambientCtx.createGain();
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.05, now + 0.03);
+  g.gain.setValueAtTime(0.05, now + 0.35);
+  g.gain.linearRampToValueAtTime(0, now + 0.42);
+  osc.connect(g); g.connect(pan);
+  osc.start(now); osc.stop(now + 0.45);
+}
 let sirenTimer = 18 + Math.random() * 25, alarmTimer = 25 + Math.random() * 30, lastBellHour = -1;
+let trainTimer = 40 + Math.random() * 50, iceCreamTimer = 50 + Math.random() * 60, dogTimer = 15 + Math.random() * 30, honkTimer = 12 + Math.random() * 15;
 function updateAmbientEvents(dt) {
   if (!sfxOn || inInterior || onCall) return;
   sirenTimer -= dt;
   if (sirenTimer <= 0) { playDistantSiren(); sirenTimer = 35 + Math.random() * 40; }
   alarmTimer -= dt;
   if (alarmTimer <= 0) { playCarAlarm(); alarmTimer = 45 + Math.random() * 55; }
+  trainTimer -= dt;
+  if (trainTimer <= 0) { playTrainRumble(); trainTimer = 70 + Math.random() * 80; }
+  iceCreamTimer -= dt;
+  if (iceCreamTimer <= 0) { playIceCreamTruck(); iceCreamTimer = 90 + Math.random() * 100; }
+  dogTimer -= dt;
+  if (dogTimer <= 0) { playDogBark(); dogTimer = 25 + Math.random() * 35; }
+  // Honk only actually fires if the nearest junction is genuinely showing red on
+  // the main road right now — tied to the real light state, not just a timer.
+  honkTimer -= dt;
+  if (honkTimer <= 0) {
+    honkTimer = 10 + Math.random() * 12;
+    const ref = drivingMode ? carState : (character ? character.position : null);
+    if (ref && typeof JUNCTION_Z !== 'undefined' && JUNCTION_Z.length) {
+      let nearest = JUNCTION_Z[0], bestD = Infinity;
+      for (const jz of JUNCTION_Z) { const dd = Math.abs(jz - ref.z); if (dd < bestD) { bestD = dd; nearest = jz; } }
+      if (bestD < 90) {
+        const ph = junctionPhase(nearest);
+        if (!ph.mainGreen && Math.random() < 0.5) playHonk();   // main road not green = someone's waiting
+      }
+    }
+  }
   if (typeof dayTime === 'number') {
     const hour = Math.floor(dayTime * 24);
     const hour12 = ((hour + 11) % 12) + 1;
@@ -6969,6 +7076,7 @@ function buildParkedCars() {
    several hundred. Nothing here downloads anything. */
 let streetDetail = null, trafficLights = [], pigeons = [], steamPuffs = [], kerbPuddles = null;
 let litterMesh = null, nightLights = [], flockBirds = null, windowGlows = [], perchedBirds = [];
+let newspaperMesh = null, newspaperTimer = 20 + Math.random() * 30, newspaperActive = false, newspaperT = 0;
 function buildStreetDetail() {
   if (streetDetail) return;
   streetDetail = new THREE.Group();
@@ -7084,6 +7192,14 @@ function buildStreetDetail() {
   }
   streetDetail.add(litter);
   litterMesh = litter;
+
+  // A single newspaper page that actually tumbles across the road periodically —
+  // simple direct position/rotation animation since it's one object, not the
+  // instanced-shader approach the litter cards use. Hidden until the first cycle.
+  const paperMat = new THREE.MeshStandardMaterial({ color: 0xd8d3c4, roughness: 0.95, side: THREE.DoubleSide });
+  newspaperMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.7), paperMat);
+  newspaperMesh.visible = false;
+  scene.add(newspaperMesh);
 
   // 6. pigeons on the kerb, scattered by an approaching car
   const birdMat = new THREE.MeshStandardMaterial({ color: 0x6a6a72, roughness: 0.9 });
@@ -7304,6 +7420,39 @@ function updateStreetDetail(dt) {
   if (litterMesh) {
     const sh = litterMesh.material.userData.shader;
     if (sh) sh.uniforms.uTime.value = t;
+  }
+  // newspaper tumbling across the road — spawns near wherever the player actually
+  // is, since with a ~1500-unit street a fixed spot would almost never be seen
+  if (newspaperMesh) {
+    if (!newspaperActive) {
+      newspaperTimer -= dt;
+      if (newspaperTimer <= 0) {
+        newspaperActive = true; newspaperT = 0;
+        const px2 = drivingMode ? carState.x : (character ? character.position.x : ROAD_CX);
+        const pz2 = drivingMode ? carState.z : (character ? character.position.z : 60);
+        newspaperMesh._startX = px2 > ROAD_CX ? ROAD_CX - ROAD_HW - 2 : ROAD_CX + ROAD_HW + 2;
+        newspaperMesh._endX = px2 > ROAD_CX ? ROAD_CX + ROAD_HW + 2 : ROAD_CX - ROAD_HW - 2;
+        newspaperMesh._z = pz2 + 20 + Math.random() * 15;
+        newspaperMesh.visible = true;
+      }
+    } else {
+      newspaperT += dt;
+      const DUR = 4.5;
+      const k = newspaperT / DUR;
+      if (k >= 1) {
+        newspaperActive = false;
+        newspaperMesh.visible = false;
+        newspaperTimer = 30 + Math.random() * 40;
+      } else {
+        newspaperMesh.position.set(
+          newspaperMesh._startX + (newspaperMesh._endX - newspaperMesh._startX) * k,
+          0.15 + Math.abs(Math.sin(k * Math.PI * 3)) * 0.3,
+          newspaperMesh._z + Math.sin(k * 6) * 0.8
+        );
+        newspaperMesh.rotation.x = t * 4;
+        newspaperMesh.rotation.z = t * 3.1;
+      }
+    }
   }
   // overhead flock — visible only in the dawn/dusk window, drifting in a slow circle
   if (flockBirds) {
@@ -8956,6 +9105,23 @@ function initAmbientAudio() {
   windFilter.connect(windGain);
   windGain.connect(ambientCtx.destination);
   noiseSource.start();
+
+  /* AC unit hum — a mid-frequency electrical buzz, constant and very quiet,
+     distinct from both the wind bed (airy, higher-passed) and the city hum
+     (low rumble). Own noise buffer since the character is different enough
+     from either existing one that reusing theirs would need a third filter
+     anyway — this is cheap regardless. */
+  const acBuf = ambientCtx.createBuffer(1, ambientCtx.sampleRate, ambientCtx.sampleRate);
+  const acData = acBuf.getChannelData(0);
+  for (let i = 0; i < acBuf.length; i++) acData[i] = Math.random() * 2 - 1;
+  const acSource = ambientCtx.createBufferSource();
+  acSource.buffer = acBuf; acSource.loop = true;
+  const acFilter = ambientCtx.createBiquadFilter();
+  acFilter.type = 'bandpass'; acFilter.frequency.value = 220; acFilter.Q.value = 1.4;
+  const acGain = ambientCtx.createGain();
+  acGain.gain.value = 0.012;
+  acSource.connect(acFilter); acFilter.connect(acGain); acGain.connect(ambientCtx.destination);
+  acSource.start();
 }
 
 /* ---------- Engine ----------
