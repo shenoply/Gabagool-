@@ -498,6 +498,8 @@
     <button id="cigar-btn" title="Cigar">🚬</button>
     <button id="pov-btn" title="First-person view" style="display:none;">👁</button>
     <button id="phone-btn" title="Phone">📱</button>
+    <button id="freecam-btn" title="Free camera">🎥</button>
+    <button id="markers-btn" title="Show asset markers">📍</button>
   </div>
 
   <div id="action-pad" style="position:fixed;right:14px;bottom:calc(220px + env(safe-area-inset-bottom,0px));z-index:11;display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
@@ -904,7 +906,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 23:31';
+  window.__BUILD = '2026-08-29 23:57';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1723,7 +1725,15 @@ const interiorColliders = []; // structure, for the camera
 const interiorSolids = [];    // everything the player can bump into
 let camPullIn = 0; // eased distance reduction, so it doesn't snap
 
-function updateCamera() {
+// Free-cam state declared here, ahead of updateCamera, because updateCamera is
+// called immediately below at module init time (before the main loop exists) —
+// declaring freeCamMode after that call would be a temporal-dead-zone crash.
+let freeCamMode = false;
+const freeCamPos = new THREE.Vector3();
+let freeCamRise = 0; // -1 falling, 0 still, 1 rising — driven by the zoom +/- buttons while active
+
+function updateCamera(dt) {
+  if (freeCamMode) { stepFreeCam(dt || 0.016); return; }
   camPitch = Math.max(0.1, Math.min(1.4, camPitch));
   camDist = Math.max(camDistMin, Math.min(camDistMax, camDist));
 
@@ -1758,6 +1768,109 @@ function updateCamera() {
   camera.lookAt(camTarget);
 }
 updateCamera();
+
+/* ================= FREE CAMERA — detaches from the player, flies anywhere =================
+   Requested as a way to go find the new placements directly rather than trust the
+   normal follow-camera to happen across them. Deliberately a separate path from
+   updateCamera rather than folded into it — that function is orbit-around-a-target
+   logic and a fly-camera is a different model (camera itself moves), so branching
+   at the top avoids fighting the existing math. Reuses camYaw/camPitch (the same
+   state the touch-drag look already writes to) so look controls behave the same
+   in both modes, and reuses joyVec for movement so the existing joystick doubles
+   as fly controls without a new input scheme. State (freeCamMode/freeCamPos/
+   freeCamRise) is declared up above updateCamera — see the note there. */
+function toggleFreeCam() {
+  freeCamMode = !freeCamMode;
+  const btn = document.getElementById('freecam-btn');
+  if (btn) btn.style.background = freeCamMode ? 'var(--accent)' : '';
+  if (freeCamMode) freeCamPos.copy(camera.position);
+  if (window.__gameNote) window.__gameNote('free camera ' + (freeCamMode ? 'ON — joystick flies, zoom +/- go up/down' : 'OFF'));
+}
+const _freeCamFwd = new THREE.Vector3(), _freeCamRight = new THREE.Vector3(), _freeCamLook = new THREE.Vector3();
+function stepFreeCam(dt) {
+  const speed = 26;
+  _freeCamFwd.set(Math.sin(camYaw), 0, Math.cos(camYaw));
+  _freeCamRight.set(Math.cos(camYaw), 0, -Math.sin(camYaw));
+  freeCamPos.addScaledVector(_freeCamFwd, joyVec.y * speed * dt);
+  freeCamPos.addScaledVector(_freeCamRight, joyVec.x * speed * dt);
+  freeCamPos.y += freeCamRise * speed * 0.7 * dt;
+  freeCamPos.y = Math.max(0.5, freeCamPos.y);
+  camera.position.copy(freeCamPos);
+  _freeCamLook.set(
+    freeCamPos.x + Math.sin(camYaw) * Math.cos(camPitch),
+    freeCamPos.y + Math.sin(camPitch),
+    freeCamPos.z + Math.cos(camYaw) * Math.cos(camPitch)
+  );
+  camera.lookAt(_freeCamLook);
+}
+document.getElementById('freecam-btn').addEventListener('click', toggleFreeCam);
+
+/* ================= DEBUG MARKERS — where every recent addition actually is =================
+   One beacon + label per placement from the last few batches (NPCs, environment
+   pieces), tagged ANIMATED or STATIC per request. depthTest:false so they read
+   through buildings/terrain — the point is finding things, not blending in. Built
+   once, hidden by default, toggled by the map-pin button. If a marker is visible
+   with nothing there, that placement's asset failed to load — if the marker
+   itself is what's missing, something's wrong with this list, not the asset. */
+const DEBUG_MARKERS = [
+  { n: 'bird 1', x: 44, z: 150, anim: true }, { n: 'bird 2', x: 10, z: 340, anim: true }, { n: 'bird 3', x: 44, z: 520, anim: true },
+  { n: 'rat 1', x: 61, z: 98, anim: true }, { n: 'rat 2', x: -7, z: 274, anim: true }, { n: 'rat 3', x: 61, z: 450, anim: true },
+  { n: 'puppy 1', x: 6, z: -8, anim: true }, { n: 'puppy 2', x: -10, z: 6, anim: true },
+  { n: 'texter 1', x: 41, z: 210, anim: false }, { n: 'texter 2', x: 12.5, z: 460, anim: false },
+  { n: 'vehicle lot', x: 105, z: 700, anim: false },
+  { n: 'golf course', x: 380, z: 450, anim: false },
+  { n: 'putting green', x: 150, z: 280, anim: false },
+  { n: 'street court', x: 105, z: 220, anim: false },
+  { n: 'junkyard', x: 110, z: 1500, anim: false },
+  { n: 'downtown skyline', x: CITY_BACKDROP_POS.x, z: CITY_BACKDROP_POS.z, anim: false },
+  { n: 'city night', x: CITY_BACKDROP_POS.x + 70, z: CITY_BACKDROP_POS.z, anim: false },
+  { n: 'old school', x: 64, z: 1470, anim: false },
+  { n: 'tree grove', x: 60, z: 320, anim: false },
+  { n: 'street tree D', x: 52, z: 1455, anim: false },
+];
+let debugMarkerGroup = null;
+function buildDebugMarkers() {
+  debugMarkerGroup = new THREE.Group();
+  debugMarkerGroup.visible = false;
+  for (const m of DEBUG_MARKERS) {
+    const color = m.anim ? 0x4ade80 : 0xffb347; // green = animated, orange = static
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.15, 0.15, 40, 6),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, depthTest: false })
+    );
+    beam.position.set(m.x, 20, m.z);
+    beam.renderOrder = 998;
+    debugMarkerGroup.add(beam);
+
+    const c = document.createElement('canvas');
+    c.width = 320; c.height = 80;
+    const ctx = c.getContext('2d');
+    ctx.font = '700 26px -apple-system, Arial, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+    ctx.strokeText(m.n, 160, 26);
+    ctx.fillStyle = m.anim ? '#4ade80' : '#ffb347';
+    ctx.fillText(m.n, 160, 26);
+    ctx.font = '700 18px -apple-system, Arial, sans-serif';
+    const tag = m.anim ? 'ANIMATED' : 'STATIC';
+    ctx.strokeText(tag, 160, 58);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(tag, 160, 58);
+    const tex = new THREE.CanvasTexture(c);
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+    label.position.set(m.x, 41, m.z);
+    label.scale.set(7, 1.75, 1);
+    label.renderOrder = 999;
+    debugMarkerGroup.add(label);
+  }
+  scene.add(debugMarkerGroup);
+}
+buildDebugMarkers();
+document.getElementById('markers-btn').addEventListener('click', () => {
+  debugMarkerGroup.visible = !debugMarkerGroup.visible;
+  document.getElementById('markers-btn').style.background = debugMarkerGroup.visible ? 'var(--accent)' : '';
+  if (window.__gameNote) window.__gameNote('asset markers ' + (debugMarkerGroup.visible ? 'ON' : 'OFF') + ' (' + DEBUG_MARKERS.length + ' placements)');
+});
 
 /* Lights — brightened for clarity (was tuned moody-dark for the old small yard;
    the house was reading muddy/underlit rather than genuinely low quality) */
@@ -3909,8 +4022,12 @@ function updateRain(dt) {
   }
   rainWet += ((rainOn ? 1 : 0) - rainWet) * Math.min(1, dt * 0.25); // wetness lags the rain
   rainMesh.visible = rainWet > 0.02;
-  groundMat.roughness = 0.95 - rainWet * 0.55;
-  groundMat.metalness = rainWet * 0.25;
+  // Was roughness 0.95->0.4, metalness 0->0.25 — reflective enough that once the
+  // skyline additions gave it something tall and close to mirror, wet roads were
+  // doubling the skyline upside-down in the ground. A wet-sheen look doesn't need
+  // that much metalness; toned both down so it reads as damp asphalt, not a mirror.
+  groundMat.roughness = 0.95 - rainWet * 0.35;
+  groundMat.metalness = rainWet * 0.08;
   if (!rainMesh.visible) return;
   rainMesh.material.opacity = 0.34 * Math.min(1, rainWet * 1.4);
   const cx = camTarget.x, cz = camTarget.z;
@@ -7341,33 +7458,12 @@ function buildRecreationAreas() {
     if (window.__gameNote) window.__gameNote('junkyard loaded OK');
   }, (e) => { console.warn('junkyard load failed:', e); if (window.__gameNote) window.__gameNote('JUNKYARD FAILED: ' + ((e && e.message) || e)); });
 
-  // Second skyline cluster — ADDED alongside downtown_skyline, not replacing it
-  // (that one stays exactly as it was). This file genuinely has baked emissive
-  // window/sign/logo materials (checked: 4 materials with real emissive textures,
-  // one solid-red beacon) — the actual "lights that activate at night" ask, not
-  // just geometry. Tracked in nightEmissiveMats and scaled by nightLightLevel each
-  // frame in updateStreetDetail, same pattern as every other night light this
-  // session. Placed next to CITY_BACKDROP_POS, not on top of it.
-  loader.parse(ASSETS.CITY_NIGHT, '', (gltf) => {
-    const city2 = gltf.scene;
-    city2.position.set(CITY_BACKDROP_POS.x + 70, -1, CITY_BACKDROP_POS.z);
-    city2.rotation.y = Math.atan2(-CITY_BACKDROP_POS.x, -CITY_BACKDROP_POS.z);
-    city2.traverse((o) => {
-      if (!o.isMesh || !o.material) return;
-      o.castShadow = false; o.receiveShadow = false;
-      const mats = Array.isArray(o.material) ? o.material : [o.material];
-      for (const mat of mats) {
-        const hasEmissiveTex = !!mat.emissiveMap;
-        const hasEmissiveColor = mat.emissive && (mat.emissive.r + mat.emissive.g + mat.emissive.b) > 0.01;
-        if (hasEmissiveTex || hasEmissiveColor) {
-          mat.emissiveIntensity = 0;   // starts dark, updateStreetDetail brings it up at night
-          nightEmissiveMats.push(mat);
-        }
-      }
-    });
-    scene.add(city2);
-    if (window.__gameNote) window.__gameNote('city_night loaded OK, ' + nightEmissiveMats.length + ' emissive materials tracked');
-  }, (e) => { console.warn('city_night load failed:', e); if (window.__gameNote) window.__gameNote('CITY NIGHT FAILED: ' + ((e && e.message) || e)); });
+  // city_night REMOVED — the streaky/smeared building textures reported this turn
+  // point directly at this asset. Best guess: gltfpack's sloppy decimation (-si
+  // 0.35) badly distorted UVs on this specific file — it has far more distinct
+  // materials than downtown_skyline (8 vs effectively 1-2), which likely made it
+  // more vulnerable to that failure mode. Not investigating further right now;
+  // pulling it was the priority. downtown_skyline is untouched and still there.
 
   // Old school — landmark building, placed adjacent to the road corridor rather
   // than off in the recreation cluster ("merge with the main road where suitable").
@@ -9344,8 +9440,16 @@ window.addEventListener('pointerup', joyEnd);
 window.addEventListener('pointercancel', joyEnd);
 
 /* Zoom buttons */
-document.getElementById('zoom-in').addEventListener('click', () => { camDist -= (camDistMax - camDistMin) * 0.12; });
-document.getElementById('zoom-out').addEventListener('click', () => { camDist += (camDistMax - camDistMin) * 0.12; });
+document.getElementById('zoom-in').addEventListener('click', () => { if (!freeCamMode) camDist -= (camDistMax - camDistMin) * 0.12; });
+document.getElementById('zoom-out').addEventListener('click', () => { if (!freeCamMode) camDist += (camDistMax - camDistMin) * 0.12; });
+// Free-cam altitude: hold rather than click, since flying up/down wants to be
+// continuous, not stepped. Only takes over while free-cam is actually on.
+document.getElementById('zoom-in').addEventListener('pointerdown', () => { if (freeCamMode) freeCamRise = 1; });
+document.getElementById('zoom-out').addEventListener('pointerdown', () => { if (freeCamMode) freeCamRise = -1; });
+['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => {
+  document.getElementById('zoom-in').addEventListener(ev, () => { if (freeCamMode) freeCamRise = 0; });
+  document.getElementById('zoom-out').addEventListener(ev, () => { if (freeCamMode) freeCamRise = 0; });
+});
 
 /* Background audio (starts on first tap — browsers block autoplay-with-sound) */
 const BG_TRACKS = [
@@ -9991,7 +10095,7 @@ function tick() {
   updateAmbientAudio(dt);
   if (mixer) mixer.update(dt);
   for (const m of npcMixers) m.update(dt);
-  updateCamera();
+  updateCamera(dt);
   updatePovCamera(); // overrides the orbit camera while in first person
   if (character && !drivingMode) {
     spot.position.set(character.position.x, 5, character.position.z + 2);
