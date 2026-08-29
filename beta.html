@@ -905,7 +905,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 00:02';
+  window.__BUILD = '2026-08-30 00:08';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1812,7 +1812,7 @@ document.getElementById('freecam-btn').addEventListener('click', toggleFreeCam);
    with nothing there, that placement's asset failed to load — if the marker
    itself is what's missing, something's wrong with this list, not the asset. */
 const DEBUG_MARKERS = [
-  { n: 'bird 1', x: 44, z: 150, anim: true }, { n: 'bird 2', x: 10, z: 340, anim: true }, { n: 'bird 3', x: 44, z: 520, anim: true },
+  { n: 'bird 1', x: 38.5, z: 150, anim: true }, { n: 'bird 2', x: 15.5, z: 340, anim: true }, { n: 'bird 3', x: 38.5, z: 520, anim: true },
   { n: 'rat 1', x: 61, z: 98, anim: true }, { n: 'rat 2', x: -7, z: 274, anim: true }, { n: 'rat 3', x: 61, z: 450, anim: true },
   { n: 'puppy 1', x: 6, z: -8, anim: true }, { n: 'puppy 2', x: -10, z: 6, anim: true },
   { n: 'texter 1', x: 41, z: 210, anim: false }, { n: 'texter 2', x: 12.5, z: 460, anim: false },
@@ -7529,7 +7529,7 @@ function loadStreetNPCs() {
   // not a wholesale replacement (this one has 5 skins bundled in the file, so a
   // single clone already reads as a small cluster).
   spawnAnimatedNPC(ASSETS.STREET_BIRD, [
-    { x: 44, z: 150 }, { x: 10, z: 340 }, { x: 44, z: 520 },
+    { x: 38.5, z: 150 }, { x: 15.5, z: 340 }, { x: 38.5, z: 520 },
   ]);
   // Rat — alley spots, same z-family the dumpsters and fence already use. "Run" is
   // the only clip in the file; it plays as an in-place loop rather than a path, an
