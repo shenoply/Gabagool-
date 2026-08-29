@@ -883,7 +883,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 19:42';
+  window.__BUILD = '2026-08-29 19:54';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -4005,6 +4005,82 @@ function playStatic() {
   src.connect(f); f.connect(g); g.connect(ambientCtx.destination);
   src.start(now);
 }
+
+/* Three synthesized ambient one-shots, same technique as the static above —
+   oscillators and envelopes, no audio files, so these cost nothing to download
+   and effectively nothing to run. All three gated on sfxOn/!inInterior/!onCall
+   the same way, scheduled with the same random-timer pattern rainTimer already
+   uses elsewhere. */
+function playDistantSiren() {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  const osc = ambientCtx.createOscillator();
+  const g = ambientCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(500, now);
+  for (let i = 0; i < 4; i++) {
+    osc.frequency.linearRampToValueAtTime(900, now + i + 0.5);
+    osc.frequency.linearRampToValueAtTime(500, now + i + 1);
+  }
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.05, now + 0.5);   // distant — kept quiet
+  g.gain.setValueAtTime(0.05, now + 3.5);
+  g.gain.linearRampToValueAtTime(0, now + 4.5);
+  osc.connect(g); g.connect(ambientCtx.destination);
+  osc.start(now); osc.stop(now + 4.6);
+}
+function playCarAlarm() {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  const g = ambientCtx.createGain();
+  g.gain.value = 0.06;
+  g.connect(ambientCtx.destination);
+  for (let i = 0; i < 6; i++) {
+    const osc = ambientCtx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.value = i % 2 === 0 ? 1200 : 900;   // classic two-tone chirp
+    const bg = ambientCtx.createGain();
+    const t0 = now + i * 0.28;
+    bg.gain.setValueAtTime(0, t0);
+    bg.gain.linearRampToValueAtTime(1, t0 + 0.02);
+    bg.gain.setValueAtTime(1, t0 + 0.12);
+    bg.gain.linearRampToValueAtTime(0, t0 + 0.15);
+    osc.connect(bg); bg.connect(g);
+    osc.start(t0); osc.stop(t0 + 0.16);
+  }
+}
+function playChurchBell(strikes) {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  for (let s = 0; s < strikes; s++) {
+    const t0 = now + s * 1.1;
+    for (const f of [523, 659, 784]) {   // a simple triad reads as a bell, not a beep
+      const osc = ambientCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = f;
+      const bg = ambientCtx.createGain();
+      bg.gain.setValueAtTime(0.045, t0);
+      bg.gain.exponentialRampToValueAtTime(0.0005, t0 + 1.8);
+      osc.connect(bg); bg.connect(ambientCtx.destination);
+      osc.start(t0); osc.stop(t0 + 1.9);
+    }
+  }
+}
+let sirenTimer = 60 + Math.random() * 90, alarmTimer = 80 + Math.random() * 100, lastBellHour = -1;
+function updateAmbientEvents(dt) {
+  if (!sfxOn || inInterior || onCall) return;
+  sirenTimer -= dt;
+  if (sirenTimer <= 0) { playDistantSiren(); sirenTimer = 60 + Math.random() * 90; }
+  alarmTimer -= dt;
+  if (alarmTimer <= 0) { playCarAlarm(); alarmTimer = 80 + Math.random() * 100; }
+  if (typeof dayTime === 'number') {
+    const hour = Math.floor(dayTime * 24);
+    const hour12 = ((hour + 11) % 12) + 1;
+    const mins = Math.floor(dayTime * 24 * 60) % 60;
+    if (mins === 0 && hour !== lastBellHour) { lastBellHour = hour; playChurchBell(hour12); }
+  }
+}
+
 function setRadioStation(i) {
   radioIndex = (i + RADIO_STATIONS.length) % RADIO_STATIONS.length;
   const st = RADIO_STATIONS[radioIndex];
@@ -4020,6 +4096,7 @@ function setRadioStation(i) {
       if (wasOn) setTimeout(() => bgAudio.play().catch(() => {}), 260); // let the static land first
     }
   }
+  if (typeof saveGameState === 'function') saveGameState(); // remember the station across reloads
 }
 function showRadio(show) {
   const el = document.getElementById('radio');
@@ -4060,6 +4137,7 @@ function saveGameState() {
       track: (typeof currentTrack !== 'undefined') ? currentTrack : 0,
       quizBest: quizBest,
       snakeBest: snakeBest,
+      radioIndex: (typeof radioIndex !== 'undefined') ? radioIndex : 0,
     }));
   } catch (e) { /* private mode or quota — not worth surfacing */ }
 }
@@ -4073,6 +4151,11 @@ function loadGameState() {
     if (typeof d.quizBest === 'number') quizBest = d.quizBest;
     if (typeof d.snakeBest === 'number') snakeBest = d.snakeBest;
     if (typeof d.audioMode === 'number') { audioMode = d.audioMode; soundOn = audioMode === 0; sfxOn = audioMode !== 2; }
+    if (typeof d.radioIndex === 'number' && RADIO_STATIONS[d.radioIndex]) {
+      radioIndex = d.radioIndex;
+      const rn = document.getElementById('radio-name');
+      if (rn) rn.textContent = RADIO_STATIONS[radioIndex].name;
+    }
   } catch (e) { /* ignore corrupt saves rather than blocking startup */ }
 }
 
@@ -5714,10 +5797,30 @@ const DJ_LINES = [
   "Keep it here. We got nowhere else to be.",
   "Turn it up. Your neighbours already hate you.",
 ];
+// Time/weather-aware lines, mixed in alongside the generic ones rather than
+// replacing them — same speech synthesis, zero asset cost either way.
+const DJ_LINES_NIGHT = [
+  "Late one tonight. You and me and whoever else is still up.",
+  "If you're hearing this, you should probably be asleep.",
+];
+const DJ_LINES_MORNING = [
+  "Morning. Or afternoon. Time gets away from you out here.",
+];
+const DJ_LINES_RAIN = [
+  "Wipers on, volume up. That's the whole forecast.",
+  "Raining out there. Drive like you've got somewhere to be tomorrow.",
+];
 function djSpeak() {
   try {
     if (!window.speechSynthesis || !soundOn) return;
-    const u = new SpeechSynthesisUtterance(DJ_LINES[Math.floor(Math.random() * DJ_LINES.length)]);
+    let pool = DJ_LINES;
+    if (typeof rainOn !== 'undefined' && rainOn) pool = pool.concat(DJ_LINES_RAIN);
+    if (typeof dayTime === 'number') {
+      const hour = Math.floor(dayTime * 24);
+      if (hour >= 0 && hour < 5) pool = pool.concat(DJ_LINES_NIGHT);
+      else if (hour >= 5 && hour < 9) pool = pool.concat(DJ_LINES_MORNING);
+    }
+    const u = new SpeechSynthesisUtterance(pool[Math.floor(Math.random() * pool.length)]);
     u.rate = 1.02; u.pitch = 0.8; u.volume = 0.55;
     const vs = window.speechSynthesis.getVoices();
     const en = vs.find((v) => /en-(US|GB)/i.test(v.lang));
@@ -6533,7 +6636,12 @@ function loadMeshyBuildings() {
        the cost of not swapping, and with frustum culling only a handful of these
        render at once. The low-detail mesh is kept but placed far beyond the camera's
        far plane, so it exists and never triggers. */
-    l.addLevel(b, 5000);
+    /* Was 5000 — past the far plane, so it never triggered; the swap was rejected
+       outright because fog wasn't hiding anything at the time to mask it. Fog's
+       properly tuned now (FogExp2, 86% obscured at 400u, 95% at 500u per the
+       __fog() table), so 480 should sit inside where it's already mostly hidden —
+       worth the framerate back if the swap really is invisible now. */
+    l.addLevel(b, 480);
     l.position.set(x, 0, z);
     l.rotation.y = rotY;
     scene.add(l);
@@ -6730,6 +6838,38 @@ function loadMeshyBuildings() {
      way as everything else; no special-casing needed here. */
   load(ASSETS.FACTORY_A, (src) => put(src, EAST_X, 1540, -Math.PI / 2));
   load(ASSETS.FACTORY_B, (src) => put(src, WEST_X, 1545, Math.PI / 2));
+  /* Fence both factory yards — same asset and technique as the alley run above,
+     just a longer stretch (6 panels) along the road-facing edge of each. */
+  load(ASSETS.CHAIN_LINK_FENCE, (fenceSrc) => {
+    for (let p = 0; p < 6; p++) {
+      put(fenceSrc, EAST_X + 15, 1515 + p * 2.2, Math.PI / 2);
+      put(fenceSrc, WEST_X - 15, 1520 + p * 2.2, Math.PI / 2);
+    }
+  });
+  /* Window-light flicker, best effort. No building here has a separate window
+     material to hook into — Meshy exports these as one fused material per
+     building, windows baked into the diffuse texture — so this is NOT aligned to
+     real window positions. Small emissive planes in a rough floor grid against
+     the frontage line instead, flickering with nightLightLevel like the porch
+     lights. Reads as "some windows are lit" at driving distance; won't hold up
+     to a close look. Easy to cut if it looks wrong in practice. */
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: 0 });
+  for (let i = 0; i < 7; i++) {
+    const side = i % 2 ? 1 : -1;
+    const gx = (side > 0 ? 39.8 : 14.2) + side * 0.05;
+    const gz = 96 + i * 190;
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 2; col++) {
+        if (Math.random() < 0.45) continue;   // most windows dark, a few lit
+        const gm = glowMat.clone();
+        const glow = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.9), gm);
+        glow.position.set(gx, 3.5 + row * 3.4, gz + (col - 0.5) * 1.6);
+        glow.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+        scene.add(glow);
+        windowGlows.push({ mesh: glow, phase: Math.random() * 6.28 });
+      }
+    }
+  }
 }
 
 /* THREE.LOD only switches level when update() is called with the camera. */
@@ -6811,6 +6951,7 @@ function buildParkedCars() {
    is an InstancedMesh, so the whole set is roughly a dozen draw calls rather than
    several hundred. Nothing here downloads anything. */
 let streetDetail = null, trafficLights = [], pigeons = [], steamPuffs = [], kerbPuddles = null;
+let litterMesh = null, nightLights = [], flockBirds = null, windowGlows = [];
 function buildStreetDetail() {
   if (streetDetail) return;
   streetDetail = new THREE.Group();
@@ -6903,6 +7044,21 @@ function buildStreetDetail() {
 
   // 5. litter drifting in the gutter
   const litterMat = new THREE.MeshStandardMaterial({ color: 0xb9b2a4, roughness: 1, side: THREE.DoubleSide });
+  /* Same wind-shader trick as the tall grass — vertex shader only, zero per-frame
+     CPU cost. Scaled down hard: these are ~0.2-unit scraps, not 1.5-unit blades,
+     so a flutter this size reads as paper shifting rather than the litter flying
+     off down the street. */
+  litterMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = { value: 0 };
+    shader.vertexShader = 'uniform float uTime;\n' + shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+       float ph = instanceMatrix[3][0] * 0.6 + instanceMatrix[3][2] * 0.8;
+       transformed.x += sin(uTime * 2.2 + ph) * 0.035 * transformed.y;
+       transformed.z += cos(uTime * 1.7 + ph * 1.4) * 0.02 * transformed.y;`
+    );
+    litterMat.userData.shader = shader;
+  };
   const litter = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.22, 0.16), litterMat, 60);
   for (let i = 0; i < 60; i++) {
     const side = i % 2 ? 1 : -1;
@@ -6910,6 +7066,7 @@ function buildStreetDetail() {
     litter.setMatrixAt(i, m);
   }
   streetDetail.add(litter);
+  litterMesh = litter;
 
   // 6. pigeons on the kerb, scattered by an approaching car
   const birdMat = new THREE.MeshStandardMaterial({ color: 0x6a6a72, roughness: 0.9 });
@@ -6989,6 +7146,85 @@ function buildStreetDetail() {
 
   streetDetail.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; o.frustumCulled = true; } });
   scene.add(streetDetail);
+
+  // 11. A few birds perched on the utility wires instead of only kerb pigeons —
+  // same mesh, same material, no scatter behaviour needed since they're static.
+  for (let i = 0; i < 8; i++) {
+    const side = i % 2 ? 1 : -1;
+    const perched = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), birdMat);
+    perched.scale.set(1, 0.85, 1.4);
+    perched.position.set(41.5 + side * 0.3, 10.6, 60 + i * 130 + rnd() * 20);   // 41.5 matches the pole line
+    streetDetail.add(perched);
+  }
+
+  // 12. A loose flock drifting overhead, only visible in the dawn/dusk window —
+  // sparse instances of the same pigeon mesh, simple circular drift, no new asset.
+  const flockGeo = new THREE.SphereGeometry(0.13, 6, 5);
+  flockBirds = new THREE.InstancedMesh(flockGeo, birdMat, 9);
+  flockBirds.userData.base = [];
+  for (let i = 0; i < 9; i++) {
+    const ang = (i / 9) * Math.PI * 2;
+    const r = 14 + rnd() * 10;
+    flockBirds.userData.base.push({ ang, r, y: 34 + rnd() * 6, speed: 0.15 + rnd() * 0.1, z0: 260 + rnd() * 300 });
+  }
+  flockBirds.visible = false;
+  scene.add(flockBirds);
+
+  // 13. A canvas-drawn graffiti tag on the brick wall prop — generated at runtime,
+  // no image asset needed, same cost class as the litter cards or the address
+  // plates (same canvas-texture technique as numFor() above).
+  const tagCanvas = document.createElement('canvas');
+  tagCanvas.width = 256; tagCanvas.height = 128;
+  const tg = tagCanvas.getContext('2d');
+  tg.fillStyle = 'rgba(0,0,0,0)'; tg.clearRect(0, 0, 256, 128);
+  tg.strokeStyle = '#c94a3a'; tg.lineWidth = 7; tg.lineCap = 'round'; tg.lineJoin = 'round';
+  tg.font = 'italic 900 54px -apple-system, Helvetica, Arial, sans-serif';
+  tg.save(); tg.translate(128, 78); tg.rotate(-0.05);
+  tg.strokeText('KP', -70, 0); tg.fillStyle = 'rgba(201,74,58,0.55)'; tg.fillText('KP', -70, 0);
+  tg.restore();
+  const tagTex = new THREE.CanvasTexture(tagCanvas);
+  tagTex.colorSpace = THREE.SRGBColorSpace;
+  const tagMat = new THREE.MeshStandardMaterial({ map: tagTex, transparent: true, roughness: 0.95 });
+  const tag = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 1.6), tagMat);
+  tag.position.set(1.8, 2.2, 172);   // WEST_X(10) - 8.2, on the brick_wall_a prop near a junction
+  tag.rotation.y = Math.PI / 2;
+  scene.add(tag);
+
+  // 14. Porch lights — same PointLight technique already used for the string
+  // lights and the pool, just a handful more near the frontage line. Intensity
+  // driven by nightLightLevel each frame in updateStreetDetail, same as every
+  // other night-only light in the scene.
+  for (let i = 0; i < 5; i++) {
+    const side = i % 2 ? 1 : -1;
+    const pl = new THREE.PointLight(0xffb877, 0, 7, 2);
+    // 39.8/14.2 match FRONT_FACE_E/W in loadMeshyBuildings — same safe frontage
+    // line, duplicated here since that constant is local to a different function.
+    pl.position.set((side > 0 ? 39.8 : 14.2) + side * 0.4, 3.4, 80 + i * 210);
+    scene.add(pl);
+    nightLights.push({ light: pl, base: 0.55, flicker: false });
+  }
+  // 15. One flickering streetlamp — the utility poles carry wires, not fixtures,
+  // so this is a new small light rather than toggling something that already
+  // existed. Deliberately just one; the rest of the street stays steady.
+  const lamp = new THREE.PointLight(0xd9e8ff, 0, 14, 2);
+  lamp.position.set(41.5, 9.5, 224);   // matches the pole line and spacing
+  scene.add(lamp);
+  nightLights.push({ light: lamp, base: 0.9, flicker: true });
+
+  // 16. Steam near the factory landmarks — same sprite technique as the manhole
+  // steam above, just two more emitter clusters out past the built frontage.
+  for (const z of [1538, 1543]) {
+    for (let i = 0; i < 4; i++) {
+      const sp = new THREE.Sprite(steamMat.clone());
+      sp.scale.setScalar(2.6 + rnd());
+      sp.position.set(ROAD_CX + (rnd() - 0.5) * 30, 3 + i * 1.1, z);
+      sp.userData.base = sp.position.y;
+      sp.userData.speed = 0.22 + rnd() * 0.25;
+      scene.add(sp);
+      steamPuffs.push(sp);
+    }
+  }
+
   if (window.__gameNote) window.__gameNote('street detail: ' + trafficLights.length + ' lights, ' + pigeons.length + ' pigeons');
 }
 
@@ -7008,7 +7244,8 @@ function updateStreetDetail(dt) {
       b.material.emissiveIntensity = lit ? 1.4 : 0;
     });
   }
-  // pigeons hop, and scatter when the car gets close
+  // pigeons hop, and scatter when either the car or the player on foot gets close
+  // (px/pz above already resolve to whichever one is active)
   const px = drivingMode ? carState.x : (character ? character.position.x : 0);
   const pz = drivingMode ? carState.z : (character ? character.position.z : 0);
   for (const b of pigeons) {
@@ -7034,6 +7271,42 @@ function updateStreetDetail(dt) {
     sp.position.y += sp.userData.speed * dt;
     sp.material.opacity = Math.max(0, 0.16 * (1 - (sp.position.y - sp.userData.base) / 5));
     if (sp.position.y - sp.userData.base > 5) sp.position.y = sp.userData.base;
+  }
+  // litter flutter — same uTime hand-off as the tall grass shader
+  if (litterMesh) {
+    const sh = litterMesh.material.userData.shader;
+    if (sh) sh.uniforms.uTime.value = t;
+  }
+  // overhead flock — visible only in the dawn/dusk window, drifting in a slow circle
+  if (flockBirds) {
+    const dusk = typeof dayTime === 'number' && ((dayTime > 0.22 && dayTime < 0.3) || (dayTime > 0.72 && dayTime < 0.8));
+    flockBirds.visible = dusk;
+    if (dusk) {
+      const mm = new THREE.Matrix4(), qq = new THREE.Quaternion();
+      flockBirds.userData.base.forEach((b, i) => {
+        const a = b.ang + t * b.speed;
+        mm.compose(
+          new THREE.Vector3(ROAD_CX + Math.cos(a) * b.r, b.y + Math.sin(t * 0.4 + i) * 0.6, b.z0 + Math.sin(a) * b.r),
+          qq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), a),
+          new THREE.Vector3(1, 1, 1)
+        );
+        flockBirds.setMatrixAt(i, mm);
+      });
+      flockBirds.instanceMatrix.needsUpdate = true;
+    }
+  }
+  // night lights — porch lights fade in with nightLightLevel, the one streetlamp
+  // also gets a irregular flicker on top so it reads as failing, not just dim
+  for (const nl of nightLights) {
+    let k = nl.base * (typeof nightLightLevel === 'number' ? nightLightLevel : 0);
+    if (nl.flicker) k *= 0.75 + 0.25 * Math.sin(t * 37) * (Math.sin(t * 5.3) > 0.7 ? 0.2 : 1);
+    nl.light.intensity = k * 3;
+  }
+  // window glows — same nightLightLevel fade, small per-window phase so the
+  // street doesn't read as one building's windows all switching at once
+  const nll = typeof nightLightLevel === 'number' ? nightLightLevel : 0;
+  for (const wg of windowGlows) {
+    wg.mesh.material.opacity = nll * (0.5 + 0.5 * Math.sin(t * 0.3 + wg.phase)) * 0.65;
   }
 }
 
@@ -8518,7 +8791,7 @@ CALLERS.junior.src = ASSETS.CALL_JUNIOR;
 RADIO_STATIONS[0].tracks = ['white_room.mp3', 'symphony_of_destruction.mp3'];
 RADIO_STATIONS[1].tracks = ['sabah_fakhri_ah_ya_helou.mp3'];
 RADIO_STATIONS[2].tracks = ['i_like_it_like_that.mp3', 'james_brown_payback.mp3', 'you_make_me_feel_so_young.mp3'];
-RADIO_STATIONS[3].tracks = ['podcast_sopranos_nj_joey_diaz.mp3', 'podcast_schirripa_imperioli_gandolfini.mp3'];
+RADIO_STATIONS[3].tracks = ['podcast_sopranos_nj_joey_diaz.mp3', 'podcast_schirripa_imperioli_gandolfini.mp3', 'joe_rogan_romero_castro.mp3', 'daniel_everett_amazon_tribe.mp3'];
 
 document.getElementById('horn-btn').addEventListener('click', (e) => { e.stopPropagation(); playHorn(); });
 document.querySelectorAll('.act-btn').forEach((btn) => {
@@ -9071,6 +9344,7 @@ function tick() {
   updateStreetDetail(dt);
   updateBuildingLOD();
   updateCallStrip();
+  updateAmbientEvents(dt);
   updateCarDJ(dt);
   updateInteriorActions();
   updateInteriorLights();
