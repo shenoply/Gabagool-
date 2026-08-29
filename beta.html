@@ -6464,6 +6464,8 @@ function loadMeshyBuildings() {
      Jersey avenue actually looks. Deterministic scatter so the street is identical
      every load, and each is scaled and turned slightly so a repeated model does not
      read as a repeated model. Skipped where a cross-street cuts through. */
+  /* Trees carry alpha-masked leaves; without alphaTest set on the Three material
+     they render as solid green cards. The GLB says MASK but Three needs it told. */
   load(ASSETS.STREET_TREE, (src) => {
     let seed = 90210;
     const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
@@ -6476,7 +6478,16 @@ function loadMeshyBuildings() {
         t.position.set(ROAD_CX + side * (ROAD_HW + 3.4 + rnd() * 0.8), 0, z + (rnd() - 0.5) * 3);
         t.scale.setScalar(s2);
         t.rotation.y = rnd() * Math.PI * 2;
-        t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true; } });
+        t.traverse((m) => {
+          if (!m.isMesh) return;
+          m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true;
+          const mats = Array.isArray(m.material) ? m.material : [m.material];
+          for (const mat of mats) {
+            if (!mat) continue;
+            if (mat.map && mat.map.image) { mat.alphaTest = 0.35; mat.transparent = false; }
+            mat.side = THREE.DoubleSide;   // leaf cards are single-sided planes
+          }
+        });
         scene.add(t);
         njBuildings.push(t);
       }
@@ -7340,10 +7351,13 @@ function endLoad(name) {
     setTimeout(() => { try { buildDust(); buildRain(); buildPuddles(); } catch (e) { console.warn('weather failed:', e); } }, 6200);
     setTimeout(() => { try { buildFireflies(); buildLeaves(); buildCelestialBodies(); } catch (e) { console.warn('ambient particles failed:', e); } }, 7200);
     setTimeout(loadInterior, 9000); // last in the queue — biggest file, least urgent
-    setTimeout(buildRoadFurniture, 6500); // procedural, no download
-    setTimeout(loadMeshyBuildings, 11000);
-    setTimeout(buildCrossStreets, 12500); // geometry only
-    setTimeout(buildParkedCars, 13500);   // clones existing traffic meshes // ~14MB of scenery, lowest priority — safe to build early
+    buildRoadFurniture(); // procedural, no download
+    /* Buildings used to arrive 11s in, so the world assembled itself around you
+       while you were already driving. They now start immediately, before the
+       deferred scenery, so the street is standing by the time you move. */
+    loadMeshyBuildings();
+    buildCrossStreets();  // geometry only, no reason to defer
+    setTimeout(buildParkedCars, 2500);    // needs traffic meshes to exist first // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
        low-poly next to a photoscanned character reads as a different game, and I
        made it worse by putting it 20 units from the road at 7.5x scale. Kept the
