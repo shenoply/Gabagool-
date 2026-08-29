@@ -7023,6 +7023,71 @@ function buildSideRoadBarriers() {
   scene.add(g);
 }
 
+/* ================= DESKTOP =================
+   The game already runs on a PC — it is a web page — but every control was built
+   for touch. This adds the rest of the keyboard bindings, hides the on-screen pad
+   when there is no touchscreen, and shows a key legend instead.
+
+   Detection is by capability, not user agent: a laptop with a touchscreen keeps
+   both, which is the right behaviour. */
+const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+function setupDesktop() {
+  if (IS_TOUCH) return;
+  document.body.classList.add('desktop');
+
+  const hide = ['joystick-zone', 'action-pad', 'handbrake-btn', 'util-pad', 'zoom-controls'];
+  for (const id of hide) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  }
+
+  const legend = document.createElement('div');
+  legend.id = 'key-legend';
+  legend.style.cssText = 'position:fixed;left:14px;bottom:14px;z-index:40;background:rgba(14,17,22,0.82);border:1px solid #2c343f;border-radius:12px;padding:12px 14px;font:600 11px/1.75 ui-monospace,Menlo,Consolas,monospace;color:#9fb0c4;backdrop-filter:blur(8px);pointer-events:none;';
+  legend.innerHTML =
+    '<div style="color:#ffb347;font-weight:800;letter-spacing:1px;margin-bottom:6px;">CONTROLS</div>' +
+    '<div><b>WASD</b> move &nbsp; <b>Shift</b> run</div>' +
+    '<div><b>Space</b> jump &nbsp; <b>E</b> car &nbsp; <b>F</b> shoot</div>' +
+    '<div><b>K</b> knee &nbsp; <b>H</b> horn &nbsp; <b>V</b> view</div>' +
+    '<div><b>P</b> phone &nbsp; <b>C</b> photo &nbsp; <b>G</b> cigar</div>' +
+    '<div><b>Space</b> handbrake while driving</div>' +
+    '<div><b>Drag</b> look &nbsp; <b>Wheel</b> zoom</div>';
+  document.body.appendChild(legend);
+
+  // a desktop screen is wider: pull the camera back a little for a better view
+  camDist = Math.min(camDistMax, 9.5);
+}
+
+/* Every action that had a button now has a key. Guarded so a missing function can
+   never throw on keypress. */
+const DESKTOP_KEYS = {
+  ' ':      () => { if (!drivingMode) startJump(); },   // handbrake handled as a hold below
+  'e':      () => { const t = document.getElementById('drive-toggle'); if (t) t.click(); },
+  'f':      () => fireShot(),
+  'k':      () => playAction('Boxing_Guard_Step_Knee_Strike', { loop: false, manual: true }),
+  'h':      () => { const b = document.getElementById('horn-btn'); if (b) b.click(); },
+  'v':      () => { if (drivingMode) setPovMode(!povMode); },
+  'p':      () => { phoneOpen ? closePhone() : openPhone(); },
+  'c':      () => togglePhotoMode(),
+  'g':      () => toggleCigar(),
+  'escape': () => { if (phoneOpen) closePhone(); },
+};
+
+window.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  const k = e.key.toLowerCase();
+  // handbrake is a hold, not a tap
+  if (k === ' ' && drivingMode) { handbrakeDown = true; e.preventDefault(); return; }
+  const fn = DESKTOP_KEYS[k];
+  if (!fn) return;
+  e.preventDefault();
+  try { fn(); } catch (err) { console.warn('key ' + k + ':', err); }
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key === ' ' && drivingMode) handbrakeDown = false;
+});
+
 function laneX(index) {
   // A few discrete lanes across the road width, avoiding the dead center.
   const lanes = [-ROAD_ZONE.halfW * 0.55, -ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.18, ROAD_ZONE.halfW * 0.55];
@@ -7786,6 +7851,7 @@ function endLoad(name) {
     loadMeshyBuildings();
     buildCrossStreets();  // geometry only, no reason to defer
     buildStreetDetail();
+    setupDesktop();
     buildJunctionMarkings();
     buildSideRoadBarriers();
     setTimeout(buildParkedCars, 2500);    // needs traffic meshes to exist first
