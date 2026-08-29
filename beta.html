@@ -1782,7 +1782,10 @@ function createGrassTexture() {
 /* 900 spanned only +-450 while the road runs to z=900 and the buildings to 565 —
    so the far end of the street floated over nothing, which reads as the world
    ending rather than as distance. 2200 covers the whole drivable length. */
-const groundGeo = new THREE.PlaneGeometry(1400, 1400); // covers z=900 road end; 2200 was needless memory // 100 -> 320 -> 900. At 320 the edge sat at 160 units while fog does not finish until 420, so it was only ~13% fogged and met the sky as a hard line. At 900 the edge is at 450, past fog far, so it fades out instead of ending. It is one quad either way — the size costs nothing.
+/* 3600 covers the full -80..1600 road with margin. A PlaneGeometry is two triangles
+   whatever its size — my earlier worry about this costing memory was wrong; only the
+   texture repeat needs to scale with it. */
+const groundGeo = new THREE.PlaneGeometry(3600, 3600); // 100 -> 320 -> 900. At 320 the edge sat at 160 units while fog does not finish until 420, so it was only ~13% fogged and met the sky as a hard line. At 900 the edge is at 450, past fog far, so it fades out instead of ending. It is one quad either way — the size costs nothing.
 const groundMat = new THREE.MeshStandardMaterial({ map: createGrassTexture(), roughness: 0.95, metalness: 0.0 });
 groundMat.map.anisotropy = maxAniso;
 const ground = new THREE.Mesh(groundGeo, groundMat);
@@ -2952,7 +2955,10 @@ function buildFloorOverlay(pool, bound, colliders) {
 // A long straight highway instead of a bounded lot — starts just past the yard's edge
 // (so it reads as "down the driveway" rather than a separate teleported world) and
 // stretches far off into the distance. halfW is lane width; halfD is how far it runs.
-const ROAD_ZONE = { centerX: 27, centerZ: 410, halfW: 10, halfD: 490 }; // extended halfD (420->490) to leave real paved road behind the spawn point, not just a 5-unit sliver
+/* Road extended from -80..900 to -80..1600. Everything else — spawns, clamps,
+   lane markings, shoulders — derives from these numbers, so this is the only place
+   the length is defined. */
+const ROAD_ZONE = { centerX: 27, centerZ: 760, halfW: 10, halfD: 840 };
 let drivingMode = false;
 let car = null;
 let carLoading = false;
@@ -6472,7 +6478,7 @@ function loadMeshyBuildings() {
   load(ASSETS.STREET_TREE, (src) => {
     let seed = 90210;
     const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
-    const CROSS_Z = [92, 180, 268, 356, 444, 532];
+    const CROSS_Z = JUNCTION_Z;
     for (let z = 40; z < 600; z += 15) {
       if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
       for (const side of [1, -1]) {
@@ -6533,7 +6539,7 @@ function loadMeshyBuildings() {
      in the gap between the front and back rows, along the cross-street mouths, where
      a real one would be. */
   load(ASSETS.DUMPSTER, (src) => {
-    const ALLEY_Z = [92, 180, 268, 356, 444, 532];
+    const ALLEY_Z = JUNCTION_Z.slice(0, 8);
     ALLEY_Z.forEach((z, i) => {
       put(src, EAST_X + 17 + (i % 2) * 4, z + 6, 1.55 + (i % 3) * 0.2);
       put(src, WEST_X - 17 - (i % 2) * 4, z - 6, 1.55 + (i % 3) * 0.2);
@@ -6563,7 +6569,7 @@ function buildCrossStreets() {
   const kerb   = new THREE.MeshStandardMaterial({ color: 0x6f6c66, roughness: 1.0, metalness: 0.0 });
 
   // side streets run east-west, cutting between building groups
-  const AT_Z = [92, 180, 268, 356, 444, 532];
+  const AT_Z = JUNCTION_Z;
   for (const z of AT_Z) {
     for (const side of [1, -1]) {
       const len = 90;
@@ -6620,7 +6626,7 @@ let streetDetail = null, trafficLights = [], pigeons = [], steamPuffs = [], kerb
 function buildStreetDetail() {
   if (streetDetail) return;
   streetDetail = new THREE.Group();
-  const CROSS = [92, 180, 268, 356, 444, 532];
+  const CROSS = JUNCTION_Z;
   const m = new THREE.Matrix4();
   let seed = 31337;
   const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
@@ -6693,7 +6699,7 @@ function buildStreetDetail() {
       g.position.set(ROAD_CX + side * (ROAD_HW + 1.9), 0, z + side * 7);
       g.rotation.y = side > 0 ? Math.PI : 0;
       streetDetail.add(g);
-      trafficLights.push({ bulbs, offset: (z / 90) % 1 });
+      trafficLights.push({ bulbs, z });   // real junction, drives off junctionPhase
     }
   }
 
@@ -6796,8 +6802,10 @@ function updateStreetDetail(dt) {
   const t = clock.elapsedTime;
   // traffic light cycle: 8s green, 2s amber, 8s red, offset per junction
   for (const L of trafficLights) {
-    const p = ((t * 0.055) + L.offset) % 1;
-    const on = p < 0.44 ? 2 : p < 0.55 ? 1 : 0;
+    /* Same phase function the cars use, so a light can never show green while the
+       traffic in front of it is stopped. */
+    const ph = junctionPhase(L.z);
+    const on = ph.mainGreen ? 2 : ph.mainAmber ? 1 : 0;
     L.bulbs.forEach((b, i) => {
       const lit = i === on;
       b.material.color.copy(lit ? b.userData.on : new THREE.Color(0x1a1a1a));
@@ -6832,6 +6840,141 @@ function updateStreetDetail(dt) {
     sp.material.opacity = Math.max(0, 0.16 * (1 - (sp.position.y - sp.userData.base) / 5));
     if (sp.position.y - sp.userData.base > 5) sp.position.y = sp.userData.base;
   }
+}
+
+/* ================= JUNCTIONS AND SIGNALS =================
+   A real four-phase intersection system rather than decorative lights.
+
+   Each junction runs the same global cycle, offset so they are not synchronised:
+     0.00-0.46  main road green, cross red
+     0.46-0.53  main amber
+     0.53-0.96  cross green, main red
+     0.96-1.00  cross amber
+   Traffic on both roads reads its own light, brakes for the stop line, and holds
+   until green. The player is not forced to stop — being stuck at a red light in
+   your own game is not fun — but the side roads are barriered so you stay on the
+   main road while the AI uses the junctions.
+*/
+const JUNCTION_Z = [];
+for (let z = 92; z < 1560; z += 88) JUNCTION_Z.push(z);
+const CYCLE_SECONDS = 22;
+
+function junctionPhase(z) {
+  const offset = ((z / 88) * 0.37) % 1;      // stagger so they don't all switch together
+  const p = ((clock.elapsedTime / CYCLE_SECONDS) + offset) % 1;
+  return {
+    p,
+    mainGreen: p < 0.46,
+    mainAmber: p >= 0.46 && p < 0.53,
+    crossGreen: p >= 0.53 && p < 0.96,
+    crossAmber: p >= 0.96,
+  };
+}
+
+/* Cars must stop AT the line, not in the middle of the box. */
+const STOP_LINE = 7.5;
+function mainRoadStopZ(z, headingNorth) {
+  // the nearest junction ahead, and the z at which to stop for it
+  let best = null;
+  for (const jz of JUNCTION_Z) {
+    const d = headingNorth ? jz - z : z - jz;
+    if (d > 0 && d < 60 && (!best || d < best.d)) best = { jz, d };
+  }
+  if (!best) return null;
+  const ph = junctionPhase(best.jz);
+  if (ph.mainGreen) return null;                        // clear to go
+  if (ph.mainAmber && best.d < 14) return null;         // too close to stop safely
+  return { stopAt: best.jz + (headingNorth ? -STOP_LINE : STOP_LINE), d: best.d };
+}
+
+/* ---- cross traffic: cars that use the side roads the player cannot ---- */
+const crossCars = [];
+function buildCrossTraffic() {
+  if (crossCars.length || typeof trafficCars === 'undefined' || !trafficCars.length) return;
+  let seed = 8642;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  for (let i = 0; i < 10; i++) {
+    const src = trafficCars[Math.floor(rnd() * trafficCars.length)];
+    if (!src || !src.mesh) continue;
+    const mesh = src.mesh.clone(true);
+    const jz = JUNCTION_Z[Math.floor(rnd() * Math.min(8, JUNCTION_Z.length))];
+    const dir = rnd() < 0.5 ? 1 : -1;
+    mesh.position.set(ROAD_CX + dir * (55 + rnd() * 30), 0, jz + (dir > 0 ? 2.2 : -2.2));
+    mesh.rotation.y = dir > 0 ? -Math.PI / 2 : Math.PI / 2;
+    mesh.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.frustumCulled = true; } });
+    scene.add(mesh);
+    crossCars.push({ mesh, jz, dir, speed: 5 + rnd() * 3, v: 0 });
+  }
+  if (window.__gameNote) window.__gameNote('cross traffic: ' + crossCars.length);
+}
+
+function updateCrossTraffic(dt) {
+  for (const c of crossCars) {
+    const ph = junctionPhase(c.jz);
+    // distance to the junction centre, travelling toward it
+    const toCentre = (ROAD_CX - c.mesh.position.x) * (c.dir > 0 ? -1 : 1);
+    const approaching = toCentre > 0 && toCentre < 40;
+    const mustStop = approaching && toCentre > STOP_LINE && !(ph.crossGreen || ph.crossAmber);
+    const target = mustStop ? 0 : c.speed;
+    c.v += (target - c.v) * Math.min(1, dt * (mustStop ? 3.2 : 1.4));
+    c.mesh.position.x += -c.dir * c.v * dt;
+    // recycle far out of sight, on the far side
+    if (Math.abs(c.mesh.position.x - ROAD_CX) > 110) {
+      c.mesh.position.x = ROAD_CX + c.dir * 105;
+    }
+  }
+}
+
+/* ---- junction road markings: stop lines and crosswalks ---- */
+function buildJunctionMarkings() {
+  const paint = new THREE.MeshStandardMaterial({ color: 0xd8d4c8, roughness: 0.9, metalness: 0 });
+  const g = new THREE.Group();
+  const flat = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+  const m = new THREE.Matrix4();
+  const bars = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), paint, JUNCTION_Z.length * 14);
+  let k = 0;
+  for (const jz of JUNCTION_Z) {
+    for (const dir of [1, -1]) {
+      // stop line across the two lanes on that side
+      const sc = new THREE.Matrix4().makeScale(ROAD_HW, 0.55, 1);
+      m.copy(flat).multiply(sc).setPosition(ROAD_CX + dir * ROAD_HW / 2, 0.04, jz - dir * STOP_LINE);
+      bars.setMatrixAt(k++, m);
+      // zebra bars just inside the stop line
+      for (let i = 0; i < 6; i++) {
+        const s2 = new THREE.Matrix4().makeScale(0.55, 3.0, 1);
+        m.copy(flat).multiply(s2).setPosition(
+          ROAD_CX - ROAD_HW + 1.5 + i * 3.2, 0.04, jz - dir * (STOP_LINE - 2.6)
+        );
+        bars.setMatrixAt(k++, m);
+      }
+    }
+  }
+  bars.count = k;
+  g.add(bars);
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; o.frustumCulled = true; } });
+  scene.add(g);
+}
+
+/* ---- barriers so the player stays on the main road ---- */
+function buildSideRoadBarriers() {
+  const mat = new THREE.MeshStandardMaterial({ color: 0xc8c4b8, roughness: 0.95 });
+  const stripe = new THREE.MeshStandardMaterial({ color: 0xd8582a, roughness: 0.95 });
+  const g = new THREE.Group();
+  for (const jz of JUNCTION_Z) {
+    for (const side of [1, -1]) {
+      // a low jersey barrier across the side road mouth
+      const b = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.85, 8.4), mat);
+      b.position.set(ROAD_CX + side * (ROAD_HW + 3.2), 0.42, jz);
+      g.add(b);
+      for (const dz of [-2.6, 0, 2.6]) {
+        const s = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.5, 0.9), stripe);
+        s.position.set(ROAD_CX + side * (ROAD_HW + 3.2), 0.55, jz + dz);
+        g.add(s);
+      }
+    }
+  }
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; o.frustumCulled = true; } });
+  scene.add(g);
 }
 
 function laneX(index) {
@@ -7583,7 +7726,10 @@ function endLoad(name) {
     loadMeshyBuildings();
     buildCrossStreets();  // geometry only, no reason to defer
     buildStreetDetail();
-    setTimeout(buildParkedCars, 2500);    // needs traffic meshes to exist first // ~14MB of scenery, lowest priority — safe to build early
+    buildJunctionMarkings();
+    buildSideRoadBarriers();
+    setTimeout(buildParkedCars, 2500);    // needs traffic meshes to exist first
+    setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
        low-poly next to a photoscanned character reads as a different game, and I
        made it worse by putting it 20 units from the road at 7.5x scale. Kept the
@@ -8632,6 +8778,7 @@ function tick() {
     const want = inInterior ? FOG_INDOOR : FOG_OUTDOOR;
     if (scene.fog.density !== want) scene.fog.density = want;
   }
+  updateCrossTraffic(dt);
   updateStreetDetail(dt);
   updateBuildingLOD();
   updateCallStrip();
