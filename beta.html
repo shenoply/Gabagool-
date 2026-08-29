@@ -622,6 +622,7 @@ const ASSETS = {
      here on gets a new name. */
   STREET_TREE: 'street_tree_v2.glb',
   STREET_TREE_B: 'street_tree_b.glb', // mature deciduous — Meshy 2.6M tris knocked to 20K, 10m height + ground offset baked in
+  STREET_TREE_C: 'street_tree_c.glb', // legacy .3ds asset via assimp, 16K tris, 10m height + ground offset baked in
   /* _hq: 1024px textures instead of 512. New filenames because the service worker
      caches .glb cache-first and would keep serving the blurry ones. */
   ROW_FIVE_A: 'row_five_a_hq.glb',
@@ -629,6 +630,21 @@ const ASSETS = {
   ROW_FOUR: 'row_four_hq.glb',
   CORNER_BLOCK: 'corner_block.glb',
   CORNER_ROUND: 'corner_round.glb',
+  // Second Meshy batch: two more row-of-five variants, a second row-of-four, two
+  // more corner options, two factory landmarks, a fence panel. All decimated with
+  // gltfpack (-sa sloppy mode) straight off — gltf-transform's simplify was never
+  // going to touch the corner/factory shapes given corner_block and corner_round
+  // never decimated with it either. 1024px textures, scale/ground-offset baked to
+  // match each type's existing convention (rows/corners at the established 16-17m,
+  // factories taller at 24m as landmarks, fence at a real 1.8m).
+  ROW_FIVE_C: 'row_five_c_hq.glb',
+  ROW_FIVE_D: 'row_five_d_hq.glb',
+  ROW_FOUR_B: 'row_four_b_hq.glb',
+  CORNER_BLOCK_B: 'corner_block_b.glb',
+  CORNER_C: 'corner_c.glb',
+  FACTORY_A: 'factory_a.glb',
+  FACTORY_B: 'factory_b.glb',
+  CHAIN_LINK_FENCE: 'chain_link_fence.glb',
   PORK_STORE_LOD: 'pork_store_lod.glb',
   BARBER_SHOP_LOD: 'barber_shop_lod.glb',
   CHURCH_LOD: 'church_lod.glb',
@@ -855,7 +871,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 18:32';
+  window.__BUILD = '2026-08-29 19:02';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -6545,24 +6561,25 @@ function loadMeshyBuildings() {
      read as a repeated model. Skipped where a cross-street cuts through. */
   /* Trees carry alpha-masked leaves; without alphaTest set on the Three material
      they render as solid green cards. The GLB says MASK but Three needs it told. */
-  /* Two species share the avenue now. Both load callbacks walk the IDENTICAL
-     deterministic sequence — same seed, same five rnd() draws per slot — and each
-     plants only its own slots. The mix is therefore stable across loads, the two
-     downloads stay independent, and if one model fails you get half the trees,
-     visibly, rather than none — or a silent fallback that would hide the failure. */
-  const plantAvenue = (src, wantB) => {
+  /* Three species share the avenue now. All three load callbacks walk the
+     IDENTICAL deterministic sequence — same seed, same five rnd() draws per slot
+     — and each plants only its own slots. The mix is therefore stable across
+     loads, the three downloads stay independent, and if one model fails you get
+     the other two, visibly, rather than a silent fallback that would hide it. */
+  const plantAvenue = (src, want) => {
     let seed = 90210;
     const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
     const CROSS_Z = JUNCTION_Z;
     for (let z = 40; z < 600; z += 15) {
       if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
       for (const side of [1, -1]) {
-        const isB = rnd() < 0.45;      // ~45% mature deciduous; drawn FIRST so both walks stay in step
+        const roll = rnd();      // species pick — drawn FIRST so all three walks stay in step
+        const species = roll < 0.34 ? 'v2' : roll < 0.67 ? 'b' : 'c';
         const s2 = 0.85 + rnd() * 0.4;
         const px = ROAD_CX + side * (ROAD_HW + 3.4 + rnd() * 0.8);
         const pz = z + (rnd() - 0.5) * 3;
         const ry = rnd() * Math.PI * 2;
-        if (isB !== wantB) continue;   // all five draws above happen either way, in both callbacks
+        if (species !== want) continue;   // all five draws above happen regardless, in every callback
         const t = src.clone(true);
         t.position.set(px, 0, pz);
         t.scale.setScalar(s2);
@@ -6575,7 +6592,7 @@ function loadMeshyBuildings() {
             if (!mat) continue;
             if (mat.map) { mat.map.anisotropy = maxAniso; mat.map.needsUpdate = true; }
             if (mat.map && mat.map.image) { mat.alphaTest = 0.35; mat.transparent = false; }
-            mat.side = THREE.DoubleSide;   // leaf cards are single-sided planes; harmless on the solid tree
+            mat.side = THREE.DoubleSide;   // leaf cards are single-sided planes; harmless on the solid trees
           }
         });
         scene.add(t);
@@ -6583,13 +6600,24 @@ function loadMeshyBuildings() {
       }
     }
   };
-  load(ASSETS.STREET_TREE, (src) => plantAvenue(src, false));
+  load(ASSETS.STREET_TREE, (src) => plantAvenue(src, 'v2'));
   /* street_tree_b is solid geometry, no alpha cards — the alphaTest above discards
      nothing on it. Meshy shipped it at 2.6M tris / 189MB; gltf-transform's simplify
      refused it (the corner_block failure mode) but gltfpack's sloppy mode
      (-si 0.01 -sa) took it to 20K tris / 425KB. Scale and ground offset baked in
      the file, same convention as the buildings. */
-  load(ASSETS.STREET_TREE_B, (src) => plantAvenue(src, true));
+  load(ASSETS.STREET_TREE_B, (src) => plantAvenue(src, 'b'));
+  /* street_tree_c: a different lineage entirely — a legacy .3ds asset (bark +
+     alpha-masked leaf card, German-authored: "Rinde" = bark, "Blatt" = leaf),
+     converted with assimp since gltf-transform doesn't read .3ds. The .3ds format
+     has no alphaMode concept, so the leaf material imported OPAQUE and the alpha
+     mask shipped as a SEPARATE grayscale file (blatt1_a.jpg) rather than baked into
+     the color texture's alpha channel — composited the two before export, same as
+     any other alpha-cutout leaf here. gltfpack (-si 0.22 -sa) took the welded model
+     from 93K verts to 16K and correctly preserved MASK on the leaf material while
+     merging the four bark LOD-named material zones into one. Scale and ground
+     offset baked in, same convention as the other two. */
+  load(ASSETS.STREET_TREE_C, (src) => plantAvenue(src, 'c'));
 
   const EAST_X = 44, WEST_X = 10;
   const FACE_W = -Math.PI / 2, FACE_E = Math.PI / 2;
@@ -6616,18 +6644,23 @@ function loadMeshyBuildings() {
      width plus a small gap. That is what stops the street reading as one building
      copied over and over. */
   const FRONT = [
-    { key: ASSETS.ROW_FIVE_A,   w: 32 },
-    { key: ASSETS.PORK_STORE,   w: 11 },
-    { key: ASSETS.ROW_FOUR,     w: 40 },
-    { key: ASSETS.BARBER_SHOP,  w: 10 },
-    { key: ASSETS.ROW_FIVE_B,   w: 32 },
-    { key: ASSETS.CHURCH,       w: 14 },
-    { key: ASSETS.CORNER_BLOCK, w: 33 },
-    { key: ASSETS.BRICK_WALL,   w: 16 },
-    { key: ASSETS.ROW_FIVE_A,   w: 32 },
-    { key: ASSETS.CORNER_ROUND, w: 25 },
-    { key: ASSETS.ROW_FOUR,     w: 40 },
-    { key: ASSETS.PORK_STORE,   w: 11 },
+    { key: ASSETS.ROW_FIVE_A,     w: 32 },
+    { key: ASSETS.PORK_STORE,     w: 11 },
+    { key: ASSETS.ROW_FOUR,       w: 40 },
+    { key: ASSETS.BARBER_SHOP,    w: 10 },
+    { key: ASSETS.ROW_FIVE_C,     w: 32 },
+    { key: ASSETS.CHURCH,         w: 14 },
+    { key: ASSETS.CORNER_BLOCK,   w: 33 },
+    { key: ASSETS.BRICK_WALL,     w: 16 },
+    { key: ASSETS.ROW_FIVE_B,     w: 32 },
+    { key: ASSETS.CORNER_ROUND,   w: 25 },
+    { key: ASSETS.ROW_FOUR_B,     w: 40 },
+    { key: ASSETS.PORK_STORE,     w: 11 },
+    { key: ASSETS.ROW_FIVE_D,     w: 32 },
+    { key: ASSETS.CORNER_BLOCK_B, w: 33 },
+    { key: ASSETS.BARBER_SHOP,    w: 10 },
+    { key: ASSETS.CORNER_C,       w: 25 },
+    { key: ASSETS.ROW_FOUR,       w: 40 },
   ];
 
   // work out every slot up front, so each model is loaded once and placed many times
@@ -6665,7 +6698,26 @@ function loadMeshyBuildings() {
       put(src, EAST_X + 17 + (i % 2) * 4, z + 6, 1.55 + (i % 3) * 0.2);
       put(src, WEST_X - 17 - (i % 2) * 4, z - 6, 1.55 + (i % 3) * 0.2);
     });
+    /* Chain-link fence, first pass. No placement convention existed for this prop
+       yet, so a short 3-panel screening run tucked behind each alley's dumpster —
+       ordinary urban set-dressing, and an easy thing to relocate once there's a
+       stronger opinion on where it belongs (vacant lots and the factory yard are
+       the obvious next candidates once those exist). */
+    load(ASSETS.CHAIN_LINK_FENCE, (fenceSrc) => {
+      ALLEY_Z.slice(0, 4).forEach((z, i) => {
+        for (let p = -1; p <= 1; p++) put(fenceSrc, EAST_X + 24, z + 6 + p * 2.2, Math.PI / 2);
+        for (let p = -1; p <= 1; p++) put(fenceSrc, WEST_X - 24, z - 6 + p * 2.2, Math.PI / 2);
+      });
+    });
   });
+
+  /* Two factory landmarks, past the end of the built frontage (FRONT[] stops at
+     z=1500; the road itself runs to 1600) — a capped, industrial end-of-the-line
+     rather than the street just stopping. put() already clamps anything whose
+     measured bbox would clip the road, so their ~30m depth is handled the same
+     way as everything else; no special-casing needed here. */
+  load(ASSETS.FACTORY_A, (src) => put(src, EAST_X, 1540, -Math.PI / 2));
+  load(ASSETS.FACTORY_B, (src) => put(src, WEST_X, 1545, Math.PI / 2));
 }
 
 /* THREE.LOD only switches level when update() is called with the camera. */
