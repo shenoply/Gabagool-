@@ -883,7 +883,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 19:32';
+  window.__BUILD = '2026-08-29 19:42';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -3753,12 +3753,21 @@ function buildTallGrass() {
   const tex = createBladeTexture();
   tex.anisotropy = maxAniso;
 
-  // Three crossed quads per tuft, so it reads as volume from any angle.
+  // Two crossed quads per tuft (was three). All three used to pivot on the exact
+  // same vertical line — rotateY spins a plane around its own centre, and only the
+  // Y translate had been applied before it, so the seam never moved off (0,0)
+  // regardless of angle. Three cutout layers fighting for the same pixels at that
+  // seam is very likely the "texture changes as the camera moves" report: which
+  // layer wins flips as the view angle does. Two planes, each nudged a hair off
+  // that shared line after rotating, means no two seams ever exactly coincide.
+  // Cheaper too. Trade-off: two planes read thinner from the two angles where
+  // you're looking straight down one of them, versus three's better all-angle
+  // coverage — worth it if this was the actual cause, easy to revert if not.
   const quads = [];
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < 2; k++) {
     const g = new THREE.PlaneGeometry(1.5, 1.15);
-    g.translate(0, 0.575, 0);
-    g.rotateY((k / 3) * Math.PI);
+    g.rotateY((k / 2) * Math.PI);
+    g.translate((k === 0 ? -1 : 1) * 0.02, 0.575, (k === 0 ? -1 : 1) * 0.02);
     quads.push(g);
   }
   const tuftGeo = mergeGeometries(quads);
@@ -5326,6 +5335,7 @@ function enterInterior() {
   setTimeout(() => {
     inInterior = true;
     interiorRoot.visible = true;
+    showMissionPopup('🚧', 'Still in progress', 'Interior isn\u2019t finished yet — may run slower here.', 4000);
     if (tvVideo) tvVideo.play().catch(() => {});
     setOutdoorsVisible(false);
     if (doorMarker) doorMarker.position.set(INTERIOR_EXIT.x, 0, INTERIOR_EXIT.z + 2.5);
@@ -6955,18 +6965,25 @@ function buildStreetDetail() {
     t.colorSpace = THREE.SRGBColorSpace;
     return new THREE.MeshStandardMaterial({ map: t, roughness: 0.8 });
   };
+  /* Numbers step independently of the building walker (fixed 44-unit stride vs
+     the walker's per-building width), so a plate could land inside a junction's
+     cleared zone where no building exists — a number plate with nothing behind it,
+     floating over open ground. Same clearance check the buildings themselves use. */
   let addr = 214;
   for (let i = 0; i < 9; i++) {
     for (const side of [1, -1]) {
-      const plate = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.5), numFor(addr));
-      plate.position.set(
-        ROAD_CX + side * (ROAD_HW + (side > 0 ? 23.2 : 16.8)),
-        4.1,
-        60 + i * 44 + (side > 0 ? 0 : 11)
-      );
-      plate.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
-      streetDetail.add(plate);
-      addr += 2;
+      const z = 60 + i * 44 + (side > 0 ? 0 : 11);
+      if (!JUNCTION_Z.some((jz) => Math.abs(jz - z) < 15)) {
+        const plate = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.5), numFor(addr));
+        plate.position.set(
+          ROAD_CX + side * (ROAD_HW + (side > 0 ? 23.2 : 16.8)),
+          4.1,
+          z
+        );
+        plate.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+        streetDetail.add(plate);
+      }
+      addr += 2;   // keep the numbering sequence even where a plate got skipped
     }
   }
 
