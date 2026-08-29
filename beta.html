@@ -1004,7 +1004,11 @@ function updateDayNight(dt) {
   key.intensity = s.keyI;
   hemi.color.setHex(s.hemiSky);
   hemi.intensity = s.hemiI;
-  if (scene.fog) scene.fog.color.setHex(s.fog);
+  /* Fog takes the HORIZON colour, not the separate (and always darker) fog colour.
+     Objects only truly disappear if what they fade into is the same colour as the
+     sky behind them — with a darker fog they faded into a smudge that read as a
+     silhouette emerging, which is the popping. */
+  if (scene.fog) scene.fog.color.setHex(s.horizon);
   scene.background && scene.background.isColor && scene.background.setHex(s.zenith);
 
   // Sun arcs across the sky rather than sitting in one place all day.
@@ -1034,7 +1038,10 @@ function updateDayNight(dt) {
      300 units ~43%               600 units ~89%
    So anything arriving past 500 is already gone before you could see it arrive.
    Density is tunable live via window.__fog(d) — see below. */
-const FOG_OUTDOOR = 0.0016, FOG_INDOOR = 0.05;
+/* 0.0035 puts full occlusion at ~500 units — inside the length of the street, so
+   nothing can ever appear in legible air:
+     200: 34%   300: 59%   400: 78%   500: 95%   600: 99% */
+const FOG_OUTDOOR = 0.0035, FOG_INDOOR = 0.05;
 scene.fog = new THREE.FogExp2(0xc9784a, FOG_OUTDOOR); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
 /* ---------- Image-based lighting ----------
