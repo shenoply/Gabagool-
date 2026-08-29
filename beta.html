@@ -883,7 +883,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 19:27';
+  window.__BUILD = '2026-08-29 19:32';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -6572,28 +6572,24 @@ function loadMeshyBuildings() {
      they render as solid green cards. The GLB says MASK but Three needs it told. */
   /* Two species now — the original street_tree_v2 (alpha-card leaves) is retired
      per request; only the two added this session remain. Both load callbacks walk
-     the IDENTICAL deterministic sequence — same seed, same five rnd() draws per
-     slot — so the mix stays stable across loads and a failed download just means
-     half the trees rather than a silent gap.
-     Range widened 600->1200 and spacing tightened 15->11 (was ~63 trees, this is
-     ~158) — stopped short of the full 1500 building line and the factories at
-     1540 rather than maxing it out, since tree count stacks directly onto the
-     framerate issue that's already open. Easy to push further if 158 still reads
-     as sparse. */
-  const plantAvenue = (src, want) => {
+     the IDENTICAL deterministic sequence — so the mix stays stable across loads.
+     Range widened 600->1200 and spacing tightened 15->11 (was ~63 trees at the
+     original density).
+     Down to one species now — street_tree_b (the mature deciduous one, the actual
+     Meshy AI export) is out too, same as street_tree_v2 before it. Every slot
+     plants directly, no more species roll splitting them — so this is ~2x the
+     count of the last build, not just the wider/tighter range on its own. */
+  const plantAvenue = (src) => {
     let seed = 90210;
     const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
     const CROSS_Z = JUNCTION_Z;
     for (let z = 40; z < 1200; z += 11) {
       if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
       for (const side of [1, -1]) {
-        const roll = rnd();      // species pick — drawn FIRST so both walks stay in step
-        const species = roll < 0.5 ? 'b' : 'c';
         const s2 = 0.85 + rnd() * 0.4;
         const px = ROAD_CX + side * (ROAD_HW + 3.4 + rnd() * 0.8);
         const pz = z + (rnd() - 0.5) * 3;
         const ry = rnd() * Math.PI * 2;
-        if (species !== want) continue;   // both draws above happen regardless, in every callback
         const t = src.clone(true);
         t.position.set(px, 0, pz);
         t.scale.setScalar(s2);
@@ -6606,7 +6602,7 @@ function loadMeshyBuildings() {
             if (!mat) continue;
             if (mat.map) { mat.map.anisotropy = maxAniso; mat.map.needsUpdate = true; }
             if (mat.map && mat.map.image) { mat.alphaTest = 0.35; mat.transparent = false; }
-            mat.side = THREE.DoubleSide;   // leaf cards are single-sided planes; harmless on the solid trees
+            mat.side = THREE.DoubleSide;   // leaf cards are single-sided planes; harmless on the solid tree
           }
         });
         scene.add(t);
@@ -6614,23 +6610,16 @@ function loadMeshyBuildings() {
       }
     }
   };
-  /* street_tree_b is solid geometry, no alpha cards — the alphaTest above discards
-     nothing on it. Meshy shipped it at 2.6M tris / 189MB; gltf-transform's simplify
-     refused it (the corner_block failure mode) but gltfpack's sloppy mode
-     (-si 0.01 -sa) took it to 20K tris / 425KB. Scale and ground offset baked in
-     the file, same convention as the buildings. */
-  load(ASSETS.STREET_TREE_B, (src) => plantAvenue(src, 'b'));
-  /* street_tree_c: a different lineage entirely — a legacy .3ds asset (bark +
-     alpha-masked leaf card, German-authored: "Rinde" = bark, "Blatt" = leaf),
-     converted with assimp since gltf-transform doesn't read .3ds. The .3ds format
-     has no alphaMode concept, so the leaf material imported OPAQUE and the alpha
-     mask shipped as a SEPARATE grayscale file (blatt1_a.jpg) rather than baked into
-     the color texture's alpha channel — composited the two before export, same as
-     any other alpha-cutout leaf here. gltfpack (-si 0.22 -sa) took the welded model
-     from 93K verts to 16K and correctly preserved MASK on the leaf material while
-     merging the four bark LOD-named material zones into one. Scale and ground
-     offset baked in, same convention as the other two. */
-  load(ASSETS.STREET_TREE_C, (src) => plantAvenue(src, 'c'));
+  /* street_tree_c: a legacy .3ds asset (bark + alpha-masked leaf card,
+     German-authored: "Rinde" = bark, "Blatt" = leaf), converted with assimp since
+     gltf-transform doesn't read .3ds. The .3ds format has no alphaMode concept, so
+     the leaf material imported OPAQUE and the alpha mask shipped as a SEPARATE
+     grayscale file (blatt1_a.jpg) rather than baked into the color texture's alpha
+     channel — composited the two before export, same as any other alpha-cutout
+     leaf here. gltfpack (-si 0.22 -sa) took the welded model from 93K verts to 16K
+     and correctly preserved MASK on the leaf material. Scale and ground offset
+     baked in. Not a Meshy asset — the only tree species left that isn't. */
+  load(ASSETS.STREET_TREE_C, (src) => plantAvenue(src));
 
   const EAST_X = 44, WEST_X = 10;
   const FACE_W = -Math.PI / 2, FACE_E = Math.PI / 2;
