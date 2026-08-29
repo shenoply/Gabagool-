@@ -848,9 +848,17 @@ function base64ToArrayBuffer(b64) {
     });
   } catch (e) {}
 
+  /* Build stamp. Three times now we have chased a bug that was actually a cached
+     page — the fix was live and the browser was running yesterday's file. This
+     prints on every load so we can both see which build is running before
+     debugging anything else. */
+  window.__BUILD = '2026-08-29 11:17';
+  if (window.__gameNote) window.__gameNote('BUILD 2026-08-29 11:17');
+
   window.__reportGPU = () => {
     try {
       const i = renderer.info;
+      note('BUILD: ' + window.__BUILD);
       const c = window.__charRef && window.__charRef.position;
       if (c) note('POSITION: X ' + c.x.toFixed(1) + '  Z ' + c.z.toFixed(1));
       if (i.programs) note('SHADERS: ' + i.programs.length);
@@ -6471,7 +6479,9 @@ function loadMeshyBuildings() {
     njBuildings.push(l);
   };
 
+  let placedCount = 0;
   const put = (src, x, z, rotY) => {
+    placedCount++;
     const o = src.clone(true);
     o.position.set(x, 0, z);
     o.rotation.y = rotY;
@@ -6579,6 +6589,10 @@ function loadMeshyBuildings() {
   /* Dumpsters belong down the side, not on the kerb in front of a church. These sit
      in the gap between the front and back rows, along the cross-street mouths, where
      a real one would be. */
+  setTimeout(() => {
+    if (window.__gameNote) window.__gameNote('meshy placed: ' + placedCount + ' objects');
+  }, 9000);
+
   load(ASSETS.DUMPSTER, (src) => {
     const ALLEY_Z = JUNCTION_Z.slice(0, 8);
     ALLEY_Z.forEach((z, i) => {
