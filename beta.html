@@ -906,7 +906,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 02:43';
+  window.__BUILD = '2026-08-30 02:47';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7588,7 +7588,7 @@ function spawnAnimatedNPC(assetKey, positions, animName) {
         const mixer = new THREE.AnimationMixer(clone);
         const clip = (animName && THREE.AnimationClip.findByName(gltf.animations, animName)) || gltf.animations[0];
         if (clip) mixer.clipAction(clip).play();
-        npcMixers.push(mixer);
+        npcMixers.push({ mixer, x: pos.x, z: pos.z });   // position kept alongside for the distance-cull in the main loop
       }
     }
     if (window.__gameNote) window.__gameNote(assetKey + ' loaded OK (' + positions.length + ' placed)');
@@ -10190,7 +10190,19 @@ function tick() {
   updateVoiceBarks(dt);
   updateAmbientAudio(dt);
   if (mixer) mixer.update(dt);
-  for (const m of npcMixers) m.update(dt);
+  {
+    // 86 animated NPCs now (bird/rat/puppy), spread across the whole 1500-unit
+    // avenue — at any moment only a handful are actually near the player. Full
+    // skeletal update on all of them every frame was pure waste on the rest.
+    // 120 units covers visible range comfortably; fog already hides anything
+    // beyond that in normal play, so nothing changes on screen.
+    const px = drivingMode ? carState.x : (character ? character.position.x : 0);
+    const pz = drivingMode ? carState.z : (character ? character.position.z : 0);
+    for (const n of npcMixers) {
+      const dx = n.x - px, dz = n.z - pz;
+      if (dx * dx + dz * dz < 14400) n.mixer.update(dt);   // 120*120
+    }
+  }
   updateCamera(dt);
   updatePovCamera(); // overrides the orbit camera while in first person
   if (character && !drivingMode) {
