@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 14:35';
+  window.__BUILD = '2026-08-30 14:43';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1639,6 +1639,7 @@ function updateGarageProximity() {
 }
 
 function updatePhoneRinger() {
+  if (freeCamMode) return;   // no calls while flying around exploring
   if (phoneRingPopupOpen || missionState !== 'none' || !audioUnlocked) return;
   if (gameState === 'passedout' || georgeDialogOpen) return;
   // No safety net any more: an empty queue is meant to leave the phone silent.
@@ -1787,13 +1788,23 @@ function toggleFreeCam() {
   if (window.__gameNote) window.__gameNote('free camera ' + (freeCamMode ? 'ON — joystick flies, zoom +/- go up/down' : 'OFF'));
 }
 const _freeCamFwd = new THREE.Vector3(), _freeCamRight = new THREE.Vector3(), _freeCamLook = new THREE.Vector3();
+const _freeCamVel = new THREE.Vector3();
 function stepFreeCam(dt) {
-  const speed = 26;
+  // Was instant velocity (position moved directly by input every frame) — felt
+  // robotic, snapping to full speed and stopping dead. Now eases toward a target
+  // velocity instead, which reads as actually flying. Speed also raised — the
+  // map is a lot bigger now (multiple 1500-unit roads), 26 units/sec made
+  // crossing it tedious.
+  const speed = 55;
   _freeCamFwd.set(Math.sin(camYaw), 0, Math.cos(camYaw));
   _freeCamRight.set(Math.cos(camYaw), 0, -Math.sin(camYaw));
-  freeCamPos.addScaledVector(_freeCamFwd, joyVec.y * speed * dt);
-  freeCamPos.addScaledVector(_freeCamRight, joyVec.x * speed * dt);
-  freeCamPos.y += freeCamRise * speed * 0.7 * dt;
+  const targetVel = new THREE.Vector3()
+    .addScaledVector(_freeCamFwd, joyVec.y * speed)
+    .addScaledVector(_freeCamRight, joyVec.x * speed);
+  targetVel.y = freeCamRise * speed * 0.7;
+  const ease = 1 - Math.pow(0.001, dt);   // frame-rate independent smoothing
+  _freeCamVel.lerp(targetVel, ease);
+  freeCamPos.addScaledVector(_freeCamVel, dt);
   freeCamPos.y = Math.max(0.5, freeCamPos.y);
   camera.position.copy(freeCamPos);
   _freeCamLook.set(
@@ -6656,6 +6667,7 @@ function ringExtraCall(key) {
   openPhoneRing._ringLoop = setInterval(() => { if (phoneRingPopupOpen) playPhoneRing(); }, 3500);
 }
 function updateExtraCalls(dt) {
+  if (freeCamMode) return;   // no calls while flying around exploring
   // Outcome detection for whichever extra-caller most recently rang. currentCaller
   // is set by startVoiceCall to the exact CALLERS[key] object, so comparing by
   // reference is unambiguous.
