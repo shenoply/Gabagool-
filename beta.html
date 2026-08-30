@@ -914,7 +914,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 00:55';
+  window.__BUILD = '2026-08-31 00:57';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -4403,15 +4403,11 @@ function setRadioStation(i) {
       const wasOn = soundOn;
       bgAudio.src = trackSrc;
       if (wasOn) setTimeout(() => bgAudio.play().catch(() => {}), 260); // let the static land first
-      // Real fix: nothing previously happened when a track finished naturally -
-      // no loop, no advance, it just went silent. Now picks a genuinely random
-      // station (not the one that just played) per request, not a fixed order.
-      bgAudio.onended = () => {
-        if (!soundOn) return;
-        let next = Math.floor(Math.random() * RADIO_STATIONS.length);
-        if (RADIO_STATIONS.length > 1 && next === radioIndex) next = (next + 1) % RADIO_STATIONS.length;
-        setRadioStation(next);
-      };
+      // Loops the same track when it ends - a manual station change (the arrow
+      // buttons, which call setRadioStation directly) is the only thing that
+      // should start something different. Was auto-advancing to a random
+      // station instead; that's been reversed per direct request.
+      bgAudio.loop = true;
     }
   }
   if (typeof saveGameState === 'function') saveGameState(); // remember the station across reloads
