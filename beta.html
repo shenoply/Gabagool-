@@ -912,7 +912,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 22:19';
+  window.__BUILD = '2026-08-30 22:35';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1617,7 +1617,7 @@ function loadGarageCars() {
       group.rotation.y = home.rotY;
       group.userData.garageCar = true;
       scene.add(group);
-      garageCars.push({ group, name: def.name, home, dismissedUntilAway: false });
+      garageCars.push({ group, key: def.key, name: def.name, home, dismissedUntilAway: false });
     }, (err) => {
       console.warn('Garage car failed to load (non-fatal):', def.name, err);
       if (window.__gameNote) window.__gameNote('GARAGE CAR failed: ' + def.name);
@@ -1648,6 +1648,7 @@ document.getElementById('garage-drive-btn').addEventListener('click', () => {
   closeGarageDialog();
   if (!chosen) return;
   driveToggle.classList.add('on');
+  applyCarProfile(chosen.key);
   enterDriveMode(false, chosen.group);
 });
 
@@ -3179,15 +3180,31 @@ let carLoading = false;
 let carReady = false;
 const carState = { x: 0, z: 0, heading: 0, speed: 0, vx: 0, vz: 0, slip: 0, roll: 0, pitch: 0 };
 let smoothedThrottle = 0, smoothedSteer = 0; // low-pass filtered input — smooths out raw touch/joystick noise
-const CAR_MAX_SPEED = 15; // bumped from 9 — was genuinely too slow, not just a perception issue
-const CAR_ACCEL = 10;
-const CAR_BRAKE = 16;
-const CAR_FRICTION = 4.5;
-const CAR_GRIP_BASE = 7.0; // how fast velocity realigns with the nose at a standstill — higher is tighter
-const CAR_GRIP_MIN = 2.4;  // grip at top speed; the gap between these two is what makes fast corners slide
-const CAR_ROLL_MAX = 0.13; // radians of body lean into a corner
-const CAR_PITCH_MAX = 0.05; // radians of squat under power / dive under braking
-const CAR_TURN_RATE = 1.25; // radians/sec at full speed fraction — reduced from 1.7, felt too twitchy/sensitive
+/* Per-car physics profiles. Was one global constant set for every car - the
+   Escalade values are the existing, already-tuned baseline (unchanged). The
+   Pony gets genuinely different numbers, not just a top-speed cut: lighter car,
+   lower top speed but similar accel-to-limit, brakes faster (less mass), grips
+   tighter (more nimble), leans less into corners, turns quicker. Mercedes pair
+   still use the Escalade profile for now - not requested this round. */
+const CAR_PROFILES = {
+  escalade: { maxSpeed: 15, accel: 10, brake: 16, friction: 4.5, gripBase: 7.0, gripMin: 2.4, rollMax: 0.13, pitchMax: 0.05, turnRate: 1.25 },
+  pony:     { maxSpeed: 12, accel: 11, brake: 17, friction: 4.2, gripBase: 8.0, gripMin: 3.0, rollMax: 0.10, pitchMax: 0.04, turnRate: 1.45 },
+};
+let CAR_MAX_SPEED = CAR_PROFILES.escalade.maxSpeed; // bumped from 9 — was genuinely too slow, not just a perception issue
+let CAR_ACCEL = CAR_PROFILES.escalade.accel;
+let CAR_BRAKE = CAR_PROFILES.escalade.brake;
+let CAR_FRICTION = CAR_PROFILES.escalade.friction;
+let CAR_GRIP_BASE = CAR_PROFILES.escalade.gripBase; // how fast velocity realigns with the nose at a standstill — higher is tighter
+let CAR_GRIP_MIN = CAR_PROFILES.escalade.gripMin;  // grip at top speed; the gap between these two is what makes fast corners slide
+let CAR_ROLL_MAX = CAR_PROFILES.escalade.rollMax; // radians of body lean into a corner
+let CAR_PITCH_MAX = CAR_PROFILES.escalade.pitchMax; // radians of squat under power / dive under braking
+let CAR_TURN_RATE = CAR_PROFILES.escalade.turnRate; // radians/sec at full speed fraction — reduced from 1.7, felt too twitchy/sensitive
+function applyCarProfile(key) {
+  const p = CAR_PROFILES[key] || CAR_PROFILES.escalade;
+  CAR_MAX_SPEED = p.maxSpeed; CAR_ACCEL = p.accel; CAR_BRAKE = p.brake; CAR_FRICTION = p.friction;
+  CAR_GRIP_BASE = p.gripBase; CAR_GRIP_MIN = p.gripMin; CAR_ROLL_MAX = p.rollMax; CAR_PITCH_MAX = p.pitchMax; CAR_TURN_RATE = p.turnRate;
+  debtorSpeed = CAR_MAX_SPEED * 0.953; // keep the same razor-thin margin the debtor chase was tuned around, whatever the active car's top speed is
+}
 const roadGabagools = []; // separate from the yard's — { group, bobPhase }
 let roadRespawnTimer = 0;
 let savedCharacterPos = null;
@@ -9122,6 +9139,7 @@ function exitDriveMode() {
     if (gc) gc.dismissedUntilAway = true; // don't reopen the dialog while standing beside it
     car.rotation.set(0, exitHeading, 0); // drop any body roll/pitch so it sits level when parked
     if (enterDriveMode._escaladeRef) car = enterDriveMode._escaladeRef;
+    applyCarProfile('escalade'); // physics revert with the car reference - otherwise the garage car's tuning would wrongly persist
   } else if (car) {
     car.rotation.set(0, exitHeading, 0);
     car.visible = true; // the Escalade stays parked and visible rather than vanishing
