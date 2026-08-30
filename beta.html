@@ -612,6 +612,8 @@ const ASSETS = {
   JUNKYARD: 'junkyard.glb',
   OLD_SCHOOL: 'old_school.glb',
   STREET_TREE_D: 'street_tree_d.glb',
+  CITY_BUILDINGS2: 'city_buildings2.glb',
+  KFC: 'kfc.glb',
   CHICAGO_BUILDINGS: 'chicago_buildings.glb',
   CCITY_BUILDINGS: 'ccity_buildings.glb',
   BUILDINGS_FRONT: 'buildings_front.glb',
@@ -906,7 +908,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 02:56';
+  window.__BUILD = '2026-08-30 10:52';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1301,23 +1303,18 @@ function updateClouds(dt) {
     }
   }
 }
-// downtown_skyline.glb restored — what was actually wanted was two clusters of
-// this real asset (the low-poly buildings set), one on each side of the house,
-// not the procedural boxes buildCitySkyline() draws. One fetch, two clones,
-// mirrored left/right of the house rather than one cluster at a single spot.
-// Asset itself was never deleted from the repo, only its loading code — that's
-// restored here rather than re-uploaded.
+// Swapped to city_buildings2.glb per request — downtown_skyline wasn't the right
+// look. Same two-sided pattern (one cluster each side of the house), new asset.
+// downtown_skyline.glb itself is untouched on the repo, just no longer loaded.
 function loadDowntownSkylineTwoSided() {
   const loader = new GLTFLoader();
-  loader.parse(ASSETS.DOWNTOWN_SKYLINE, '', (gltf) => {
+  loader.parse(ASSETS.CITY_BUILDINGS2, '', (gltf) => {
     try {
-      // Native footprint is 210 wide; placed 250 apart center-to-center so the
-      // two clusters sit clearly apart with no overlap. Same z as the original
-      // single-cluster spot (CITY_BACKDROP_POS.z) — that distance was tuned
-      // empirically for fog visibility, no reason to change it.
+      // Native footprint 122.5 wide (narrower than the old 210-wide asset) — 150
+      // apart center-to-center still keeps clear separation with no overlap.
       const positions = [
-        { x: -125, z: CITY_BACKDROP_POS.z },
-        { x: 125, z: CITY_BACKDROP_POS.z },
+        { x: -90, z: CITY_BACKDROP_POS.z },
+        { x: 90, z: CITY_BACKDROP_POS.z },
       ];
       for (const p of positions) {
         const city = gltf.scene.clone(true);
@@ -1326,7 +1323,7 @@ function loadDowntownSkylineTwoSided() {
         city.rotation.y = Math.atan2(-p.x, -p.z); // face back toward the play area, same as before
         scene.add(city);
       }
-      if (window.__gameNote) window.__gameNote('downtown skyline loaded OK, 2 clusters placed');
+      if (window.__gameNote) window.__gameNote('city buildings loaded OK, 2 clusters placed');
     } catch (e) {
       showFatalError('City backdrop placement failed after loading:\n' + ((e && (e.stack || e.message)) || String(e)));
     }
@@ -6525,7 +6522,7 @@ function startVoiceCall(key) {
     }
     callAudio.src = c.src;
     callAudio.currentTime = 0;
-    callAudio.volume = sfxOn ? 0.95 : 0;
+    callAudio.volume = sfxOn ? (c.volume || 0.95) : 0;
     callAudio.play().catch(() => {});
     onCall = true;
     currentCaller = c;
@@ -6570,28 +6567,48 @@ function ensureHouseAudio() {
     src.connect(filter); filter.connect(gain); gain.connect(ambientCtx.destination);
   } catch (e) { /* if routing fails, the element still plays, just not muffled */ }
 }
+function startHouseAudioSequence() {
+  ensureHouseAudio();
+  if (!houseAudioEl) return;
+  houseAudioState = 'meadow';
+  houseAudioEl.src = 'meadow_talk.mp3';
+  houseAudioEl.currentTime = 0;
+  houseAudioEl.play().catch(() => {});
+  houseAudioEl.onended = () => {
+    showMissionPopup('🏠', 'Tony', 'He heard every word of that.', 4200);
+    houseAudioState = 'gap';
+    setTimeout(() => {
+      houseAudioState = 'carmella';
+      houseAudioEl.src = 'carmella_door.mp3';
+      houseAudioEl.currentTime = 0;
+      houseAudioEl.play().catch(() => {});
+      houseAudioEl.onended = () => { houseAudioState = 'done'; };
+    }, 2000); // clear gap so Carmella's line doesn't read as talking over Meadow's
+  };
+}
+// Manual activation button — same pattern as "Talk to George." The proximity
+// auto-trigger below still fires once naturally; this lets it be replayed for
+// testing rather than being stuck at once-ever per session.
+const houseAudioBtn = document.createElement('div');
+houseAudioBtn.id = 'house-audio-btn';
+houseAudioBtn.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(150px + env(safe-area-inset-bottom,0px));z-index:40;display:none;background:var(--accent);color:#1a1208;font:800 13px/1 -apple-system,sans-serif;padding:12px 20px;border-radius:999px;box-shadow:0 6px 20px rgba(0,0,0,0.45);user-select:none;-webkit-user-select:none;';
+houseAudioBtn.textContent = 'Play house audio';
+document.body.appendChild(houseAudioBtn);
+houseAudioBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (houseAudioState === 'meadow' || houseAudioState === 'gap' || houseAudioState === 'carmella') return; // already mid-sequence
+  houseAudioState = 'idle';   // reset so it can replay even after "done"
+  startHouseAudioSequence();
+});
 function updateHouseAudio() {
-  if (houseAudioState === 'done' || houseAudioState === 'gap' || !character || drivingMode || onCall || !sfxOn) return;
+  if (!character || drivingMode) { houseAudioBtn.style.display = 'none'; return; }
+  const d = Math.hypot(character.position.x, character.position.z);
+  const near = d < 18;
+  houseAudioBtn.style.display = (near && !onCall && sfxOn && houseAudioState !== 'meadow' && houseAudioState !== 'gap' && houseAudioState !== 'carmella') ? '' : 'none';
+  if (houseAudioState === 'done' || houseAudioState === 'gap' || onCall || !sfxOn) return;
   if (houseAudioState === 'idle') {
-    const d = Math.hypot(character.position.x, character.position.z);
-    if (d > 18) return;
-    ensureHouseAudio();
-    if (!houseAudioEl) return;
-    houseAudioState = 'meadow';
-    houseAudioEl.src = 'meadow_talk.mp3';
-    houseAudioEl.currentTime = 0;
-    houseAudioEl.play().catch(() => {});
-    houseAudioEl.onended = () => {
-      showMissionPopup('🏠', 'Tony', 'He heard every word of that.', 4200);
-      houseAudioState = 'gap';
-      setTimeout(() => {
-        houseAudioState = 'carmella';
-        houseAudioEl.src = 'carmella_door.mp3';
-        houseAudioEl.currentTime = 0;
-        houseAudioEl.play().catch(() => {});
-        houseAudioEl.onended = () => { houseAudioState = 'done'; };
-      }, 2000); // clear gap so Carmella's line doesn't read as talking over Meadow's
-    };
+    if (!near) return;
+    startHouseAudioSequence();
   }
 }
 
@@ -6610,45 +6627,55 @@ function updateHouseAudio() {
 CALLERS.melfi = { name: 'DR. MELFI', src: 'melfi_calls.mp3', secs: 60 };
 CALLERS.vito = { name: 'VITO', src: 'vito_call.mp3', secs: 46 };
 CALLERS.christopher = { name: 'CHRISTOPHER', src: 'christopher_call.mp3', secs: 7 };
-CALLERS.irina = { name: 'IRINA', src: 'irina_call.mp3', secs: 42 };
-function shuffled(arr) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-let extraCallQueue = shuffled(['melfi', 'vito', 'christopher']);
-let extraCallTimer = 12 + Math.random() * 8;     // first one soon — short session
-let irinaPlayed = false, irinaTimer = 20 + Math.random() * 15;
+CALLERS.irina = { name: 'IRINA', src: 'irina_call.mp3', secs: 42, volume: 1.0 };   // bumped up per request — 1.0 is the ceiling for a plain Audio element's volume
+// Per-caller state instead of a simple shift-once queue — needed to tell answered
+// apart from declined/missed. answered=true means never rings again, ever. A
+// decline or timeout instead sets nextEligible 5 real minutes out and the caller
+// stays in rotation.
+const EXTRA_CALL_STATE = {
+  melfi: { answered: false, nextEligible: 0 },
+  vito: { answered: false, nextEligible: 0 },
+  christopher: { answered: false, nextEligible: 0 },
+  irina: { answered: false, nextEligible: 0 },
+};
+const EXTRA_CALL_COOLDOWN_MS = 5 * 60 * 1000; // 5 real minutes, per request
+// Spacing increased per request ("more duration") — was 12-30s total range
+// (short-session tuning from earlier), now 90-180s between attempts.
+let extraCallTimer = 60 + Math.random() * 30;
+let ringingExtraKey = null;   // whichever extra-caller is currently ringing/on a call, for outcome detection below
 function ringExtraCall(key) {
-  // Same three calls openPhoneRing makes for the main queue, minus the queue-shift
-  // (this isn't in callQueue) — real ring, real Answer/Decline, real callStrip.
+  ringingExtraKey = key;
   showIncomingOnPhone(key);
   phoneRingPopupOpen = true;
   playPhoneRing();
   openPhoneRing._ringLoop = setInterval(() => { if (phoneRingPopupOpen) playPhoneRing(); }, 3500);
 }
 function updateExtraCalls(dt) {
-  if (!sfxOn || inInterior || onCall || phoneRingPopupOpen) return;
-  if (extraCallQueue.length > 0) {
-    extraCallTimer -= dt;
-    if (extraCallTimer <= 0) {
-      ringExtraCall(extraCallQueue.shift());
-      extraCallTimer = 18 + Math.random() * 12;   // spaced apart, still short-session scale
+  // Outcome detection for whichever extra-caller most recently rang. currentCaller
+  // is set by startVoiceCall to the exact CALLERS[key] object, so comparing by
+  // reference is unambiguous.
+  if (ringingExtraKey) {
+    if (onCall && currentCaller === CALLERS[ringingExtraKey]) {
+      EXTRA_CALL_STATE[ringingExtraKey].answered = true;   // answered — done forever
+      ringingExtraKey = null;
+    } else if (!phoneRingPopupOpen && !onCall) {
+      EXTRA_CALL_STATE[ringingExtraKey].nextEligible = Date.now() + EXTRA_CALL_COOLDOWN_MS;   // declined or timed out
+      ringingExtraKey = null;
     }
   }
-  if (!irinaPlayed) {
-    irinaTimer -= dt;
-    if (irinaTimer <= 0) {
-      if (typeof nightLightLevel === 'number' && nightLightLevel > 0.5) {
-        irinaPlayed = true;
-        ringExtraCall('irina');
-      } else {
-        irinaTimer = 8;   // not night yet — recheck soon rather than losing a whole cycle
-      }
-    }
+  if (!sfxOn || inInterior || onCall || phoneRingPopupOpen || ringingExtraKey) return;
+  extraCallTimer -= dt;
+  if (extraCallTimer <= 0) {
+    extraCallTimer = 90 + Math.random() * 90;   // spaced apart, "more duration" per request
+    const now = Date.now();
+    const eligible = Object.keys(EXTRA_CALL_STATE).filter((k) => {
+      const s = EXTRA_CALL_STATE[k];
+      if (s.answered) return false;
+      if (now < s.nextEligible) return false;
+      if (k === 'irina') return typeof nightLightLevel === 'number' && nightLightLevel > 0.5;   // night-only, unchanged
+      return true;
+    });
+    if (eligible.length > 0) ringExtraCall(eligible[Math.floor(Math.random() * eligible.length)]);
   }
 }
 function updateCallStrip() {
@@ -7458,6 +7485,21 @@ function buildRecreationAreas() {
     scene.add(yard);
     if (window.__gameNote) window.__gameNote('junkyard loaded OK');
   }, (e) => { console.warn('junkyard load failed:', e); if (window.__gameNote) window.__gameNote('JUNKYARD FAILED: ' + ((e && e.message) || e)); });
+
+  // KFC — twice on the avenue, close to the road (x=45/x=-20, just behind the
+  // front frontage line) so it's actually visible driving past, not tucked deep
+  // in the recreation-cluster gap like the courts/lots.
+  loader.parse(ASSETS.KFC, '', (gltf) => {
+    const spots = [{ x: 45, z: 150, rotY: -Math.PI / 2 }, { x: -20, z: 650, rotY: Math.PI / 2 }];
+    for (const s of spots) {
+      const k = gltf.scene.clone(true);
+      k.position.set(s.x, 0, s.z);
+      k.rotation.y = s.rotY;
+      k.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+      scene.add(k);
+    }
+    if (window.__gameNote) window.__gameNote('KFC loaded OK, 2 placed');
+  }, (e) => { console.warn('KFC load failed:', e); if (window.__gameNote) window.__gameNote('KFC FAILED: ' + ((e && e.message) || e)); });
 
   // city_night REMOVED — the streaky/smeared building textures reported this turn
   // point directly at this asset. Best guess: gltfpack's sloppy decimation (-si
@@ -9007,7 +9049,9 @@ const FOREST_PATCHES = [
   // coincided with trees, grass and the garage cars all failing to appear — the
   // pattern of a device running out of GPU resources and dropping later loads
   // rather than of a code fault. Sparser grid, and the same distance thinning.
-  [-62, -14, 0.12],
+  // [-62,-14] REMOVED — the only patch under 100 units from origin (63.6), so the
+  // one actually encountered up close near the start rather than as distant
+  // treeline. Reported as a messy/oversized-looking clump at that range.
   [118, -14, 0.16],
   [-134, 20, 5.78],
   [-98, 20, 2.02],
