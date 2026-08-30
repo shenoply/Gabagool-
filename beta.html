@@ -908,7 +908,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 13:01';
+  window.__BUILD = '2026-08-30 13:22';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7492,6 +7492,26 @@ function buildRecreationAreas() {
   for (const c of courts) buildAccessRoad(c.x, c.z);
   for (const l of lots) buildAccessRoad(l.x, l.z);
   buildAccessRoad(58, 1080); // old school — same corridor, same treatment
+
+  // Loop road — court 1 (58,220) and lot 1 (58,400) are both east side, 180 units
+  // apart. A service road at x=80 (clear of both footprints - court spans to
+  // ~x65, lot to ~x73) runs between them, with a short spur into each, so a car
+  // can come in one access road and leave via the other instead of reversing
+  // back out to the main road. Test case for the pattern before extending it.
+  {
+    const conn = new THREE.Mesh(new THREE.PlaneGeometry(6, 400 - 220 + 20), accessRoadMat);
+    conn.rotation.x = -Math.PI / 2;
+    conn.position.set(80, 0.012, (220 + 400) / 2);
+    conn.receiveShadow = true;
+    scene.add(conn);
+    for (const z of [220, 400]) {
+      const spur = new THREE.Mesh(new THREE.PlaneGeometry(80 - 58, 6), accessRoadMat);
+      spur.rotation.x = -Math.PI / 2;
+      spur.position.set((58 + 80) / 2, 0.012, z);
+      spur.receiveShadow = true;
+      scene.add(spur);
+    }
+  }
 
   // Putting green REMOVED per request.
 
