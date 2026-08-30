@@ -498,6 +498,8 @@
     <button id="cigar-btn" title="Cigar">🚬</button>
     <button id="pov-btn" title="First-person view" style="display:none;">👁</button>
     <button id="phone-btn" title="Phone">📱</button>
+    <button id="freecam-btn" title="Free camera">🎥</button>
+    <button id="markers-btn" title="Show asset markers">📍</button>
   </div>
 
   <div id="action-pad" style="position:fixed;right:14px;bottom:calc(220px + env(safe-area-inset-bottom,0px));z-index:11;display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
@@ -585,7 +587,8 @@
   "imports": {
     "three": "./three.module.js",
     "three/addons/loaders/GLTFLoader.js": "./GLTFLoader.js",
-    "three/addons/utils/BufferGeometryUtils.js": "./BufferGeometryUtils.js"
+    "three/addons/utils/BufferGeometryUtils.js": "./BufferGeometryUtils.js",
+    "three/addons/utils/SkeletonUtils.js": "./SkeletonUtils.js"
   }
 }
 </script>
@@ -593,6 +596,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
 
 /* ---------- Hosted asset paths (fetched at runtime instead of embedded base64) ----------
    Switched from the single-file embedded format: real binary files are ~25% smaller
@@ -603,6 +607,16 @@ const ASSETS = {
   CHASE_AUDIO: 'chase_audio.m4a',
   CUTSCENE: 'cutscene.mp4',
   CITY2: 'city2.glb',
+  DOWNTOWN_SKYLINE: 'downtown_skyline.glb',
+  STREET_COURT: 'street_court.glb',
+  JUNKYARD: 'junkyard.glb',
+  OLD_SCHOOL: 'old_school.glb',
+  STREET_TREE_D: 'street_tree_d.glb',
+  CITY_BUILDINGS2: 'city_buildings2.glb',
+  KFC: 'kfc.glb',
+  CHICAGO_BUILDINGS: 'chicago_buildings.glb',
+  BUILDINGS_FRONT: 'buildings_front.glb',
+  INDUSTRIAL_BUILDINGS: 'industrial_buildings.glb',
   TRAFFIC_PACK: 'traffic.glb',
   HOUSE: 'house.glb',
   COLLISION: 'collision.glb', // position-only, low-poly proxy — used for raycasting, never rendered
@@ -657,6 +671,16 @@ const ASSETS = {
   FACTORY_A: 'factory_a.glb',
   FACTORY_B: 'factory_b.glb',
   CHAIN_LINK_FENCE: 'chain_link_fence.glb',
+  // Animated NPC batch: real skinned+animated bird/rat/puppy (AnimationMixer,
+  // not the sphere-primitive pigeons), a static texting pedestrian (uploaded
+  // with no animation despite the name — checked, 0 skins/0 clips, it's a
+  // frozen pose), a multi-vehicle display scene, and a pedestrian signal.
+  STREET_BIRD: 'street_bird.glb',
+  STREET_RAT: 'street_rat.glb',
+  STREET_PUPPY: 'street_puppy.glb',
+  STREET_TEXTER: 'street_texter.glb',
+  VEHICLE_LOT_DISPLAY: 'vehicle_lot_display.glb',
+  PEDESTRIAN_SIGNAL: 'pedestrian_signal.glb',
   PORK_STORE_LOD: 'pork_store_lod.glb',
   BARBER_SHOP_LOD: 'barber_shop_lod.glb',
   CHURCH_LOD: 'church_lod.glb',
@@ -883,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-29 20:19';
+  window.__BUILD = '2026-08-30 13:55';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1278,43 +1302,27 @@ function updateClouds(dt) {
     }
   }
 }
-// Trying an actual authored low-poly city asset (genuinely modeled low-poly, not a
-// decimated dense scan like the earlier attempt) instead of the procedural skyline.
-// If this doesn't pan out either, buildCitySkyline() above is still fully intact —
-// just swap this call back to that.
-function loadRealCityBackdrop() {
+// Swapped to city_buildings2.glb per request — downtown_skyline wasn't the right
+// look. Same two-sided pattern (one cluster each side of the house), new asset.
+// downtown_skyline.glb itself is untouched on the repo, just no longer loaded.
+function loadDowntownSkylineTwoSided() {
   const loader = new GLTFLoader();
-  const buffer = ASSETS.CITY2; // URL — fetched by the parse shim
-  loader.parse(buffer, '', (gltf) => {
+  loader.parse(ASSETS.CITY_BUILDINGS2, '', (gltf) => {
     try {
-      const city = gltf.scene;
-      city.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
-      // Native bbox is roughly 5.7 x 2.8 x 4.6 units — scale up to a believable skyline size.
-      // Scale 32 -> 20 alongside the move closer: 32 was sized for the old ~110-unit
-      // distance; at ~64 units that would tower absurdly. 20 at this range keeps a
-      // similar apparent size while clearing the house roofline (~41° vs ~34°).
-      city.scale.setScalar(20);
-      city.position.set(CITY_BACKDROP_POS.x, -1, CITY_BACKDROP_POS.z);
-      city.rotation.y = Math.atan2(-CITY_BACKDROP_POS.x, -CITY_BACKDROP_POS.z);
-      scene.add(city);
-      // Widen the skyline: two cloned blocks flanking the original at varied
-      // rotation/scale, so the horizon reads as a city rather than one lonely
-      // block. Cost is negligible (~13K verts each, shared textures via clone).
-      const flankL = city.clone();
-      flankL.position.x -= 68; flankL.position.z -= 14; // pulled closer per feedback
-      flankL.rotation.y += 0.9;
-      flankL.scale.multiplyScalar(0.85);
-      scene.add(flankL);
-      const flankR = city.clone();
-      flankR.position.x += 68; flankR.position.z -= 12; // pulled closer per feedback
-      flankR.rotation.y -= 1.2;
-      flankR.scale.multiplyScalar(0.75);
-      scene.add(flankR);
-      // Visible, temporary confirmation that this path actually ran and added
-      // something to the scene — the recurring "no city" reports despite fixes to
-      // position/material suggest we need to actually verify this step completes,
-      // not just assume it based on code review.
-      showMissionPopup && showMissionPopup('🏙️', 'City backdrop loaded', 'Added ' + city.children.length + ' object(s) to the scene at (' + CITY_BACKDROP_POS.x + ',' + CITY_BACKDROP_POS.z + ')', 6000);
+      // Native footprint 122.5 wide (narrower than the old 210-wide asset) — 150
+      // apart center-to-center still keeps clear separation with no overlap.
+      const positions = [
+        { x: -90, z: CITY_BACKDROP_POS.z },
+        { x: 90, z: CITY_BACKDROP_POS.z },
+      ];
+      for (const p of positions) {
+        const city = gltf.scene.clone(true);
+        city.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
+        city.position.set(p.x, -1, p.z);
+        city.rotation.y = Math.atan2(-p.x, -p.z); // face back toward the play area, same as before
+        scene.add(city);
+      }
+      if (window.__gameNote) window.__gameNote('city buildings loaded OK, 2 clusters placed');
     } catch (e) {
       showFatalError('City backdrop placement failed after loading:\n' + ((e && (e.stack || e.message)) || String(e)));
     }
@@ -1323,15 +1331,10 @@ function loadRealCityBackdrop() {
     try { buildCitySkyline(); } catch (e2) {
       showFatalError('Procedural skyline fallback ALSO failed:\n' + ((e2 && (e2.stack || e2.message)) || String(e2)));
     }
+    if (window.__gameNote) window.__gameNote('DOWNTOWN SKYLINE FAILED: ' + ((err && err.message) || err));
   });
 }
-// Switched to the procedural skyline (0 asset bytes) to cut real download size —
-// it's confirmed to render and be positioned correctly at this point anyway, so
-// there's no visual downside, only a ~1.2MB size win.
-// Real city model restored — it's the only version CONFIRMED rendering in actual
-// screenshots; the procedural skyline has failed to appear twice despite fixes, so
-// the 1.2MB asset cost is worth it for the certainty.
-loadRealCityBackdrop();
+loadDowntownSkylineTwoSided();
 buildClouds();
 
 /* ================= GEORGE — the singing lowrider guy =================
@@ -1722,7 +1725,15 @@ const interiorColliders = []; // structure, for the camera
 const interiorSolids = [];    // everything the player can bump into
 let camPullIn = 0; // eased distance reduction, so it doesn't snap
 
-function updateCamera() {
+// Free-cam state declared here, ahead of updateCamera, because updateCamera is
+// called immediately below at module init time (before the main loop exists) —
+// declaring freeCamMode after that call would be a temporal-dead-zone crash.
+let freeCamMode = false;
+const freeCamPos = new THREE.Vector3();
+let freeCamRise = 0; // -1 falling, 0 still, 1 rising — driven by the zoom +/- buttons while active
+
+function updateCamera(dt) {
+  if (freeCamMode) { stepFreeCam(dt || 0.016); return; }
   camPitch = Math.max(0.1, Math.min(1.4, camPitch));
   camDist = Math.max(camDistMin, Math.min(camDistMax, camDist));
 
@@ -1757,6 +1768,116 @@ function updateCamera() {
   camera.lookAt(camTarget);
 }
 updateCamera();
+
+/* ================= FREE CAMERA — detaches from the player, flies anywhere =================
+   Requested as a way to go find the new placements directly rather than trust the
+   normal follow-camera to happen across them. Deliberately a separate path from
+   updateCamera rather than folded into it — that function is orbit-around-a-target
+   logic and a fly-camera is a different model (camera itself moves), so branching
+   at the top avoids fighting the existing math. Reuses camYaw/camPitch (the same
+   state the touch-drag look already writes to) so look controls behave the same
+   in both modes, and reuses joyVec for movement so the existing joystick doubles
+   as fly controls without a new input scheme. State (freeCamMode/freeCamPos/
+   freeCamRise) is declared up above updateCamera — see the note there. */
+function toggleFreeCam() {
+  freeCamMode = !freeCamMode;
+  const btn = document.getElementById('freecam-btn');
+  if (btn) btn.style.background = freeCamMode ? 'var(--accent)' : '';
+  if (freeCamMode) freeCamPos.copy(camera.position);
+  if (window.__gameNote) window.__gameNote('free camera ' + (freeCamMode ? 'ON — joystick flies, zoom +/- go up/down' : 'OFF'));
+}
+const _freeCamFwd = new THREE.Vector3(), _freeCamRight = new THREE.Vector3(), _freeCamLook = new THREE.Vector3();
+function stepFreeCam(dt) {
+  const speed = 26;
+  _freeCamFwd.set(Math.sin(camYaw), 0, Math.cos(camYaw));
+  _freeCamRight.set(Math.cos(camYaw), 0, -Math.sin(camYaw));
+  freeCamPos.addScaledVector(_freeCamFwd, joyVec.y * speed * dt);
+  freeCamPos.addScaledVector(_freeCamRight, joyVec.x * speed * dt);
+  freeCamPos.y += freeCamRise * speed * 0.7 * dt;
+  freeCamPos.y = Math.max(0.5, freeCamPos.y);
+  camera.position.copy(freeCamPos);
+  _freeCamLook.set(
+    freeCamPos.x + Math.sin(camYaw) * Math.cos(camPitch),
+    freeCamPos.y + Math.sin(camPitch),
+    freeCamPos.z + Math.cos(camYaw) * Math.cos(camPitch)
+  );
+  camera.lookAt(_freeCamLook);
+}
+document.getElementById('freecam-btn').addEventListener('click', toggleFreeCam);
+
+/* ================= DEBUG MARKERS — where every recent addition actually is =================
+   One beacon + label per placement from the last few batches (NPCs, environment
+   pieces), tagged ANIMATED or STATIC per request. depthTest:false so they read
+   through buildings/terrain — the point is finding things, not blending in. Built
+   once, hidden by default, toggled by the map-pin button. If a marker is visible
+   with nothing there, that placement's asset failed to load — if the marker
+   itself is what's missing, something's wrong with this list, not the asset. */
+const DEBUG_MARKERS = [
+  { n: 'birds (50 total, full avenue)', x: 38.5, z: 130, anim: true }, { n: 'birds (50 total, full avenue)', x: 15.5, z: 830, anim: true }, { n: 'birds (50 total, full avenue)', x: 38.5, z: 1390, anim: true },
+  { n: 'rats (30 total, full avenue)', x: 15.5, z: 110, anim: true }, { n: 'rats (30 total, full avenue)', x: 38.5, z: 800, anim: true }, { n: 'rats (30 total, full avenue)', x: 15.5, z: 1470, anim: true },
+  { n: 'puppy 1 (of 6, by an NPC)', x: 39.9, z: 85.1, anim: true }, { n: 'puppy 3 (of 6, by an NPC)', x: 39.9, z: 562.7, anim: true }, { n: 'puppy 6 (of 6, by an NPC)', x: 14.1, z: 1280.1, anim: true },
+  { n: 'texting NPCs (60 total, full avenue)', x: 38.5, z: 130, anim: false }, { n: 'texting NPCs (60 total, full avenue)', x: 15.5, z: 830, anim: false },
+  { n: 'vehicle lot', x: 105, z: 700, anim: false },
+  { n: 'parking lot 1', x: 58, z: 400, anim: false }, { n: 'parking lot 2', x: -8, z: 550, anim: false },
+  { n: 'parking lot 3', x: 58, z: 750, anim: false }, { n: 'parking lot 4', x: -8, z: 950, anim: false },
+  { n: 'street court 1', x: 58, z: 220, anim: false }, { n: 'street court 2', x: -5, z: 600, anim: false },
+  { n: 'street court 3', x: 58, z: 900, anim: false },
+  { n: 'junkyard', x: 110, z: 1500, anim: false },
+  { n: 'old school', x: 58, z: 1080, anim: false },
+  { n: 'chicago buildings', x: 125, z: 1150, anim: false },
+  { n: 'right turn plaza (no building)', x: 280, z: 796, anim: false },
+  { n: 'plaza 2nd exit (toward court3/old school)', x: 58, z: 990, anim: false },
+  { n: 'plaza 3rd exit (rejoins main road at z444)', x: 37, z: 444, anim: false },
+  { n: 'main junction west connector (to industrial)', x: -160, z: 796, anim: false },
+  { n: 'left turn (2nd branch road, toward industrial)', x: -100, z: 1500, anim: false },
+  { n: 'industrial buildings', x: -140, z: 1580, anim: false },
+  { n: 'downtown skyline (left)', x: -125, z: CITY_BACKDROP_POS.z, anim: false },
+  { n: 'downtown skyline (right)', x: 125, z: CITY_BACKDROP_POS.z, anim: false },
+  { n: 'street tree D (1 of 10)', x: 43, z: 100, anim: false }, { n: 'street tree D (2 of 10)', x: 12, z: 220, anim: false },
+];
+let debugMarkerGroup = null;
+function buildDebugMarkers() {
+  debugMarkerGroup = new THREE.Group();
+  debugMarkerGroup.visible = false;
+  for (const m of DEBUG_MARKERS) {
+    const color = m.anim ? 0x4ade80 : 0xffb347; // green = animated, orange = static
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.15, 0.15, 40, 6),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, depthTest: false })
+    );
+    beam.position.set(m.x, 20, m.z);
+    beam.renderOrder = 998;
+    debugMarkerGroup.add(beam);
+
+    const c = document.createElement('canvas');
+    c.width = 320; c.height = 80;
+    const ctx = c.getContext('2d');
+    ctx.font = '700 26px -apple-system, Arial, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+    ctx.strokeText(m.n, 160, 26);
+    ctx.fillStyle = m.anim ? '#4ade80' : '#ffb347';
+    ctx.fillText(m.n, 160, 26);
+    ctx.font = '700 18px -apple-system, Arial, sans-serif';
+    const tag = m.anim ? 'ANIMATED' : 'STATIC';
+    ctx.strokeText(tag, 160, 58);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(tag, 160, 58);
+    const tex = new THREE.CanvasTexture(c);
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+    label.position.set(m.x, 41, m.z);
+    label.scale.set(7, 1.75, 1);
+    label.renderOrder = 999;
+    debugMarkerGroup.add(label);
+  }
+  scene.add(debugMarkerGroup);
+}
+buildDebugMarkers();
+document.getElementById('markers-btn').addEventListener('click', () => {
+  debugMarkerGroup.visible = !debugMarkerGroup.visible;
+  document.getElementById('markers-btn').style.background = debugMarkerGroup.visible ? 'var(--accent)' : '';
+  if (window.__gameNote) window.__gameNote('asset markers ' + (debugMarkerGroup.visible ? 'ON' : 'OFF') + ' (' + DEBUG_MARKERS.length + ' placements)');
+});
 
 /* Lights — brightened for clarity (was tuned moody-dark for the old small yard;
    the house was reading muddy/underlit rather than genuinely low quality) */
@@ -3808,6 +3929,9 @@ function buildTallGrass() {
     if (x > 5 && x < 49) continue;                          // road corridor
     if (Math.abs(x) < 27 && Math.abs(z) < 27) continue;      // yard
     if (x > -6 && x < 6 && z > 17 && z < 35) continue;        // garage pad
+    if (x > 91 && x < 119 && z > 212 && z < 228) continue;    // basketball court
+    if (x > 88 && x < 122 && z > 389 && z < 411) continue;    // parking lot, east
+    if (x > -59 && x < -25 && z > 539 && z < 561) continue;   // parking lot, west
     if (z < -40) continue;                                    // city backdrop
     placements.push([x, z, Math.random() * Math.PI, 0.75 + Math.random() * 0.9]);
   }
@@ -3905,8 +4029,12 @@ function updateRain(dt) {
   }
   rainWet += ((rainOn ? 1 : 0) - rainWet) * Math.min(1, dt * 0.25); // wetness lags the rain
   rainMesh.visible = rainWet > 0.02;
-  groundMat.roughness = 0.95 - rainWet * 0.55;
-  groundMat.metalness = rainWet * 0.25;
+  // Was roughness 0.95->0.4, metalness 0->0.25 — reflective enough that once the
+  // skyline additions gave it something tall and close to mirror, wet roads were
+  // doubling the skyline upside-down in the ground. A wet-sheen look doesn't need
+  // that much metalness; toned both down so it reads as damp asphalt, not a mirror.
+  groundMat.roughness = 0.95 - rainWet * 0.35;
+  groundMat.metalness = rainWet * 0.08;
   if (!rainMesh.visible) return;
   rainMesh.material.opacity = 0.34 * Math.min(1, rainWet * 1.4);
   const cx = camTarget.x, cz = camTarget.z;
@@ -4013,27 +4141,39 @@ function playStatic() {
 function playDistantSiren() {
   if (!ambientCtx || !sfxOn) return;
   const now = ambientCtx.currentTime;
+  const dur = 6.5;
   const osc = ambientCtx.createOscillator();
   const g = ambientCtx.createGain();
   osc.type = 'sine';
   osc.frequency.setValueAtTime(500, now);
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 5; i++) {
     osc.frequency.linearRampToValueAtTime(900, now + i + 0.5);
     osc.frequency.linearRampToValueAtTime(500, now + i + 1);
   }
+  // Swell up then fall away, like it's actually passing rather than a fixed drone.
   g.gain.setValueAtTime(0, now);
-  g.gain.linearRampToValueAtTime(0.05, now + 0.5);   // distant — kept quiet
-  g.gain.setValueAtTime(0.05, now + 3.5);
-  g.gain.linearRampToValueAtTime(0, now + 4.5);
-  osc.connect(g); g.connect(ambientCtx.destination);
-  osc.start(now); osc.stop(now + 4.6);
+  g.gain.linearRampToValueAtTime(0.09, now + dur * 0.4);
+  g.gain.linearRampToValueAtTime(0.09, now + dur * 0.55);
+  g.gain.linearRampToValueAtTime(0, now + dur);
+  // A real stereo sweep — left-to-right or the reverse, picked at random each
+  // time, so it actually reads as passing through rather than sitting in place.
+  const pan = ambientCtx.createStereoPanner();
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  pan.pan.setValueAtTime(-1 * dir, now);
+  pan.pan.linearRampToValueAtTime(1 * dir, now + dur);
+  osc.connect(g); g.connect(pan); pan.connect(ambientCtx.destination);
+  osc.start(now); osc.stop(now + dur + 0.1);
 }
 function playCarAlarm() {
   if (!ambientCtx || !sfxOn) return;
   const now = ambientCtx.currentTime;
   const g = ambientCtx.createGain();
-  g.gain.value = 0.06;
-  g.connect(ambientCtx.destination);
+  g.gain.value = 0.09;
+  // Fixed pan, not swept — it's one parked car, not something driving past.
+  // Random each time so it doesn't always seem to come from the same direction.
+  const pan = ambientCtx.createStereoPanner();
+  pan.pan.value = (Math.random() * 2 - 1) * 0.7;
+  g.connect(pan); pan.connect(ambientCtx.destination);
   for (let i = 0; i < 6; i++) {
     const osc = ambientCtx.createOscillator();
     osc.type = 'square';
@@ -4065,13 +4205,120 @@ function playChurchBell(strikes) {
     }
   }
 }
-let sirenTimer = 60 + Math.random() * 90, alarmTimer = 80 + Math.random() * 100, lastBellHour = -1;
+/* Four more, same fully-synthesized approach as everything above. */
+function playTrainRumble() {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  const dur = 9;
+  const n = ambientCtx.sampleRate * 2;
+  const b = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  const src = ambientCtx.createBufferSource(); src.buffer = b; src.loop = true;
+  const f = ambientCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 90;
+  const osc = ambientCtx.createOscillator();   // a low fundamental under the rumble
+  osc.type = 'sine'; osc.frequency.value = 42;
+  const oscGain = ambientCtx.createGain(); oscGain.gain.value = 0.4;
+  const g = ambientCtx.createGain();
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.08, now + dur * 0.35);
+  g.gain.linearRampToValueAtTime(0.08, now + dur * 0.6);
+  g.gain.linearRampToValueAtTime(0, now + dur);
+  const pan = ambientCtx.createStereoPanner();
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  pan.pan.setValueAtTime(-1 * dir, now);
+  pan.pan.linearRampToValueAtTime(1 * dir, now + dur);
+  src.connect(f); f.connect(g);
+  osc.connect(oscGain); oscGain.connect(g);
+  g.connect(pan); pan.connect(ambientCtx.destination);
+  src.start(now); src.stop(now + dur + 0.1);
+  osc.start(now); osc.stop(now + dur + 0.1);
+}
+function playIceCreamTruck() {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  // An original waltz-time tune, not a transcription of any real jingle — just
+  // major-scale steps in 3, which is what reads as "ice cream truck" generically.
+  const notes = [784, 880, 988, 1047, 988, 880, 784, 659, 784];
+  const g = ambientCtx.createGain();
+  g.gain.value = 0.05;
+  g.connect(ambientCtx.destination);
+  notes.forEach((f, i) => {
+    const t0 = now + i * 0.32;
+    const osc = ambientCtx.createOscillator();
+    osc.type = 'triangle'; osc.frequency.value = f;   // tinny, music-box-ish
+    const ng = ambientCtx.createGain();
+    ng.gain.setValueAtTime(0.9, t0);
+    ng.gain.exponentialRampToValueAtTime(0.05, t0 + 0.28);
+    osc.connect(ng); ng.connect(g);
+    osc.start(t0); osc.stop(t0 + 0.3);
+  });
+}
+function playDogBark() {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  const barks = 1 + Math.floor(Math.random() * 3);
+  const pan = ambientCtx.createStereoPanner();
+  pan.pan.value = (Math.random() * 2 - 1) * 0.8;
+  pan.connect(ambientCtx.destination);
+  for (let i = 0; i < barks; i++) {
+    const t0 = now + i * 0.22;
+    const n = ambientCtx.sampleRate * 0.12;
+    const b = ambientCtx.createBuffer(1, n, ambientCtx.sampleRate);
+    const d = b.getChannelData(0);
+    for (let j = 0; j < n; j++) { const k = 1 - j / n; d[j] = (Math.random() * 2 - 1) * k; }
+    const src = ambientCtx.createBufferSource(); src.buffer = b;
+    const f = ambientCtx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 500; f.Q.value = 0.9;
+    const g = ambientCtx.createGain(); g.gain.value = 0.05;
+    src.connect(f); f.connect(g); g.connect(pan);
+    src.start(t0);
+  }
+}
+function playHonk() {
+  if (!ambientCtx || !sfxOn) return;
+  const now = ambientCtx.currentTime;
+  const pan = ambientCtx.createStereoPanner();
+  pan.pan.value = (Math.random() * 2 - 1) * 0.8;
+  pan.connect(ambientCtx.destination);
+  const osc = ambientCtx.createOscillator();
+  osc.type = 'sawtooth'; osc.frequency.value = 340;
+  const g = ambientCtx.createGain();
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.05, now + 0.03);
+  g.gain.setValueAtTime(0.05, now + 0.35);
+  g.gain.linearRampToValueAtTime(0, now + 0.42);
+  osc.connect(g); g.connect(pan);
+  osc.start(now); osc.stop(now + 0.45);
+}
+let sirenTimer = 18 + Math.random() * 25, alarmTimer = 25 + Math.random() * 30, lastBellHour = -1;
+let trainTimer = 40 + Math.random() * 50, iceCreamTimer = 50 + Math.random() * 60, dogTimer = 15 + Math.random() * 30, honkTimer = 12 + Math.random() * 15;
 function updateAmbientEvents(dt) {
   if (!sfxOn || inInterior || onCall) return;
   sirenTimer -= dt;
-  if (sirenTimer <= 0) { playDistantSiren(); sirenTimer = 60 + Math.random() * 90; }
+  if (sirenTimer <= 0) { playDistantSiren(); sirenTimer = 35 + Math.random() * 40; }
   alarmTimer -= dt;
-  if (alarmTimer <= 0) { playCarAlarm(); alarmTimer = 80 + Math.random() * 100; }
+  if (alarmTimer <= 0) { playCarAlarm(); alarmTimer = 45 + Math.random() * 55; }
+  trainTimer -= dt;
+  if (trainTimer <= 0) { playTrainRumble(); trainTimer = 70 + Math.random() * 80; }
+  iceCreamTimer -= dt;
+  if (iceCreamTimer <= 0) { playIceCreamTruck(); iceCreamTimer = 90 + Math.random() * 100; }
+  dogTimer -= dt;
+  if (dogTimer <= 0) { playDogBark(); dogTimer = 25 + Math.random() * 35; }
+  // Honk only actually fires if the nearest junction is genuinely showing red on
+  // the main road right now — tied to the real light state, not just a timer.
+  honkTimer -= dt;
+  if (honkTimer <= 0) {
+    honkTimer = 10 + Math.random() * 12;
+    const ref = drivingMode ? carState : (character ? character.position : null);
+    if (ref && typeof JUNCTION_Z !== 'undefined' && JUNCTION_Z.length) {
+      let nearest = JUNCTION_Z[0], bestD = Infinity;
+      for (const jz of JUNCTION_Z) { const dd = Math.abs(jz - ref.z); if (dd < bestD) { bestD = dd; nearest = jz; } }
+      if (bestD < 90) {
+        const ph = junctionPhase(nearest);
+        if (!ph.mainGreen && Math.random() < 0.5) playHonk();   // main road not green = someone's waiting
+      }
+    }
+  }
   if (typeof dayTime === 'number') {
     const hour = Math.floor(dayTime * 24);
     const hour12 = ((hour + 11) % 12) + 1;
@@ -4937,23 +5184,44 @@ function updateCityHum() {
   if (!cityHumGain) return;
   const ref = drivingMode ? carState : (character ? character.position : { x: 0, z: 0 });
   const d = Math.hypot((ref.x || 0) - CITY_BACKDROP_POS.x, (ref.z || 0) - CITY_BACKDROP_POS.z);
-  const near = Math.max(0, 1 - d / 160);
-  cityHumGain.gain.setTargetAtTime(sfxOn ? near * near * 0.05 : 0, ambientCtx.currentTime, 0.6);
+  /* Was radius 160 — the backdrop sits near the house (-15,-62), so almost the
+     entire avenue (z 48 to 1500+, where all the actual driving happens) was
+     outside that radius and got zero hum, ever. Widened to 700 so it reaches
+     down the avenue instead of being tied to one prop's exact position. */
+  const near = Math.max(0, 1 - d / 700);
+  cityHumGain.gain.setTargetAtTime(sfxOn ? near * near * 0.06 : 0, ambientCtx.currentTime, 0.6);
 }
 
 /* 6. Sun and moon discs. The cycle already computes the sun direction for lighting,
    so these just sit on it — no new maths, and it explains where the light comes from. */
 let sunDisc = null, moonDisc = null;
+function moonTexture() {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#dfe8ff'; g.beginPath(); g.arc(64, 64, 62, 0, Math.PI * 2); g.fill();
+  g.fillStyle = 'rgba(150,165,200,0.5)';
+  // A handful of craters — cheap visual detail so it reads as a moon rather
+  // than a flat coloured dot, which is likely why the existing motion (it
+  // already tracks opposite the sun every frame) never registered as
+  // "animated" — nothing to look at meant nothing to notice moving.
+  [[40, 35, 10], [78, 50, 7], [55, 80, 13], [90, 90, 6], [30, 75, 5]].forEach(([x, y, r]) => {
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  });
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
 function buildCelestialBodies() {
-  const mk = (color, size, opacity) => {
-    const m = new THREE.Sprite(new THREE.SpriteMaterial({ color, transparent: true, opacity, depthWrite: false, depthTest: false }));
+  const mk = (color, size, opacity, map) => {
+    const m = new THREE.Sprite(new THREE.SpriteMaterial({ color, map, transparent: true, opacity, depthWrite: false, depthTest: false }));
     m.scale.set(size, size, 1);
     m.renderOrder = -1;
     scene.add(m);
     return m;
   };
   sunDisc = mk(0xffe9b8, 26, 0.95);
-  moonDisc = mk(0xdfe8ff, 16, 0.9);
+  moonDisc = mk(0xffffff, 16, 0.9, moonTexture());
 }
 function updateCelestialBodies() {
   if (!sunDisc) return;
@@ -5059,7 +5327,10 @@ function updateCompass() {
   const facing = drivingMode ? carState.heading : (character ? character.rotation.y : 0);
   const parts = [];
   const home = bearingLabel(x, z, facing, 0, 0);
-  if (home.dist > 12) parts.push('HOME ' + home.arrow + ' ' + home.dist + 'm');
+  if (home.dist > 12) {
+    const audioReady = typeof houseAudioState === 'string' && houseAudioState !== 'meadow' && houseAudioState !== 'gap' && houseAudioState !== 'carmella';
+    parts.push('HOME ' + home.arrow + ' ' + home.dist + 'm' + (audioReady && !drivingMode ? ' \uD83D\uDD0A' : ''));
+  }
   const g = bearingLabel(x, z, facing, GEORGE_POS.x, GEORGE_POS.z);
   if (g.dist > 12 && !drivingMode) parts.push('GEORGE ' + g.arrow + ' ' + g.dist + 'm');
   // the active mission target, when there is one
@@ -6256,7 +6527,7 @@ function startVoiceCall(key) {
     }
     callAudio.src = c.src;
     callAudio.currentTime = 0;
-    callAudio.volume = sfxOn ? 0.95 : 0;
+    callAudio.volume = sfxOn ? (c.volume || 0.95) : 0;
     callAudio.play().catch(() => {});
     onCall = true;
     currentCaller = c;
@@ -6276,6 +6547,141 @@ function endVoiceCall() {
     if (soundOn) bgAudio.play().catch(() => {}); // music back on, if it was on before
   }
   scheduleNextPhoneRing(30); // 30s until the next caller in the queue
+}
+
+/* ================= HOUSE AUDIO — Meadow, then Carmella =================
+   Not phone calls — meant to sound like it's happening INSIDE the house as you
+   walk up, so this runs through a lowpass filter for a through-the-wall feel
+   rather than playing clean. Sequenced, not simultaneous: Meadow's clip plays out
+   fully, THEN Tony's reaction popup, THEN a beat of silence, THEN Carmella's line
+   — which is a reaction to being overheard, so the gap matters for it to land.
+   Each clip is once ever, gated by houseAudioState so re-approaching the house
+   doesn't replay them. House position is effectively the origin — the house model
+   itself gets re-centered on (0,0) at load, there's no separate HOUSE_POS const. */
+let houseAudioEl = null, houseAudioState = 'idle'; // idle -> meadow -> gap -> carmella -> done
+function ensureHouseAudio() {
+  if (houseAudioEl || !ambientCtx) return;
+  houseAudioEl = new Audio();
+  try {
+    const src = ambientCtx.createMediaElementSource(houseAudioEl);
+    const filter = ambientCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 650; // muffled — through a wall, not in the room
+    const gain = ambientCtx.createGain();
+    gain.gain.value = 0.85;
+    src.connect(filter); filter.connect(gain); gain.connect(ambientCtx.destination);
+  } catch (e) { /* if routing fails, the element still plays, just not muffled */ }
+}
+function startHouseAudioSequence() {
+  ensureHouseAudio();
+  if (!houseAudioEl) return;
+  houseAudioState = 'meadow';
+  houseAudioEl.src = 'meadow_talk.mp3';
+  houseAudioEl.currentTime = 0;
+  houseAudioEl.play().catch(() => {});
+  houseAudioEl.onended = () => {
+    showMissionPopup('🏠', 'Tony', 'He heard every word of that.', 4200);
+    houseAudioState = 'gap';
+    setTimeout(() => {
+      houseAudioState = 'carmella';
+      houseAudioEl.src = 'carmella_door.mp3';
+      houseAudioEl.currentTime = 0;
+      houseAudioEl.play().catch(() => {});
+      houseAudioEl.onended = () => { houseAudioState = 'done'; };
+    }, 2000); // clear gap so Carmella's line doesn't read as talking over Meadow's
+  };
+}
+// Manual activation button — same pattern as "Talk to George." The proximity
+// auto-trigger below still fires once naturally; this lets it be replayed for
+// testing rather than being stuck at once-ever per session.
+const houseAudioBtn = document.createElement('div');
+houseAudioBtn.id = 'house-audio-btn';
+houseAudioBtn.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(150px + env(safe-area-inset-bottom,0px));z-index:40;display:none;background:var(--accent);color:#1a1208;font:800 13px/1 -apple-system,sans-serif;padding:12px 20px;border-radius:999px;box-shadow:0 6px 20px rgba(0,0,0,0.45);user-select:none;-webkit-user-select:none;';
+houseAudioBtn.textContent = 'Play house audio';
+document.body.appendChild(houseAudioBtn);
+houseAudioBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (houseAudioState === 'meadow' || houseAudioState === 'gap' || houseAudioState === 'carmella') return; // already mid-sequence
+  houseAudioState = 'idle';   // reset so it can replay even after "done"
+  startHouseAudioSequence();
+});
+function updateHouseAudio() {
+  if (!character || drivingMode) { houseAudioBtn.style.display = 'none'; return; }
+  const d = Math.hypot(character.position.x, character.position.z);
+  const near = d < 18;
+  houseAudioBtn.style.display = (near && !onCall && sfxOn && houseAudioState !== 'meadow' && houseAudioState !== 'gap' && houseAudioState !== 'carmella') ? '' : 'none';
+  if (houseAudioState === 'done' || houseAudioState === 'gap' || onCall || !sfxOn) return;
+  if (houseAudioState === 'idle') {
+    if (!near) return;
+    startHouseAudioSequence();
+  }
+}
+
+/* ================= EXTRA VOICE CLIPS — Melfi/Vito/Christopher/Irina =================
+   Previously played as an ad-hoc audio blast with no ring/answer UI, which read as
+   coming from the radio rather than as a call — fair complaint. Rewritten to go
+   through the real system: added to CALLERS (same table Junior/Carmine use) and
+   triggered via showIncomingOnPhone(), which already branches correctly for any
+   CALLERS-table key (checked — the boss-quiz/mission logic only runs for keys NOT
+   in CALLERS, so this can't cross into that). Ringing, Answer/Decline, the callStrip
+   during playback — all the genuine mechanism, not a lookalike.
+   Timing is my own separate trigger (not merged into callQueue), since that keeps
+   the "short session, seconds window" pacing this was built for without changing
+   how often Boss/Junior/Carmine ring. Melfi/Vito/Christopher: one shuffled pass,
+   each once. Irina: separate, night-gated, excluded from that shuffle. */
+CALLERS.melfi = { name: 'DR. MELFI', src: 'melfi_calls.mp3', secs: 60 };
+CALLERS.vito = { name: 'VITO', src: 'vito_call.mp3', secs: 46 };
+CALLERS.christopher = { name: 'CHRISTOPHER', src: 'christopher_call.mp3', secs: 7 };
+CALLERS.irina = { name: 'IRINA', src: 'irina_call.mp3', secs: 42, volume: 1.0 };   // bumped up per request — 1.0 is the ceiling for a plain Audio element's volume
+// Per-caller state instead of a simple shift-once queue — needed to tell answered
+// apart from declined/missed. answered=true means never rings again, ever. A
+// decline or timeout instead sets nextEligible 5 real minutes out and the caller
+// stays in rotation.
+const EXTRA_CALL_STATE = {
+  melfi: { answered: false, nextEligible: 0 },
+  vito: { answered: false, nextEligible: 0 },
+  christopher: { answered: false, nextEligible: 0 },
+  irina: { answered: false, nextEligible: 0 },
+};
+const EXTRA_CALL_COOLDOWN_MS = 5 * 60 * 1000; // 5 real minutes, per request
+// Spacing increased per request ("more duration") — was 12-30s total range
+// (short-session tuning from earlier), now 90-180s between attempts.
+let extraCallTimer = 60 + Math.random() * 30;
+let ringingExtraKey = null;   // whichever extra-caller is currently ringing/on a call, for outcome detection below
+function ringExtraCall(key) {
+  ringingExtraKey = key;
+  showIncomingOnPhone(key);
+  phoneRingPopupOpen = true;
+  playPhoneRing();
+  openPhoneRing._ringLoop = setInterval(() => { if (phoneRingPopupOpen) playPhoneRing(); }, 3500);
+}
+function updateExtraCalls(dt) {
+  // Outcome detection for whichever extra-caller most recently rang. currentCaller
+  // is set by startVoiceCall to the exact CALLERS[key] object, so comparing by
+  // reference is unambiguous.
+  if (ringingExtraKey) {
+    if (onCall && currentCaller === CALLERS[ringingExtraKey]) {
+      EXTRA_CALL_STATE[ringingExtraKey].answered = true;   // answered — done forever
+      ringingExtraKey = null;
+    } else if (!phoneRingPopupOpen && !onCall) {
+      EXTRA_CALL_STATE[ringingExtraKey].nextEligible = Date.now() + EXTRA_CALL_COOLDOWN_MS;   // declined or timed out
+      ringingExtraKey = null;
+    }
+  }
+  if (!sfxOn || inInterior || onCall || phoneRingPopupOpen || ringingExtraKey) return;
+  extraCallTimer -= dt;
+  if (extraCallTimer <= 0) {
+    extraCallTimer = 90 + Math.random() * 90;   // spaced apart, "more duration" per request
+    const now = Date.now();
+    const eligible = Object.keys(EXTRA_CALL_STATE).filter((k) => {
+      const s = EXTRA_CALL_STATE[k];
+      if (s.answered) return false;
+      if (now < s.nextEligible) return false;
+      if (k === 'irina') return typeof nightLightLevel === 'number' && nightLightLevel > 0.5;   // night-only, unchanged
+      return true;
+    });
+    if (eligible.length > 0) ringExtraCall(eligible[Math.floor(Math.random() * eligible.length)]);
+  }
 }
 function updateCallStrip() {
   if (!onCall || !currentCaller) return;
@@ -6486,20 +6892,28 @@ function buildRoadFurniture() {
     { z: 120, top: 'NORTH', bottom: 'Newark  12' },
     { z: 430, top: 'EXIT 14', bottom: 'Bloomfield Ave' },
     { z: 720, top: 'SOUTH', bottom: 'Newark Bay' },
+    // Branch road at z=796 is the one junction without a barrier — every other
+    // sign here is west side (unchanged), this one's east side and placed just
+    // before the turn, same lead-in distance real highway exit signs use.
+    { z: 770, top: 'RIGHT LANE', bottom: 'Local Access', side: 1 },
+    // Second turn, west side at z=1500 — sign posted on the east side (facing
+    // oncoming traffic), same lead-in distance as the first sign.
+    { z: 1474, top: 'LEFT LANE', bottom: 'Industrial Dist', side: 1 },
   ];
   for (const s of SIGNS) {
+    const side = s.side || -1;
     const g = new THREE.Group();
     const panel = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 3.2),
       new THREE.MeshStandardMaterial({ map: signTexture(s.top, s.bottom), roughness: 0.7, metalness: 0.05 }));
     panel.position.set(0, 6.2, 0);
-    panel.rotation.y = -Math.PI / 2;
+    panel.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
     g.add(panel);
     for (const dx of [-2.2, 2.2]) {
       const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 6.4, 6), steelMat);
       leg.position.set(0, 3.2, dx);
       g.add(leg);
     }
-    g.position.set(ROAD_CX - ROAD_HW - 3.2, 0, s.z);
+    g.position.set(ROAD_CX + side * (ROAD_HW + 3.2), 0, s.z);
     roadFurniture.add(g);
   }
 
@@ -6782,6 +7196,12 @@ function loadMeshyBuildings() {
     { key: ASSETS.BARBER_SHOP,    w: 10 },
     { key: ASSETS.CORNER_C,       w: 25 },
     { key: ASSETS.ROW_FOUR,       w: 40 },
+    // Native footprint 9.6 x 84.2 — treating the 84.2 dimension as the street
+    // frontage (a bundled row of facades, matching the "buildings_front" name and
+    // the same shallow-depth convention row_five_a already uses) rather than the
+    // narrow 9.6 axis. If it presents edge-on to the street instead, that's the
+    // fix: swap which axis this w refers to.
+    { key: ASSETS.BUILDINGS_FRONT, w: 84 },
   ];
 
   // work out every slot up front, so each model is loaded once and placed many times
@@ -6947,12 +7367,532 @@ function buildParkedCars() {
   if (window.__gameNote) window.__gameNote('parked cars: ' + parkedCars.children.length);
 }
 
+/* ================= BASKETBALL COURT + PARKING LOTS =================
+   Built entirely from primitives and canvas-drawn line textures — same
+   techniques as the road furniture and the street address numbers, no new
+   asset needed. BACK_E/BACK_W (78/-24) were declared for a second building
+   row that never actually got built (checked — nothing references them), so
+   the space past the front line is genuinely open out here. */
+function courtLinesTexture(w, h) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = Math.round(512 * h / w);
+  const g = c.getContext('2d');
+  g.fillStyle = '#8a4a2e'; g.fillRect(0, 0, c.width, c.height);   // asphalt-red court colour
+  g.strokeStyle = '#e8e0c8'; g.lineWidth = 5;
+  g.strokeRect(8, 8, c.width - 16, c.height - 16);                 // boundary
+  g.beginPath(); g.moveTo(c.width / 2, 8); g.lineTo(c.width / 2, c.height - 8); g.stroke();   // half-court line
+  g.beginPath(); g.arc(c.width / 2, c.height / 2, c.height * 0.16, 0, Math.PI * 2); g.stroke(); // centre circle
+  const keyW = c.width * 0.16, keyH = c.height * 0.5;
+  g.strokeRect(8, (c.height - keyH) / 2, keyW, keyH);                          // key, left
+  g.strokeRect(c.width - 8 - keyW, (c.height - keyH) / 2, keyW, keyH);         // key, right
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function lotLinesTexture(stalls) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#3a3a3d'; g.fillRect(0, 0, c.width, c.height);   // asphalt-grey
+  g.strokeStyle = '#e8e0c8'; g.lineWidth = 4;
+  for (let i = 1; i < stalls; i++) {
+    const x = (c.width / stalls) * i;
+    g.beginPath(); g.moveTo(x, 14); g.lineTo(x, c.height - 14); g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function buildHoop(x, z, facing) {
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x2c2f33, roughness: 0.6, metalness: 0.4 });
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 3.05, 8), poleMat);
+  pole.position.set(x, 1.525, z);
+  scene.add(pole);
+  const board = new THREE.Mesh(
+    new THREE.BoxGeometry(1.1, 0.7, 0.05),
+    new THREE.MeshStandardMaterial({ color: 0xf2f2ea, roughness: 0.5 })
+  );
+  board.position.set(x, 3.05, z + facing * 0.15);
+  scene.add(board);
+  const rim = new THREE.Mesh(
+    new THREE.TorusGeometry(0.23, 0.018, 6, 16),
+    new THREE.MeshStandardMaterial({ color: 0xd8501a, roughness: 0.5, metalness: 0.3 })
+  );
+  rim.rotation.x = Math.PI / 2;
+  rim.position.set(x, 2.75, z + facing * 0.4);
+  scene.add(rim);
+}
+function buildRecreationAreas() {
+  // Basketball courts — repositioned. Was at x=105, which is past the back
+  // building row (~x=78) — invisible from the road, behind a second wall of
+  // buildings. Moved into the actual gap between front row (~x=40) and back row
+  // (~x=78) so it's visible from the avenue as requested. Three now instead of
+  // one, alternating sides.
+  const courts = [
+    { x: 58, z: 220 }, { x: -5, z: 600 }, { x: 58, z: 900 },
+  ];
+  loader.parse(ASSETS.STREET_COURT, '', (gltf) => {
+    for (const cpos of courts) {
+      const court = gltf.scene.clone(true);
+      court.position.set(cpos.x, 0, cpos.z);
+      court.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+      scene.add(court);
+    }
+    if (window.__gameNote) window.__gameNote('street court loaded OK, ' + courts.length + ' placed');
+  }, (e) => { console.warn('street court load failed:', e); if (window.__gameNote) window.__gameNote('COURT FAILED: ' + ((e && e.message) || e)); });
+
+  // Parking lots — same repositioning fix as the courts (x=105/-42 were both past
+  // the back row). Four now instead of two, alternating sides, painted stalls, a
+  // few parked cars if traffic meshes are already loaded by the time this runs.
+  const lots = [
+    { x: 58, z: 400, w: 30, d: 18, stalls: 9 },
+    { x: -8, z: 550, w: 30, d: 18, stalls: 9 },
+    { x: 58, z: 750, w: 30, d: 18, stalls: 9 },
+    { x: -8, z: 950, w: 30, d: 18, stalls: 9 },
+  ];
+  for (const lot of lots) {
+    const pav = new THREE.Mesh(
+      new THREE.PlaneGeometry(lot.w, lot.d),
+      new THREE.MeshStandardMaterial({ map: lotLinesTexture(lot.stalls), roughness: 0.95 })
+    );
+    pav.rotation.x = -Math.PI / 2;
+    pav.position.set(lot.x, 0.02, lot.z);
+    pav.receiveShadow = true;
+    scene.add(pav);
+    if (typeof trafficCars !== 'undefined' && trafficCars.length > 0) {
+      let seed = lot.z; // deterministic per lot
+      const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+      const stallW = lot.w / lot.stalls;
+      for (let i = 0; i < lot.stalls; i++) {
+        if (rnd() < 0.35) continue;   // a real lot isn't full
+        const src = trafficCars[Math.floor(rnd() * trafficCars.length)];
+        if (!src || !src.mesh) continue;
+        const c = src.mesh.clone(true);
+        c.position.set(lot.x - lot.w / 2 + stallW * (i + 0.5), 0, lot.z + (rnd() - 0.5) * (lot.d * 0.3));
+        c.rotation.y = Math.PI / 2 + (rnd() - 0.5) * 0.05;
+        c.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+        scene.add(c);
+      }
+    }
+  }
+
+  // Access roads — short paved driveways connecting the main road edge to every
+  // court and lot. Before this they were only reachable by driving off-road
+  // across the grass gap; this gives each one an actual connection.
+  const accessRoadMat = new THREE.MeshStandardMaterial({ color: 0x2f2f2d, roughness: 0.93 });
+  function buildAccessRoad(destX, destZ) {
+    const east = destX > ROAD_CX;
+    const edgeX = east ? ROAD_CX + ROAD_HW : ROAD_CX - ROAD_HW;
+    const len = Math.abs(destX - edgeX);
+    const midX = (edgeX + destX) / 2;
+    const strip = new THREE.Mesh(new THREE.PlaneGeometry(len, 6), accessRoadMat);
+    strip.rotation.x = -Math.PI / 2;
+    strip.position.set(midX, 0.012, destZ);
+    strip.receiveShadow = true;
+    scene.add(strip);
+  }
+  for (const c of courts) buildAccessRoad(c.x, c.z);
+  for (const l of lots) buildAccessRoad(l.x, l.z);
+  buildAccessRoad(58, 1080); // old school — same corridor, same treatment
+  buildAccessRoad(110, 1500); // junkyard — never had one, confirmed missing on inspection
+  buildAccessRoad(44, 1540); // factories — same, never had one
+
+  // Loop road — court 1 (58,220) and lot 1 (58,400) are both east side, 180 units
+  // apart. A service road at x=80 (clear of both footprints - court spans to
+  // ~x65, lot to ~x73) runs between them, with a short spur into each, so a car
+  // can come in one access road and leave via the other instead of reversing
+  // back out to the main road. Test case for the pattern before extending it.
+  {
+    const conn = new THREE.Mesh(new THREE.PlaneGeometry(6, 400 - 220 + 20), accessRoadMat);
+    conn.rotation.x = -Math.PI / 2;
+    conn.position.set(80, 0.012, (220 + 400) / 2);
+    conn.receiveShadow = true;
+    scene.add(conn);
+    for (const z of [220, 400]) {
+      const spur = new THREE.Mesh(new THREE.PlaneGeometry(80 - 58, 6), accessRoadMat);
+      spur.rotation.x = -Math.PI / 2;
+      spur.position.set((58 + 80) / 2, 0.012, z);
+      spur.receiveShadow = true;
+      scene.add(spur);
+    }
+  }
+
+  // Putting green REMOVED per request.
+
+  // Golf course REMOVED per request.
+
+  // Junkyard — wrecked cars, placed near the factory landmarks for the same
+  // industrial-end-of-the-road reason the factories themselves went there.
+  loader.parse(ASSETS.JUNKYARD, '', (gltf) => {
+    const yard = gltf.scene;
+    yard.position.set(110, 0, 1500);
+    yard.rotation.y = -Math.PI / 2;
+    yard.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true; } });
+    scene.add(yard);
+    if (window.__gameNote) window.__gameNote('junkyard loaded OK');
+  }, (e) => { console.warn('junkyard load failed:', e); if (window.__gameNote) window.__gameNote('JUNKYARD FAILED: ' + ((e && e.message) || e)); });
+
+  // KFC — twice on the avenue, close to the road (x=45/x=-20, just behind the
+  // front frontage line) so it's actually visible driving past, not tucked deep
+  // in the recreation-cluster gap like the courts/lots.
+  loader.parse(ASSETS.KFC, '', (gltf) => {
+    const spots = [{ x: 45, z: 150, rotY: -Math.PI / 2 }, { x: -20, z: 650, rotY: Math.PI / 2 }];
+    for (const s of spots) {
+      const k = gltf.scene.clone(true);
+      k.position.set(s.x, 0, s.z);
+      k.rotation.y = s.rotY;
+      k.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+      scene.add(k);
+    }
+    if (window.__gameNote) window.__gameNote('KFC loaded OK, 2 placed');
+  }, (e) => { console.warn('KFC load failed:', e); if (window.__gameNote) window.__gameNote('KFC FAILED: ' + ((e && e.message) || e)); });
+
+  // city_night REMOVED — the streaky/smeared building textures reported this turn
+  // point directly at this asset. Best guess: gltfpack's sloppy decimation (-si
+  // 0.35) badly distorted UVs on this specific file — it has far more distinct
+  // materials than downtown_skyline (8 vs effectively 1-2), which likely made it
+  // more vulnerable to that failure mode. Not investigating further right now;
+  // pulling it was the priority. (downtown_skyline was itself fully removed in a
+  // later turn — behind the house is the procedural skyline now, see buildCitySkyline.)
+
+  // Old school building REMOVED per request — retaining buildings as they were
+  // before 6pm today; this was added at ~19:09 local, after that cutoff. Nothing
+  // else in the avenue's own building set (FRONT[]) has changed since ~15:02
+  // local, well before 6pm, so nothing else needed touching here.
+
+  // Tree grove REMOVED per request.
+
+  // Old school — re-added, now on the avenue itself rather than behind the house.
+  // Same "visible gap between front and back building rows" zone the courts/lots
+  // use (x~58 east side), well clear of CITY_BACKDROP_POS (x-15/z-62, behind the
+  // house) — explicitly never there again per request.
+  loader.parse(ASSETS.OLD_SCHOOL, '', (gltf) => {
+    const school = gltf.scene;
+    school.position.set(58, 0, 1080);
+    school.rotation.y = -Math.PI / 2;
+    school.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(school);
+    if (window.__gameNote) window.__gameNote('old school loaded OK');
+  }, (e) => { console.warn('old school load failed:', e); if (window.__gameNote) window.__gameNote('OLD SCHOOL FAILED: ' + ((e && e.message) || e)); });
+
+  // Street tree D — expanded from 10 to 60 per request ("much more alongside the
+  // road"). Same x-offsets as before (43 east / 12 west, next to the existing tree
+  // line), spaced every ~24 units instead of ~120.
+  loader.parse(ASSETS.STREET_TREE_D, '', (gltf) => {
+    const spots = [];
+    for (let i = 0; i < 60; i++) {
+      const z = 48 + i * 24;
+      spots.push({ x: i % 2 === 0 ? 43 : 12, z });
+    }
+    for (const s of spots) {
+      const t = gltf.scene.clone(true);
+      t.position.set(s.x, 0, s.z);
+      t.rotation.y = Math.random() * Math.PI * 2;
+      t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+      scene.add(t);
+    }
+    if (window.__gameNote) window.__gameNote('street_tree_d loaded OK, ' + spots.length + ' placed');
+  }, (e) => { console.warn('street_tree_d load failed:', e); if (window.__gameNote) window.__gameNote('TREE D FAILED: ' + ((e && e.message) || e)); });
+}
+
+/* ================= BRANCH ROAD =================
+   The one drivable turn off the main avenue. Every other junction is genuinely
+   barriered (buildSideRoadBarriers) — this is the single exception, opened up at
+   BRANCH_ROAD_Z (z=796) on the east side only, i.e. a right turn heading away from
+   home. Simple paved strip east from the road edge to a small turnaround plaza
+   where ccity_buildings sits as the destination landmark. The car's own physics
+   already treat most of the world as drivable off the marked road (checked —
+   carState.offRoad is a flag for effects, not a hard collision boundary), so this
+   is mainly about (1) the barrier gap above, so there's nothing visually blocking
+   the turn, and (2) a paved surface + destination so it reads as a real place to
+   drive to rather than an accidental gap.
+*/
+function buildBranchRoad() {
+  const roadMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
+  const startX = ROAD_CX + ROAD_HW;      // 37 — main road's east edge
+  const endX = 280;
+  const roadLen = endX - startX;
+  const roadW = 9;
+  const strip = new THREE.Mesh(new THREE.PlaneGeometry(roadLen, roadW), roadMat);
+  strip.rotation.x = -Math.PI / 2; // same convention as the parking lots — w->world X, h->world Z, no extra rotation needed
+  strip.position.set(startX + roadLen / 2, 0.015, BRANCH_ROAD_Z);
+  strip.receiveShadow = true;
+  scene.add(strip);
+  // small paved turnaround plaza at the far end
+  const plaza = new THREE.Mesh(new THREE.CircleGeometry(22, 20), roadMat);
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.set(endX, 0.015, BRANCH_ROAD_Z);
+  plaza.receiveShadow = true;
+  scene.add(plaza);
+
+  // ccity_buildings REMOVED per request. Road and plaza stay — still a real
+  // place to drive to, just no building there now.
+}
+
+/* Branch-road traffic — real AI cars that drive from the main-road junction out
+   to the plaza and back, U-turning at both ends, instead of the branch road
+   being a dead, empty stub. This is what actually makes the junction feel used
+   rather than decorative. Not a routing/pathfinding system (this game is
+   free-roam, cars don't path-plan) — just a genuine back-and-forth patrol on
+   real geometry, staggered so it reads as ongoing traffic rather than one car
+   looping in isolation. */
+const branchRoadCars = [];
+function buildBranchTraffic() {
+  if (branchRoadCars.length || typeof trafficCars === 'undefined' || !trafficCars.length) return;
+  const nearX = ROAD_CX + ROAD_HW + 4;   // just past the main road edge
+  const farX = 280;                      // the plaza
+  let seed = 4471;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  for (let i = 0; i < 3; i++) {
+    const src = trafficCars[Math.floor(rnd() * trafficCars.length)];
+    if (!src || !src.mesh) continue;
+    const mesh = src.mesh.clone(true);
+    mesh.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.frustumCulled = true; } });
+    scene.add(mesh);
+    branchRoadCars.push({
+      mesh, nearX, farX,
+      t: rnd(),                          // 0..1 position along the road, staggered per car
+      dir: rnd() < 0.5 ? 1 : -1,         // 1 = heading toward the plaza, -1 = heading back
+      speed: 0.10 + rnd() * 0.04,        // fraction of the road per second
+    });
+  }
+}
+function updateBranchTraffic(dt) {
+  for (const c of branchRoadCars) {
+    c.t += c.dir * c.speed * dt;
+    if (c.t >= 1) { c.t = 1; c.dir = -1; }      // hit the plaza — U-turn back toward the main road
+    if (c.t <= 0) { c.t = 0; c.dir = 1; }       // hit the main-road junction — U-turn back out
+    const x = c.nearX + (c.farX - c.nearX) * c.t;
+    c.mesh.position.set(x, 0, BRANCH_ROAD_Z);
+    c.mesh.rotation.y = c.dir > 0 ? -Math.PI / 2 : Math.PI / 2;
+  }
+}
+
+/* One straight paved segment between two points — always axis-aligned (same
+   convention every road in this game uses, no diagonals). Shared helper so the
+   3 new roads below are built consistently. */
+function buildRoadSegment(x1, z1, x2, z2) {
+  const mat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
+  const w = 8;
+  if (Math.abs(x1 - x2) < 0.01) {
+    const len = Math.abs(z2 - z1);
+    const strip = new THREE.Mesh(new THREE.PlaneGeometry(w, len), mat);
+    strip.rotation.x = -Math.PI / 2;
+    strip.position.set(x1, 0.013, (z1 + z2) / 2);
+    strip.receiveShadow = true;
+    scene.add(strip);
+  } else {
+    const len = Math.abs(x2 - x1);
+    const strip = new THREE.Mesh(new THREE.PlaneGeometry(len, w), mat);
+    strip.rotation.x = -Math.PI / 2;
+    strip.position.set((x1 + x2) / 2, 0.013, z1);
+    strip.receiveShadow = true;
+    scene.add(strip);
+  }
+}
+
+/* Turns the plaza from a dead end into a real multi-way junction, plus a second
+   route to the industrial area from the main junction. All L-shaped (two
+   straight segments), same paved-strip technique as every other road here. */
+function buildJunctionExpansion() {
+  // Plaza (280,796) south to the court-3/old-school corridor (58,990) — a
+  // second exit besides the original road back to the main avenue.
+  buildRoadSegment(280, 796, 280, 990);
+  buildRoadSegment(280, 990, 58, 990);
+
+  // Plaza north then west, rejoining the main road at a DIFFERENT junction
+  // (z=444) instead of the one it left from — genuinely a different side, not
+  // just the same road retraced. Makes the plaza a real 3-way junction.
+  buildRoadSegment(280, 796, 280, 444);
+  buildRoadSegment(280, 444, 37, 444);
+
+  // Main junction (z=796), west side this time (east is the original branch
+  // road) — connects into a full-length west perimeter road below.
+  buildRoadSegment(17, 796, -160, 796);
+
+  // West perimeter — full length (z=40 to 1500, not just the 796-1500 stretch
+  // from before), stemming from the main junction via the connector above.
+  buildRoadSegment(-160, 40, -160, 1500);
+
+  // East perimeter — same idea, mirrored. Ties into the plaza (which is part of
+  // the same junction complex) rather than a separate connector back to z=796.
+  buildRoadSegment(310, 40, 310, 1500);
+  buildRoadSegment(280, 796, 310, 796);
+}
+
+/* Second branch road — left turn, west side, at BRANCH_ROAD_Z2 (z=1500, a real
+   junction). Leads toward industrial_buildings, which was already placed at
+   (-140, 1580) by buildChicagoAndIndustrial — not moved, the road is built to
+   reach where it already sits, per "keep what we have as it is." Exact mirror of
+   buildBranchRoad above: same materials, same strip+plaza pattern, opposite side. */
+function buildBranchRoad2() {
+  const roadMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
+  const startX = ROAD_CX - ROAD_HW;      // 17 — main road's west edge
+  const endX = -160;
+  const roadLen = startX - endX;
+  const roadW = 9;
+  const strip = new THREE.Mesh(new THREE.PlaneGeometry(roadLen, roadW), roadMat);
+  strip.rotation.x = -Math.PI / 2;
+  strip.position.set(endX + roadLen / 2, 0.015, BRANCH_ROAD_Z2);
+  strip.receiveShadow = true;
+  scene.add(strip);
+  const plaza = new THREE.Mesh(new THREE.CircleGeometry(22, 20), roadMat);
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.set(endX, 0.015, BRANCH_ROAD_Z2);
+  plaza.receiveShadow = true;
+  scene.add(plaza);
+}
+
+// Chicago buildings — landmark on the avenue itself, same treatment as the
+// factories (a one-off large structure, not a repeated tile). East side, clear of
+// the branch road above.
+// Industrial buildings — extends the existing factory zone (z~1540) rather than a
+// new area, same "industrial end of the road" logic that put the factories there.
+// Both wrapped in one function and deferred alongside buildBranchRoad below —
+// calling loader.parse() at bare module top level here would hit loader before
+// its own declaration further down the file (temporal dead zone, would crash the
+// whole boot sequence) — caught before push.
+function buildChicagoAndIndustrial() {
+  loader.parse(ASSETS.CHICAGO_BUILDINGS, '', (gltf) => {
+    const c = gltf.scene;
+    c.position.set(125, 0, 1150);
+    c.rotation.y = -Math.PI / 2;
+    c.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(c);
+    if (window.__gameNote) window.__gameNote('chicago buildings loaded OK');
+  }, (e) => { console.warn('chicago load failed:', e); if (window.__gameNote) window.__gameNote('CHICAGO FAILED: ' + ((e && e.message) || e)); });
+
+  loader.parse(ASSETS.INDUSTRIAL_BUILDINGS, '', (gltf) => {
+    const ind = gltf.scene;
+    ind.position.set(-140, 0, 1580);
+    ind.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(ind);
+    if (window.__gameNote) window.__gameNote('industrial buildings loaded OK');
+  }, (e) => { console.warn('industrial load failed:', e); if (window.__gameNote) window.__gameNote('INDUSTRIAL FAILED: ' + ((e && e.message) || e)); });
+}
+
+/* ================= ANIMATED STREET NPCs =================
+   First real skinned+animated NPCs in the scene — everything before this (pigeons,
+   perched birds, the flock) was primitive geometry with code-driven motion, not an
+   actual animation clip. Regular clone() does not correctly share a skeleton across
+   instances (all copies would move as one), so this uses SkeletonUtils.clone() —
+   newly vendored in (three@0.160.1's copy, matching the pinned three.module.js
+   revision exactly) since nothing here needed it before. */
+let npcMixers = [];
+function spawnAnimatedNPC(assetKey, positions, animName) {
+  loader.parse(assetKey, '', (gltf) => {
+    for (const pos of positions) {
+      const clone = SkeletonUtils.clone(gltf.scene);
+      clone.position.set(pos.x, 0, pos.z);
+      if (pos.rotY !== undefined) clone.rotation.y = pos.rotY;
+      clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+      scene.add(clone);
+      if (gltf.animations && gltf.animations.length) {
+        const mixer = new THREE.AnimationMixer(clone);
+        const clip = (animName && THREE.AnimationClip.findByName(gltf.animations, animName)) || gltf.animations[0];
+        if (clip) mixer.clipAction(clip).play();
+        npcMixers.push({ mixer, x: pos.x, z: pos.z });   // position kept alongside for the distance-cull in the main loop
+      }
+    }
+    if (window.__gameNote) window.__gameNote(assetKey + ' loaded OK (' + positions.length + ' placed)');
+  }, (e) => { console.warn('NPC load failed:', assetKey, e); if (window.__gameNote) window.__gameNote('NPC FAILED (' + assetKey + '): ' + ((e && e.message) || e)); });
+}
+// Evenly spreads `count` points along the avenue's sidewalk bands, alternating
+// sides, with a seeded PRNG so the same seed always gives the same layout
+// (deterministic across reloads, no need to hand-type dozens of coordinates).
+function avenueSpots(count, seed) {
+  let s = seed;
+  const rnd = () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
+  const zMin = 90, zMax = 1490, span = zMax - zMin;
+  const spots = [];
+  for (let i = 0; i < count; i++) {
+    const z = zMin + (i / count) * span + (rnd() - 0.5) * (span / count) * 0.5;
+    const side = i % 2 === 0 ? 1 : -1;
+    spots.push({ x: side > 0 ? 38.5 : 15.5, z, rotY: rnd() * Math.PI * 2 });
+  }
+  return spots;
+}
+
+function loadStreetNPCs() {
+  // Bird — 50 across the avenue (was 10). Each file instance already bundles 5
+  // skins/birds, so 50 placements reads as a genuinely dense flock along the
+  // route, not 50 lone birds.
+  spawnAnimatedNPC(ASSETS.STREET_BIRD, avenueSpots(50, 11001));
+  // Rat — 30 across the avenue (was 8). "Run" is the only clip in the file; it
+  // plays as an in-place loop rather than a path.
+  spawnAnimatedNPC(ASSETS.STREET_RAT, avenueSpots(30, 22002), 'Run');
+
+  // Texting pedestrian — 60 across the avenue (was 2). Uploaded with no
+  // animation despite the name (checked: 0 skins, 0 clips — a frozen pose, not a
+  // walk cycle). Static placement, with the same small idle bob the perched
+  // birds already use so it doesn't read as completely inert. Kept as its own
+  // seed/array (not spawnAnimatedNPC, which is skeleton-clone only) so the 6
+  // puppies below can co-locate with specific instances of it.
+  const texterSpots = avenueSpots(60, 33003);
+  loader.parse(ASSETS.STREET_TEXTER, '', (gltf) => {
+    for (const s of texterSpots) {
+      const clone = gltf.scene.clone(true);   // no skeleton to worry about — unrigged
+      clone.position.set(s.x, 0, s.z);
+      clone.rotation.y = s.rotY;
+      clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+      scene.add(clone);
+      perchedBirds.push({ mesh: clone, baseY: 0, phase: Math.random() * 6.28 });   // reuses the idle-bob update loop below
+    }
+    if (window.__gameNote) window.__gameNote('texting pedestrian loaded OK, ' + texterSpots.length + ' placed');
+  }, (e) => { console.warn('texter load failed:', e); if (window.__gameNote) window.__gameNote('TEXTER FAILED: ' + ((e && e.message) || e)); });
+
+  // Puppy — stays at 6 total, but now co-located next to 6 specific texter
+  // instances (evenly picked across the 60) rather than spread independently —
+  // "next to NPC" as asked. Small x-offset so the dog sits beside the person,
+  // not inside them.
+  const puppySpots = [];
+  for (let i = 0; i < 6; i++) {
+    // +(i%2) breaks a real bug: floor(i*60/6) alone is always even (0,10,20...),
+    // and texterSpots alternates side by even/odd index — so without this every
+    // dog would land on the same sidewalk. This gives 3 east, 3 west.
+    const idx = Math.floor(i * texterSpots.length / 6) + (i % 2);
+    const t = texterSpots[idx];
+    const side = t.x > 27 ? 1 : -1;
+    puppySpots.push({ x: t.x + side * 1.4, z: t.z + 0.6, rotY: t.rotY });
+  }
+  spawnAnimatedNPC(ASSETS.STREET_PUPPY, puppySpots);
+
+  // Vehicle display — reframed as a small used-car-lot scene rather than
+  // traffic-integrated NPCs (the file is one 57m-wide compound Sketchfab scene, 76
+  // meshes with no clean per-vehicle split — checked). Placed as its own set-piece.
+  loader.parse(ASSETS.VEHICLE_LOT_DISPLAY, '', (gltf) => {
+    const disp = gltf.scene.clone(true);
+    disp.position.set(105, 0, 700);
+    disp.rotation.y = -Math.PI / 2;
+    disp.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+    scene.add(disp);
+    if (window.__gameNote) window.__gameNote('vehicle display loaded OK');
+  }, (e) => { console.warn('vehicle display load failed:', e); if (window.__gameNote) window.__gameNote('VEHICLE DISPLAY FAILED: ' + ((e && e.message) || e)); });
+
+  // Pedestrian signals — every other junction rather than all 17, so it reads as
+  // detail rather than clutter.
+  loader.parse(ASSETS.PEDESTRIAN_SIGNAL, '', (gltf) => {
+    JUNCTION_Z.forEach((jz, i) => {
+      if (i % 2 !== 0) return;
+      for (const side of [1, -1]) {
+        const clone = gltf.scene.clone(true);
+        clone.position.set(ROAD_CX + side * (ROAD_HW + 1.8), 0, jz + side * 8);
+        clone.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
+        clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+        scene.add(clone);
+      }
+    });
+    if (window.__gameNote) window.__gameNote('pedestrian signals loaded OK');
+  }, (e) => { console.warn('signal load failed:', e); if (window.__gameNote) window.__gameNote('SIGNALS FAILED: ' + ((e && e.message) || e)); });
+}
+
 /* ================= STREET DETAIL =================
    Ten small additions that make the road read as a real one. Everything that repeats
    is an InstancedMesh, so the whole set is roughly a dozen draw calls rather than
    several hundred. Nothing here downloads anything. */
 let streetDetail = null, trafficLights = [], pigeons = [], steamPuffs = [], kerbPuddles = null;
-let litterMesh = null, nightLights = [], flockBirds = null, windowGlows = [];
+let litterMesh = null, nightLights = [], flockBirds = null, windowGlows = [], perchedBirds = [];
+let newspaperMesh = null, newspaperTimer = 20 + Math.random() * 30, newspaperActive = false, newspaperT = 0;
 function buildStreetDetail() {
   if (streetDetail) return;
   streetDetail = new THREE.Group();
@@ -7011,6 +7951,7 @@ function buildStreetDetail() {
   // 4. traffic lights at the junctions, cycling
   const lampOff = () => new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.4 });
   for (const z of CROSS) {
+    if (z === BRANCH_ROAD_Z) continue; // gets the bigger version below instead, not both
     for (const side of [1, -1]) {
       const g = new THREE.Group();
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 5.2, 6), frameMat);
@@ -7031,6 +7972,33 @@ function buildStreetDetail() {
       streetDetail.add(g);
       trafficLights.push({ bulbs, z });   // real junction, drives off junctionPhase
     }
+  }
+
+  // Big junction — the right-turn branch road (z=796) is the one genuinely
+  // major turn on the map, but had zero light of its own (just an open barrier
+  // gap). Same working geometry as above, scaled 1.6x so it actually reads as a
+  // major intersection, one on each side. Same trafficLights array, same
+  // junctionPhase(796) timing — this is a real working light, not a prop.
+  for (const side of [1, -1]) {
+    const g = new THREE.Group();
+    const scale = 1.6;
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08 * scale, 0.09 * scale, 5.2 * scale, 6), frameMat);
+    pole.position.y = 2.6 * scale; g.add(pole);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(2.6 * scale, 0.09 * scale, 0.09 * scale), frameMat);
+    arm.position.set(1.3 * scale, 5.1 * scale, 0); g.add(arm);
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.34 * scale, 0.95 * scale, 0.28 * scale), frameMat);
+    box.position.set(2.5 * scale, 4.75 * scale, 0); g.add(box);
+    const bulbs = [];
+    ['#ff3b30', '#ffcc00', '#34c759'].forEach((c, i) => {
+      const b = new THREE.Mesh(new THREE.CircleGeometry(0.1 * scale, 10), lampOff());
+      b.position.set(2.5 * scale, (5.06 - i * 0.31) * scale, 0.145 * scale);
+      b.userData.on = new THREE.Color(c);
+      g.add(b); bulbs.push(b);
+    });
+    g.position.set(ROAD_CX + side * (ROAD_HW + 1.9), 0, BRANCH_ROAD_Z + side * 7);
+    g.rotation.y = side > 0 ? Math.PI : 0;
+    streetDetail.add(g);
+    trafficLights.push({ bulbs, z: BRANCH_ROAD_Z });
   }
 
   // 9. fire hydrants
@@ -7068,6 +8036,14 @@ function buildStreetDetail() {
   }
   streetDetail.add(litter);
   litterMesh = litter;
+
+  // A single newspaper page that actually tumbles across the road periodically —
+  // simple direct position/rotation animation since it's one object, not the
+  // instanced-shader approach the litter cards use. Hidden until the first cycle.
+  const paperMat = new THREE.MeshStandardMaterial({ color: 0xd8d3c4, roughness: 0.95, side: THREE.DoubleSide });
+  newspaperMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.7), paperMat);
+  newspaperMesh.visible = false;
+  scene.add(newspaperMesh);
 
   // 6. pigeons on the kerb, scattered by an approaching car
   const birdMat = new THREE.MeshStandardMaterial({ color: 0x6a6a72, roughness: 0.9 });
@@ -7149,13 +8125,16 @@ function buildStreetDetail() {
   scene.add(streetDetail);
 
   // 11. A few birds perched on the utility wires instead of only kerb pigeons —
-  // same mesh, same material, no scatter behaviour needed since they're static.
+  // same mesh, same material. Not fully static any more — a small idle bob so
+  // they read as alive rather than blending into the scenery.
   for (let i = 0; i < 8; i++) {
     const side = i % 2 ? 1 : -1;
     const perched = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), birdMat);
     perched.scale.set(1, 0.85, 1.4);
-    perched.position.set(41.5 + side * 0.3, 10.6, 60 + i * 130 + rnd() * 20);   // 41.5 matches the pole line
+    const baseY = 10.6;
+    perched.position.set(41.5 + side * 0.3, baseY, 60 + i * 130 + rnd() * 20);   // 41.5 matches the pole line
     streetDetail.add(perched);
+    perchedBirds.push({ mesh: perched, baseY, phase: rnd() * 6.28 });
   }
 
   // 12. A loose flock drifting overhead, only visible in the dawn/dusk window —
@@ -7204,13 +8183,16 @@ function buildStreetDetail() {
     scene.add(pl);
     nightLights.push({ light: pl, base: 0.55, flicker: false });
   }
-  // 15. One flickering streetlamp — the utility poles carry wires, not fixtures,
-  // so this is a new small light rather than toggling something that already
-  // existed. Deliberately just one; the rest of the street stays steady.
-  const lamp = new THREE.PointLight(0xd9e8ff, 0, 14, 2);
-  lamp.position.set(41.5, 9.5, 224);   // matches the pole line and spacing
-  scene.add(lamp);
-  nightLights.push({ light: lamp, base: 0.9, flicker: true });
+  // 15. Flickering streetlamps — was just one at a fixed spot, easy to miss on a
+  // ~1500-unit street. Five now, spread along the pole line, each with its own
+  // phase offset so they flicker independently rather than all blinking together
+  // (which would read as fake/synchronized instead of alive).
+  for (let i = 0; i < 5; i++) {
+    const lamp = new THREE.PointLight(0xd9e8ff, 0, 14, 2);
+    lamp.position.set(41.5, 9.5, 130 + i * 260);
+    scene.add(lamp);
+    nightLights.push({ light: lamp, base: 0.9, flicker: true, phase: i * 17.3 });
+  }
 
   // 16. Steam near the factory landmarks — same sprite technique as the manhole
   // steam above, just two more emitter clusters out past the built frontage.
@@ -7261,6 +8243,11 @@ function updateStreetDetail(dt) {
       b.position.y += Math.sin(t * 3 + b.userData.phase) * 0.002;
     }
   }
+  // perched birds — a small idle bob, each on its own phase so the row doesn't
+  // move as one block
+  for (const pb of perchedBirds) {
+    pb.mesh.position.y = pb.baseY + Math.sin(t * 1.4 + pb.phase) * 0.025;
+  }
   // kerb puddles follow the existing rain wetness rather than their own timer
   if (kerbPuddles) {
     const wet = (typeof rainWet === 'number') ? rainWet : 0;  // same value the wet road uses
@@ -7278,9 +8265,45 @@ function updateStreetDetail(dt) {
     const sh = litterMesh.material.userData.shader;
     if (sh) sh.uniforms.uTime.value = t;
   }
+  // newspaper tumbling across the road — spawns near wherever the player actually
+  // is, since with a ~1500-unit street a fixed spot would almost never be seen
+  if (newspaperMesh) {
+    if (!newspaperActive) {
+      newspaperTimer -= dt;
+      if (newspaperTimer <= 0) {
+        newspaperActive = true; newspaperT = 0;
+        const px2 = drivingMode ? carState.x : (character ? character.position.x : ROAD_CX);
+        const pz2 = drivingMode ? carState.z : (character ? character.position.z : 60);
+        newspaperMesh._startX = px2 > ROAD_CX ? ROAD_CX - ROAD_HW - 2 : ROAD_CX + ROAD_HW + 2;
+        newspaperMesh._endX = px2 > ROAD_CX ? ROAD_CX + ROAD_HW + 2 : ROAD_CX - ROAD_HW - 2;
+        newspaperMesh._z = pz2 + 20 + Math.random() * 15;
+        newspaperMesh.visible = true;
+      }
+    } else {
+      newspaperT += dt;
+      const DUR = 4.5;
+      const k = newspaperT / DUR;
+      if (k >= 1) {
+        newspaperActive = false;
+        newspaperMesh.visible = false;
+        newspaperTimer = 30 + Math.random() * 40;
+      } else {
+        newspaperMesh.position.set(
+          newspaperMesh._startX + (newspaperMesh._endX - newspaperMesh._startX) * k,
+          0.15 + Math.abs(Math.sin(k * Math.PI * 3)) * 0.3,
+          newspaperMesh._z + Math.sin(k * 6) * 0.8
+        );
+        newspaperMesh.rotation.x = t * 4;
+        newspaperMesh.rotation.z = t * 3.1;
+      }
+    }
+  }
   // overhead flock — visible only in the dawn/dusk window, drifting in a slow circle
   if (flockBirds) {
-    const dusk = typeof dayTime === 'number' && ((dayTime > 0.22 && dayTime < 0.3) || (dayTime > 0.72 && dayTime < 0.8));
+    // Was 0.22-0.30 / 0.72-0.80 — a combined 16% of the day, which is why it was
+    // never showing up in testing. Widened to 40%, still excluding full midday
+    // and full midnight rather than making it constant.
+    const dusk = typeof dayTime === 'number' && ((dayTime > 0.15 && dayTime < 0.35) || (dayTime > 0.65 && dayTime < 0.85));
     flockBirds.visible = dusk;
     if (dusk) {
       const mm = new THREE.Matrix4(), qq = new THREE.Quaternion();
@@ -7300,7 +8323,7 @@ function updateStreetDetail(dt) {
   // also gets a irregular flicker on top so it reads as failing, not just dim
   for (const nl of nightLights) {
     let k = nl.base * (typeof nightLightLevel === 'number' ? nightLightLevel : 0);
-    if (nl.flicker) k *= 0.75 + 0.25 * Math.sin(t * 37) * (Math.sin(t * 5.3) > 0.7 ? 0.2 : 1);
+    if (nl.flicker) { const ph = nl.phase || 0; k *= 0.75 + 0.25 * Math.sin((t + ph) * 37) * (Math.sin((t + ph) * 5.3) > 0.7 ? 0.2 : 1); }
     nl.light.intensity = k * 3;
   }
   // window glows — same nightLightLevel fade, small per-window phase so the
@@ -7326,6 +8349,8 @@ function updateStreetDetail(dt) {
 */
 const JUNCTION_Z = [];
 for (let z = 92; z < 1560; z += 88) JUNCTION_Z.push(z);
+const BRANCH_ROAD_Z = 796; // the one junction with its east-side barrier removed — see buildSideRoadBarriers and buildBranchRoad
+const BRANCH_ROAD_Z2 = 1500; // second branch, west-side barrier removed — see buildBranchRoad2, leads toward industrial_buildings
 /* 22s was frantic — a light barely settled before flipping. 52s reads as a real
    junction: about 26s of main green, 4s amber, 19s cross green, 3s amber. */
 const CYCLE_SECONDS = 52;
@@ -7364,11 +8389,14 @@ function buildCrossTraffic() {
   if (crossCars.length || typeof trafficCars === 'undefined' || !trafficCars.length) return;
   let seed = 8642;
   const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
-  for (let i = 0; i < 10; i++) {
+  // Was 10 cars across only the first 8 of 17 junctions (Math.min(8,...)) - the
+  // other 9 had working lights and zero traffic ever. 21 cars, all 17 junctions,
+  // keeps roughly the same per-junction density as before rather than diluting it.
+  for (let i = 0; i < 21; i++) {
     const src = trafficCars[Math.floor(rnd() * trafficCars.length)];
     if (!src || !src.mesh) continue;
     const mesh = src.mesh.clone(true);
-    const jz = JUNCTION_Z[Math.floor(rnd() * Math.min(8, JUNCTION_Z.length))];
+    const jz = JUNCTION_Z[Math.floor(rnd() * JUNCTION_Z.length)];
     const dir = rnd() < 0.5 ? 1 : -1;
     mesh.position.set(ROAD_CX + dir * (55 + rnd() * 30), 0, jz + (dir > 0 ? 2.2 : -2.2));
     mesh.rotation.y = dir > 0 ? -Math.PI / 2 : Math.PI / 2;
@@ -7433,6 +8461,11 @@ function buildSideRoadBarriers() {
   const g = new THREE.Group();
   for (const jz of JUNCTION_Z) {
     for (const side of [1, -1]) {
+      // One deliberate gap: z=796, east side (side=1) — the new right-turn branch
+      // to the ccity buildings. Every other junction, both sides, stays exactly as
+      // barriered as before.
+      if (jz === BRANCH_ROAD_Z && side === 1) continue;
+      if (jz === BRANCH_ROAD_Z2 && side === -1) continue;
       // a low jersey barrier across the side road mouth
       const b = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.85, 8.4), mat);
       b.position.set(ROAD_CX + side * (ROAD_HW + 3.2), 0.42, jz);
@@ -8176,7 +9209,9 @@ const FOREST_PATCHES = [
   // coincided with trees, grass and the garage cars all failing to appear — the
   // pattern of a device running out of GPU resources and dropping later loads
   // rather than of a code fault. Sparser grid, and the same distance thinning.
-  [-62, -14, 0.12],
+  // [-62,-14] REMOVED — the only patch under 100 units from origin (63.6), so the
+  // one actually encountered up close near the start rather than as distant
+  // treeline. Reported as a messy/oversized-looking clump at that range.
   [118, -14, 0.16],
   [-134, 20, 5.78],
   [-98, 20, 2.02],
@@ -8280,6 +9315,13 @@ function endLoad(name) {
     buildJunctionMarkings();
     buildSideRoadBarriers();
     setTimeout(buildParkedCars, 2500);    // needs traffic meshes to exist first
+    setTimeout(buildRecreationAreas, 2600);   // court + lots; lot cars use the same traffic meshes if ready
+    setTimeout(buildBranchRoad, 2650);
+    setTimeout(buildBranchRoad2, 2670);
+    setTimeout(buildBranchTraffic, 2690);   // needs trafficCars, same reason buildParkedCars is deferred
+    setTimeout(buildJunctionExpansion, 2710);
+    setTimeout(buildChicagoAndIndustrial, 2700);
+    setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
     setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
        low-poly next to a photoscanned character reads as a different game, and I
@@ -8735,8 +9777,16 @@ window.addEventListener('pointerup', joyEnd);
 window.addEventListener('pointercancel', joyEnd);
 
 /* Zoom buttons */
-document.getElementById('zoom-in').addEventListener('click', () => { camDist -= (camDistMax - camDistMin) * 0.12; });
-document.getElementById('zoom-out').addEventListener('click', () => { camDist += (camDistMax - camDistMin) * 0.12; });
+document.getElementById('zoom-in').addEventListener('click', () => { if (!freeCamMode) camDist -= (camDistMax - camDistMin) * 0.12; });
+document.getElementById('zoom-out').addEventListener('click', () => { if (!freeCamMode) camDist += (camDistMax - camDistMin) * 0.12; });
+// Free-cam altitude: hold rather than click, since flying up/down wants to be
+// continuous, not stepped. Only takes over while free-cam is actually on.
+document.getElementById('zoom-in').addEventListener('pointerdown', () => { if (freeCamMode) freeCamRise = 1; });
+document.getElementById('zoom-out').addEventListener('pointerdown', () => { if (freeCamMode) freeCamRise = -1; });
+['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => {
+  document.getElementById('zoom-in').addEventListener(ev, () => { if (freeCamMode) freeCamRise = 0; });
+  document.getElementById('zoom-out').addEventListener(ev, () => { if (freeCamMode) freeCamRise = 0; });
+});
 
 /* Background audio (starts on first tap — browsers block autoplay-with-sound) */
 const BG_TRACKS = [
@@ -8926,6 +9976,23 @@ function initAmbientAudio() {
   windFilter.connect(windGain);
   windGain.connect(ambientCtx.destination);
   noiseSource.start();
+
+  /* AC unit hum — a mid-frequency electrical buzz, constant and very quiet,
+     distinct from both the wind bed (airy, higher-passed) and the city hum
+     (low rumble). Own noise buffer since the character is different enough
+     from either existing one that reusing theirs would need a third filter
+     anyway — this is cheap regardless. */
+  const acBuf = ambientCtx.createBuffer(1, ambientCtx.sampleRate, ambientCtx.sampleRate);
+  const acData = acBuf.getChannelData(0);
+  for (let i = 0; i < acBuf.length; i++) acData[i] = Math.random() * 2 - 1;
+  const acSource = ambientCtx.createBufferSource();
+  acSource.buffer = acBuf; acSource.loop = true;
+  const acFilter = ambientCtx.createBiquadFilter();
+  acFilter.type = 'bandpass'; acFilter.frequency.value = 220; acFilter.Q.value = 1.4;
+  const acGain = ambientCtx.createGain();
+  acGain.gain.value = 0.012;
+  acSource.connect(acFilter); acFilter.connect(acGain); acGain.connect(ambientCtx.destination);
+  acSource.start();
 }
 
 /* ---------- Engine ----------
@@ -9342,10 +10409,13 @@ function tick() {
     if (scene.fog.density !== want) scene.fog.density = want;
   }
   updateCrossTraffic(dt);
+  updateBranchTraffic(dt);
   updateStreetDetail(dt);
   updateBuildingLOD();
   updateCallStrip();
   updateAmbientEvents(dt);
+  updateHouseAudio();
+  updateExtraCalls(dt);
   updateCarDJ(dt);
   updateInteriorActions();
   updateInteriorLights();
@@ -9362,7 +10432,20 @@ function tick() {
   updateVoiceBarks(dt);
   updateAmbientAudio(dt);
   if (mixer) mixer.update(dt);
-  updateCamera();
+  {
+    // 86 animated NPCs now (bird/rat/puppy), spread across the whole 1500-unit
+    // avenue — at any moment only a handful are actually near the player. Full
+    // skeletal update on all of them every frame was pure waste on the rest.
+    // 120 units covers visible range comfortably; fog already hides anything
+    // beyond that in normal play, so nothing changes on screen.
+    const px = drivingMode ? carState.x : (character ? character.position.x : 0);
+    const pz = drivingMode ? carState.z : (character ? character.position.z : 0);
+    for (const n of npcMixers) {
+      const dx = n.x - px, dz = n.z - pz;
+      if (dx * dx + dz * dz < 14400) n.mixer.update(dt);   // 120*120
+    }
+  }
+  updateCamera(dt);
   updatePovCamera(); // overrides the orbit camera while in first person
   if (character && !drivingMode) {
     spot.position.set(character.position.x, 5, character.position.z + 2);
