@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 15:18';
+  window.__BUILD = '2026-08-30 16:52';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -3655,7 +3655,14 @@ function updateCarDriving(dt) {
   // Free roam. The car used to be clamped inside the road rectangle, which is why
   // it could never leave the tarmac. Now the only limit is the ground plane itself,
   // and leaving the road costs grip and speed instead of being forbidden.
-  const GROUND_HALF = 445; // just inside the 900-unit plane
+  // Was 445 — a leftover from before the ground plane was resized to 3600x3600
+  // (half-extent 1800, see groundGeo above, sized specifically "to cover the
+  // full -80..1600 road with margin"). This clamp was never updated to match,
+  // so it silently capped every drive at 445 units this entire session,
+  // regardless of any road, barrier, or junction fix - none of it was ever
+  // physically reachable. 1750 covers everything built (z to ~1600, x to ~350)
+  // with real margin, staying inside the actual ground edge at 1800.
+  const GROUND_HALF = 1750;
   carState.x = Math.max(-GROUND_HALF, Math.min(GROUND_HALF, carState.x));
   carState.z = Math.max(-GROUND_HALF, Math.min(GROUND_HALF, carState.z));
 
