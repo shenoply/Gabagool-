@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 18:46';
+  window.__BUILD = '2026-08-30 19:10';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1318,6 +1318,26 @@ function loadDowntownSkylineTwoSided() {
       ];
       for (const p of positions) {
         const city = gltf.scene.clone(true);
+        // The model bundles its own flat ground-plate mesh alongside the actual
+        // buildings - confirmed via a direct scene scan: ~151x156 units (the
+        // buildings themselves are ~91x97), nearly flat, extending well past the
+        // road on both clusters. Almost certainly what was reported as "a green
+        // thing blocking the road, part of a building" - the existing grass
+        // ground plane already covers this, so this submesh is redundant and
+        // just needs to go. Identified generically (any mesh under 2 units tall
+        // but over 100 wide) rather than by name, since glTF export names like
+        // "mesh_1_1" aren't guaranteed stable.
+        const toRemove = [];
+        const _bb = new THREE.Box3();
+        const _sz = new THREE.Vector3();
+        city.updateMatrixWorld(true);
+        city.traverse((o) => {
+          if (!o.isMesh || !o.geometry) return;
+          _bb.setFromObject(o);
+          _bb.getSize(_sz);
+          if (_sz.y < 2 && (_sz.x > 100 || _sz.z > 100)) toRemove.push(o);
+        });
+        toRemove.forEach((o) => o.parent && o.parent.remove(o));
         city.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
         city.position.set(p.x, -1, p.z);
         city.rotation.y = Math.atan2(-p.x, -p.z); // face back toward the play area, same as before
