@@ -906,7 +906,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 02:49';
+  window.__BUILD = '2026-08-30 02:56';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1830,6 +1830,7 @@ const DEBUG_MARKERS = [
   { n: 'old school', x: 58, z: 1080, anim: false },
   { n: 'chicago buildings', x: 125, z: 1150, anim: false },
   { n: 'ccity buildings (end of branch road)', x: 310, z: 796, anim: false },
+  { n: 'left turn (2nd branch road, toward industrial)', x: -100, z: 1500, anim: false },
   { n: 'industrial buildings', x: -140, z: 1580, anim: false },
   { n: 'downtown skyline (left)', x: -125, z: CITY_BACKDROP_POS.z, anim: false },
   { n: 'downtown skyline (right)', x: 125, z: CITY_BACKDROP_POS.z, anim: false },
@@ -6863,6 +6864,9 @@ function buildRoadFurniture() {
     // sign here is west side (unchanged), this one's east side and placed just
     // before the turn, same lead-in distance real highway exit signs use.
     { z: 770, top: 'RIGHT LANE', bottom: 'Local Access', side: 1 },
+    // Second turn, west side at z=1500 — sign posted on the east side (facing
+    // oncoming traffic), same lead-in distance as the first sign.
+    { z: 1474, top: 'LEFT LANE', bottom: 'Industrial Dist', side: 1 },
   ];
   for (const s of SIGNS) {
     const side = s.side || -1;
@@ -7545,6 +7549,29 @@ function buildBranchRoad() {
   }, (e) => { console.warn('ccity load failed:', e); if (window.__gameNote) window.__gameNote('CCITY FAILED: ' + ((e && e.message) || e)); });
 }
 
+/* Second branch road — left turn, west side, at BRANCH_ROAD_Z2 (z=1500, a real
+   junction). Leads toward industrial_buildings, which was already placed at
+   (-140, 1580) by buildChicagoAndIndustrial — not moved, the road is built to
+   reach where it already sits, per "keep what we have as it is." Exact mirror of
+   buildBranchRoad above: same materials, same strip+plaza pattern, opposite side. */
+function buildBranchRoad2() {
+  const roadMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
+  const startX = ROAD_CX - ROAD_HW;      // 17 — main road's west edge
+  const endX = -160;
+  const roadLen = startX - endX;
+  const roadW = 9;
+  const strip = new THREE.Mesh(new THREE.PlaneGeometry(roadLen, roadW), roadMat);
+  strip.rotation.x = -Math.PI / 2;
+  strip.position.set(endX + roadLen / 2, 0.015, BRANCH_ROAD_Z2);
+  strip.receiveShadow = true;
+  scene.add(strip);
+  const plaza = new THREE.Mesh(new THREE.CircleGeometry(22, 20), roadMat);
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.set(endX, 0.015, BRANCH_ROAD_Z2);
+  plaza.receiveShadow = true;
+  scene.add(plaza);
+}
+
 // Chicago buildings — landmark on the avenue itself, same treatment as the
 // factories (a one-off large structure, not a repeated tile). East side, clear of
 // the branch road above.
@@ -8124,6 +8151,7 @@ function updateStreetDetail(dt) {
 const JUNCTION_Z = [];
 for (let z = 92; z < 1560; z += 88) JUNCTION_Z.push(z);
 const BRANCH_ROAD_Z = 796; // the one junction with its east-side barrier removed — see buildSideRoadBarriers and buildBranchRoad
+const BRANCH_ROAD_Z2 = 1500; // second branch, west-side barrier removed — see buildBranchRoad2, leads toward industrial_buildings
 /* 22s was frantic — a light barely settled before flipping. 52s reads as a real
    junction: about 26s of main green, 4s amber, 19s cross green, 3s amber. */
 const CYCLE_SECONDS = 52;
@@ -8235,6 +8263,7 @@ function buildSideRoadBarriers() {
       // to the ccity buildings. Every other junction, both sides, stays exactly as
       // barriered as before.
       if (jz === BRANCH_ROAD_Z && side === 1) continue;
+      if (jz === BRANCH_ROAD_Z2 && side === -1) continue;
       // a low jersey barrier across the side road mouth
       const b = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.85, 8.4), mat);
       b.position.set(ROAD_CX + side * (ROAD_HW + 3.2), 0.42, jz);
@@ -9084,6 +9113,7 @@ function endLoad(name) {
     setTimeout(buildParkedCars, 2500);    // needs traffic meshes to exist first
     setTimeout(buildRecreationAreas, 2600);   // court + lots; lot cars use the same traffic meshes if ready
     setTimeout(buildBranchRoad, 2650);
+    setTimeout(buildBranchRoad2, 2670);
     setTimeout(buildChicagoAndIndustrial, 2700);
     setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
     setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
