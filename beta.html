@@ -914,7 +914,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 00:42';
+  window.__BUILD = '2026-08-31 00:55';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -6697,6 +6697,25 @@ houseAudioBtn.addEventListener('click', (e) => {
   houseAudioState = 'idle';   // reset so it can replay even after "done"
   startHouseAudioSequence();
 });
+// Physical light prop by the house, not just the compass icon from before - a
+// real in-world beacon you can see and walk toward, lit orange when the
+// interaction is actually available, dim gray otherwise.
+const houseAudioLight = new THREE.Group();
+const houseLightPole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 2.2, 6), new THREE.MeshStandardMaterial({ color: 0x2c2c2c }));
+houseLightPole.position.y = 1.1;
+houseAudioLight.add(houseLightPole);
+const houseLightBulbMat = new THREE.MeshStandardMaterial({ color: 0x444444, emissive: 0x000000, emissiveIntensity: 0 });
+const houseLightBulb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), houseLightBulbMat);
+houseLightBulb.position.y = 2.3;
+houseAudioLight.add(houseLightBulb);
+houseAudioLight.position.set(3.5, 0, -2.5); // just outside the house, near the audio-button proximity zone
+scene.add(houseAudioLight);
+function updateHouseAudioLight() {
+  const ready = houseAudioBtn.style.display !== 'none';
+  houseLightBulbMat.color.set(ready ? 0xff8a3d : 0x444444);
+  houseLightBulbMat.emissive.set(ready ? 0xff8a3d : 0x000000);
+  houseLightBulbMat.emissiveIntensity = ready ? 1.6 : 0;
+}
 function updateHouseAudio() {
   if (!character || drivingMode) { houseAudioBtn.style.display = 'none'; return; }
   const d = Math.hypot(character.position.x, character.position.z);
@@ -7680,18 +7699,29 @@ function buildRecreationAreas() {
    drive to rather than an accidental gap.
 */
 function buildBranchRoad() {
-  const roadMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
+  // Was a flat, textureless color - the main avenue uses createAsphaltTexture()
+  // (proper dashed center line + edge lines baked in), branch roads had none of
+  // that. That mismatch is what read as "pavement ruins the side roads" - bare
+  // and unfinished next to the properly-marked avenue. Same texture now, just
+  // repeat-scaled to this road's own width/length.
   const startX = ROAD_CX + ROAD_HW;      // 37 — main road's east edge
   const endX = 280;
   const roadLen = endX - startX;
   const roadW = 9;
+  const branchTex = createAsphaltTexture();
+  branchTex.repeat.set(roadW / 8, roadLen / 8);
+  branchTex.anisotropy = maxAniso;
+  const roadMat = new THREE.MeshStandardMaterial({ map: branchTex, roughness: 0.95, metalness: 0.0 });
   const strip = new THREE.Mesh(new THREE.PlaneGeometry(roadLen, roadW), roadMat);
   strip.rotation.x = -Math.PI / 2; // same convention as the parking lots — w->world X, h->world Z, no extra rotation needed
+  strip.rotation.z = Math.PI / 2;  // texture's lane line runs along its own V-axis (mapped to length) - this strip is wide-not-long in local space, so rotate the UV frame to match
   strip.position.set(startX + roadLen / 2, 0.015, BRANCH_ROAD_Z);
   strip.receiveShadow = true;
   scene.add(strip);
-  // small paved turnaround plaza at the far end
-  const plaza = new THREE.Mesh(new THREE.CircleGeometry(22, 20), roadMat);
+  // small paved turnaround plaza at the far end - flat color still fine here,
+  // a dashed lane line wrapped around a circle would look wrong
+  const plazaMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
+  const plaza = new THREE.Mesh(new THREE.CircleGeometry(22, 20), plazaMat);
   plaza.rotation.x = -Math.PI / 2;
   plaza.position.set(endX, 0.015, BRANCH_ROAD_Z);
   plaza.receiveShadow = true;
@@ -7808,6 +7838,39 @@ function buildRoadSegment(x1, z1, x2, z2) {
    route to the industrial area from the main junction. All L-shaped (two
    straight segments), same paved-strip technique as every other road here. */
 function buildJunctionExpansion() {
+  // Intersection floor - was entirely absent, the roads just crossed with zero
+  // visual distinction ("no intersection floor design"). Crosswalks on all 4
+  // approaches, standard zebra-stripe pattern, at the actual crossing point.
+  (function buildIntersectionFloor() {
+    const cx = ROAD_CX, cz = BRANCH_ROAD_Z;
+    const half = ROAD_HW + 1; // just past the road edges, covers the full crossing box
+    const c = document.createElement('canvas');
+    c.width = c.height = 512;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#2f2f31'; // slightly lighter than the plain road tone - reads as a distinct surface
+    ctx.fillRect(0, 0, 512, 512);
+    ctx.fillStyle = 'rgba(235,235,235,0.75)';
+    const stripeW = 14, gap = 10, inset = 60;
+    // North/south crosswalks (stripes run horizontally, across the avenue)
+    for (let x = inset; x < 512 - inset; x += stripeW + gap) {
+      ctx.fillRect(x, 8, stripeW, 34);
+      ctx.fillRect(x, 512 - 42, stripeW, 34);
+    }
+    // East/west crosswalks (stripes run vertically, across the branch road)
+    for (let y = inset; y < 512 - inset; y += stripeW + gap) {
+      ctx.fillRect(8, y, 34, stripeW);
+      ctx.fillRect(512 - 42, y, 34, stripeW);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 });
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2), mat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(cx, 0.017, cz); // just above the road strip to avoid z-fighting
+    floor.receiveShadow = true;
+    scene.add(floor);
+  })();
+
   // Plaza (280,796) south to the court-3/old-school corridor (58,990) — a
   // second exit besides the original road back to the main avenue.
   buildRoadSegment(280, 796, 280, 990);
@@ -8004,17 +8067,22 @@ function buildPerimeterTrees() {
    reach where it already sits, per "keep what we have as it is." Exact mirror of
    buildBranchRoad above: same materials, same strip+plaza pattern, opposite side. */
 function buildBranchRoad2() {
-  const roadMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
   const startX = ROAD_CX - ROAD_HW;      // 17 — main road's west edge
   const endX = -160;
   const roadLen = startX - endX;
   const roadW = 9;
+  const branchTex = createAsphaltTexture();
+  branchTex.repeat.set(roadW / 8, roadLen / 8);
+  branchTex.anisotropy = maxAniso;
+  const roadMat = new THREE.MeshStandardMaterial({ map: branchTex, roughness: 0.95, metalness: 0.0 });
   const strip = new THREE.Mesh(new THREE.PlaneGeometry(roadLen, roadW), roadMat);
   strip.rotation.x = -Math.PI / 2;
+  strip.rotation.z = Math.PI / 2;
   strip.position.set(endX + roadLen / 2, 0.015, BRANCH_ROAD_Z2);
   strip.receiveShadow = true;
   scene.add(strip);
-  const plaza = new THREE.Mesh(new THREE.CircleGeometry(22, 20), roadMat);
+  const plazaMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
+  const plaza = new THREE.Mesh(new THREE.CircleGeometry(22, 20), plazaMat);
   plaza.rotation.x = -Math.PI / 2;
   plaza.position.set(endX, 0.015, BRANCH_ROAD_Z2);
   plaza.receiveShadow = true;
@@ -8280,6 +8348,31 @@ function buildStreetDetail() {
     trafficLights.push({ bulbs, z: BRANCH_ROAD_Z });
   }
 
+  // Cross-facing signal — the big junction only ever signaled main-avenue
+  // traffic. A real 4-way light needs a head facing the crossing road too, or
+  // it reads as an incomplete/confusing intersection to anyone approaching on
+  // the branch road. Pole-mounted (not a second mast-arm - one is enough to
+  // sell "major intersection"), positioned on the branch road just east of the
+  // junction, facing west back toward it.
+  {
+    const g = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 5.4, 6), frameMat);
+    pole.position.y = 2.7; g.add(pole);
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.95, 0.28), frameMat);
+    box.position.set(0, 4.9, 0); g.add(box);
+    const bulbs = [];
+    ['#ff3b30', '#ffcc00', '#34c759'].forEach((c, i) => {
+      const b = new THREE.Mesh(new THREE.CircleGeometry(0.1, 10), lampOff());
+      b.position.set(0, 5.2 - i * 0.31, 0.145);
+      b.userData.on = new THREE.Color(c);
+      g.add(b); bulbs.push(b);
+    });
+    g.position.set(ROAD_CX + ROAD_HW + 8, 0, BRANCH_ROAD_Z - 5.5); // just past the junction, branch-road side
+    g.rotation.y = Math.PI / 2; // faces west, back toward the junction
+    streetDetail.add(g);
+    trafficLights.push({ bulbs, z: BRANCH_ROAD_Z, facing: 'cross' });
+  }
+
   // 9. fire hydrants
   const hydMat = new THREE.MeshStandardMaterial({ color: 0xb02a22, roughness: 0.7, metalness: 0.15 });
   const hyd = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.14, 0.17, 0.78, 8), hydMat, 14);
@@ -8496,9 +8589,14 @@ function updateStreetDetail(dt) {
   // traffic light cycle: 8s green, 2s amber, 8s red, offset per junction
   for (const L of trafficLights) {
     /* Same phase function the cars use, so a light can never show green while the
-       traffic in front of it is stopped. */
+       traffic in front of it is stopped. facing defaults to 'main' so every
+       existing light (all of them, until the cross-facing addition below) keeps
+       its exact current behavior - only a light explicitly marked 'cross' uses
+       the inverted logic. */
     const ph = junctionPhase(L.z);
-    const on = ph.mainGreen ? 2 : ph.mainAmber ? 1 : 0;
+    const on = L.facing === 'cross'
+      ? (ph.crossGreen ? 2 : 0)
+      : (ph.mainGreen ? 2 : ph.mainAmber ? 1 : 0);
     L.bulbs.forEach((b, i) => {
       const lit = i === on;
       b.material.color.copy(lit ? b.userData.on : new THREE.Color(0x1a1a1a));
@@ -10813,6 +10911,7 @@ function tick() {
   updateCallStrip();
   updateAmbientEvents(dt);
   updateHouseAudio();
+  updateHouseAudioLight();
   updateExtraCalls(dt);
   updateCarDJ(dt);
   updateInteriorActions();
