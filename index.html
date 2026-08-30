@@ -912,7 +912,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 23:58';
+  window.__BUILD = '2026-08-31 00:01';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -6311,8 +6311,12 @@ function renderPhone() {
       '<div class="ph-item" data-act="callboss">\u260E The Boss</div>' +
       '<div class="ph-item" data-act="carmine">\u260E Carmine Lupertazzi</div>' +
       '<div class="ph-item" data-act="junior">\u260E Uncle Junior</div>' +
+      '<div class="ph-item" data-act="melfi">\u260E Dr. Melfi</div>' +
+      '<div class="ph-item" data-act="vito">\u260E Vito</div>' +
+      '<div class="ph-item" data-act="christopher">\u260E Christopher</div>' +
+      '<div class="ph-item" data-act="irina">\u260E Irina</div>' +
       '<div class="ph-item" data-act="george">\u260E George</div>' +
-      '<div style="opacity:0.55;margin-top:8px;font-size:10px;">4 of 4</div>';
+      '<div style="opacity:0.55;margin-top:8px;font-size:10px;">8 of 8</div>';
   } else if (phoneScreen === 'radio') {
     body = '<div style="opacity:0.7;font-size:10px;margin-bottom:6px;">RADIO</div>' +
       RADIO_STATIONS.map((st, i) =>
@@ -6402,6 +6406,10 @@ function phoneAction(act) {
   else if (act === 'stopvid') { stopPhoneVideo(); phoneScreen = 'videos'; renderPhone(); }
   else if (act === 'carmine') { if (onCall) return; closePhone(); startVoiceCall('carmine'); }
   else if (act === 'junior') { if (onCall) return; closePhone(); startVoiceCall('junior'); }
+  else if (act === 'melfi') { if (onCall) return; closePhone(); startVoiceCall('melfi'); }
+  else if (act === 'vito') { if (onCall) return; closePhone(); startVoiceCall('vito'); }
+  else if (act === 'christopher') { if (onCall) return; closePhone(); startVoiceCall('christopher'); }
+  else if (act === 'irina') { if (onCall) return; closePhone(); startVoiceCall('irina'); }
   else if (act === 'george') { closePhone(); if (window.__gameNote) window.__gameNote('George does not answer the phone. He is a car.'); }
   else if (act === 'audio') { soundToggle.click(); renderPhone(); }
   else if (act === 'photo') { closePhone(); togglePhotoMode(); }
@@ -7322,8 +7330,8 @@ function loadMeshyBuildings() {
      rather than the street just stopping. put() already clamps anything whose
      measured bbox would clip the road, so their ~30m depth is handled the same
      way as everything else; no special-casing needed here. */
-  load(ASSETS.FACTORY_A, (src) => put(src, EAST_X, 1540, -Math.PI / 2));
-  load(ASSETS.FACTORY_B, (src) => put(src, WEST_X, 1545, Math.PI / 2));
+  load(ASSETS.FACTORY_A, (src) => put(src, 100, 1540, -Math.PI / 2)); // was EAST_X=44, only 7 units past the road edge - pushed to 100 for real clearance
+  load(ASSETS.FACTORY_B, (src) => put(src, -50, 1545, Math.PI / 2)); // was WEST_X=10, inside the road corridor itself - pushed to -50
   /* Fence both factory yards — same asset and technique as the alley run above,
      just a longer stretch (6 panels) along the road-facing edge of each. */
   load(ASSETS.CHAIN_LINK_FENCE, (fenceSrc) => {
@@ -7851,14 +7859,26 @@ function buildNewVehiclesAndGolf() {
     if (window.__gameNote) window.__gameNote('police officer loaded OK');
   }, (e) => { console.warn('police officer load failed:', e); if (window.__gameNote) window.__gameNote('POLICE OFFICER FAILED: ' + ((e && e.message) || e)); });
 
-  // Taxi, near KFC1 - a plausible spot for one to be waiting
+  // Taxis - designated waiting spots along the main road, not just one. Near
+  // KFC1 (existing), KFC2, old school, court 1, and the right-turn plaza.
   loader.parse(ASSETS.TAXI_CAR, '', (gltf) => {
-    const t = gltf.scene;
-    t.position.set(48, 0, 165);
-    t.rotation.y = -Math.PI / 2;
-    t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
-    scene.add(t);
-    if (window.__gameNote) window.__gameNote('taxi loaded OK');
+    const spots = [
+      { x: 48, z: 165, rotY: -Math.PI / 2 },   // KFC1
+      { x: -18, z: 655, rotY: Math.PI / 2 },   // KFC2
+      { x: 48, z: 1085, rotY: -Math.PI / 2 },  // old school
+      { x: 42, z: 230, rotY: -Math.PI / 2 },   // court 1
+      { x: 260, z: 800, rotY: Math.PI },       // right-turn plaza
+    ];
+    let placed = 0;
+    for (const s of spots) {
+      const t = gltf.scene.clone(true);
+      t.position.set(s.x, 0, s.z);
+      t.rotation.y = s.rotY;
+      t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+      scene.add(t);
+      placed++;
+    }
+    if (window.__gameNote) window.__gameNote('taxis loaded OK, ' + placed + ' placed');
   }, (e) => { console.warn('taxi load failed:', e); if (window.__gameNote) window.__gameNote('TAXI FAILED: ' + ((e && e.message) || e)); });
 
   // Golf course - shrunk further (60 wide, not 90) and pulled in to x=-140,z=100
