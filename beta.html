@@ -912,7 +912,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 22:02';
+  window.__BUILD = '2026-08-30 22:13';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1497,14 +1497,14 @@ function openPhoneRing() {
   phoneRingPopupOpen = true;
   // Handset first; the old popup only appears if the phone UI is missing.
   if (typeof showIncomingOnPhone === 'function') {
-    /* A finite queue, not a rotation: Boss, then Junior, then Carmine — one call
-       each, 30s apart. Declining is final; that caller does not try again. Once the
-       queue is empty the phone stops ringing altogether. */
-    /* Was a finite queue, consumed once — Boss, Junior, Carmine, then silent for
-       the rest of the session. That's what "no one called me" was: play long
-       enough and the phone runs out of callers permanently. Refill instead of
-       stopping, so it keeps cycling like it used to. */
-    if (callQueue.length === 0) callQueue = ['boss', 'junior', 'carmine'];
+    /* Finite queue, once each - Boss, then Junior, then Carmine, then silent from
+       this queue specifically. This was refilled for a while (see the two
+       comments this replaced) because 3 total calls felt like too few and the
+       phone went silent too early. That's no longer true: melfi/vito/christopher
+       /irina (a separate system) now provide 4 more unique calls each session,
+       so the real total is 7 distinct callers, not 3. Refilling on top of that
+       is what caused "boss keeps calling" - removed per direct request. */
+    if (callQueue.length === 0) { scheduleNextPhoneRing(9999999); return; }
     const who = callQueue.shift();
     showIncomingOnPhone(who);
     // The handset path used to return before this, so incoming calls were silent.
@@ -6647,7 +6647,7 @@ function startHouseAudioSequence() {
 const houseAudioBtn = document.createElement('div');
 houseAudioBtn.id = 'house-audio-btn';
 houseAudioBtn.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(150px + env(safe-area-inset-bottom,0px));z-index:40;display:none;background:var(--accent);color:#1a1208;font:800 13px/1 -apple-system,sans-serif;padding:12px 20px;border-radius:999px;box-shadow:0 6px 20px rgba(0,0,0,0.45);user-select:none;-webkit-user-select:none;';
-houseAudioBtn.textContent = 'Play house audio';
+houseAudioBtn.textContent = 'Listen in';
 document.body.appendChild(houseAudioBtn);
 houseAudioBtn.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -6715,7 +6715,7 @@ function updateExtraCalls(dt) {
       EXTRA_CALL_STATE[ringingExtraKey].answered = true;   // answered — done forever
       ringingExtraKey = null;
     } else if (!phoneRingPopupOpen && !onCall) {
-      EXTRA_CALL_STATE[ringingExtraKey].nextEligible = Date.now() + EXTRA_CALL_COOLDOWN_MS;   // declined or timed out
+      EXTRA_CALL_STATE[ringingExtraKey].answered = true;   // declined or timed out - also permanent now, not a cooldown. "if I hang up that person wouldn't call back, another person would" - other callers stay in rotation, this one doesn't repeat.
       ringingExtraKey = null;
     }
   }
@@ -9474,6 +9474,13 @@ function endLoad(name) {
     setTimeout(buildRecreationAreas, 2600);   // court + lots; lot cars use the same traffic meshes if ready
     setTimeout(buildBranchRoad, 2650);
     setTimeout(buildBranchRoad2, 2670);
+    // Real bug fix: trafficCars was only ever populated inside enterDriveMode(),
+    // so anyone on foot when buildCrossTraffic/buildRoadPatrols ran (2690-3000ms
+    // after load) got permanently zero traffic - both are one-shot and never
+    // retry. Load the pack and spawn cars at boot regardless of drive mode.
+    // loadTrafficPack guards against double-loading, so this is a no-op if the
+    // player has already entered a car by this point.
+    setTimeout(() => { loadTrafficPack(() => { if (trafficCars.length === 0) spawnTrafficCars(); }); }, 1800);
     setTimeout(buildRoadPatrols, 2690);   // needs trafficCars, same reason buildParkedCars is deferred
     // Proximity-gated instead of fixed-timer — these are the farthest content
     // from spawn (junction z~796, chicago/industrial z~1150-1580) and might never
