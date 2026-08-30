@@ -906,7 +906,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 02:30';
+  window.__BUILD = '2026-08-30 02:43';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1817,16 +1817,10 @@ document.getElementById('freecam-btn').addEventListener('click', toggleFreeCam);
    with nothing there, that placement's asset failed to load — if the marker
    itself is what's missing, something's wrong with this list, not the asset. */
 const DEBUG_MARKERS = [
-  { n: 'bird 1', x: 38.5, z: 130, anim: true }, { n: 'bird 2', x: 15.5, z: 270, anim: true }, { n: 'bird 3', x: 38.5, z: 410, anim: true },
-  { n: 'bird 4', x: 15.5, z: 550, anim: true }, { n: 'bird 5', x: 38.5, z: 690, anim: true }, { n: 'bird 6', x: 15.5, z: 830, anim: true },
-  { n: 'bird 7', x: 38.5, z: 970, anim: true }, { n: 'bird 8', x: 15.5, z: 1110, anim: true }, { n: 'bird 9', x: 38.5, z: 1250, anim: true },
-  { n: 'bird 10', x: 15.5, z: 1390, anim: true },
-  { n: 'rat 1', x: 15.5, z: 110, anim: true }, { n: 'rat 2', x: 38.5, z: 240, anim: true }, { n: 'rat 3', x: 15.5, z: 380, anim: true },
-  { n: 'rat 4', x: 38.5, z: 520, anim: true }, { n: 'rat 5', x: 15.5, z: 660, anim: true }, { n: 'rat 6', x: 38.5, z: 800, anim: true },
-  { n: 'rat 7', x: 15.5, z: 940, anim: true }, { n: 'rat 8', x: 38.5, z: 1080, anim: true },
-  { n: 'puppy 1', x: 38.5, z: 180, anim: true }, { n: 'puppy 2', x: 15.5, z: 320, anim: true }, { n: 'puppy 3', x: 38.5, z: 460, anim: true },
-  { n: 'puppy 4', x: 15.5, z: 600, anim: true }, { n: 'puppy 5', x: 38.5, z: 740, anim: true }, { n: 'puppy 6', x: 15.5, z: 880, anim: true },
-  { n: 'texter 1', x: 41, z: 210, anim: false }, { n: 'texter 2', x: 12.5, z: 460, anim: false },
+  { n: 'birds (50 total, full avenue)', x: 38.5, z: 130, anim: true }, { n: 'birds (50 total, full avenue)', x: 15.5, z: 830, anim: true }, { n: 'birds (50 total, full avenue)', x: 38.5, z: 1390, anim: true },
+  { n: 'rats (30 total, full avenue)', x: 15.5, z: 110, anim: true }, { n: 'rats (30 total, full avenue)', x: 38.5, z: 800, anim: true }, { n: 'rats (30 total, full avenue)', x: 15.5, z: 1470, anim: true },
+  { n: 'puppy 1 (of 6, by an NPC)', x: 39.9, z: 85.1, anim: true }, { n: 'puppy 3 (of 6, by an NPC)', x: 39.9, z: 562.7, anim: true }, { n: 'puppy 6 (of 6, by an NPC)', x: 14.1, z: 1280.1, anim: true },
+  { n: 'texting NPCs (60 total, full avenue)', x: 38.5, z: 130, anim: false }, { n: 'texting NPCs (60 total, full avenue)', x: 15.5, z: 830, anim: false },
   { n: 'vehicle lot', x: 105, z: 700, anim: false },
   { n: 'parking lot 1', x: 58, z: 400, anim: false }, { n: 'parking lot 2', x: -8, z: 550, anim: false },
   { n: 'parking lot 3', x: 58, z: 750, anim: false }, { n: 'parking lot 4', x: -8, z: 950, anim: false },
@@ -7600,40 +7594,40 @@ function spawnAnimatedNPC(assetKey, positions, animName) {
     if (window.__gameNote) window.__gameNote(assetKey + ' loaded OK (' + positions.length + ' placed)');
   }, (e) => { console.warn('NPC load failed:', assetKey, e); if (window.__gameNote) window.__gameNote('NPC FAILED (' + assetKey + '): ' + ((e && e.message) || e)); });
 }
-function loadStreetNPCs() {
-  // Bird — a few detailed instances mixed among the existing cheap sphere-birds,
-  // not a wholesale replacement (this one has 5 skins bundled in the file, so a
-  // single clone already reads as a small cluster).
-  spawnAnimatedNPC(ASSETS.STREET_BIRD, [
-    { x: 38.5, z: 130 }, { x: 15.5, z: 270 }, { x: 38.5, z: 410 }, { x: 15.5, z: 550 },
-    { x: 38.5, z: 690 }, { x: 15.5, z: 830 }, { x: 38.5, z: 970 }, { x: 15.5, z: 1110 },
-    { x: 38.5, z: 1250 }, { x: 15.5, z: 1390 },
-  ]);
-  // Rat — moved onto the avenue sidewalk bands per request, overriding the earlier
-  // alley-only placement. "Run" is the only clip in the file; it plays as an
-  // in-place loop rather than a path, an easy thing to upgrade to real movement
-  // later if it doesn't read well as-is.
-  spawnAnimatedNPC(ASSETS.STREET_RAT, [
-    { x: 15.5, z: 110, rotY: Math.PI * 0.3 }, { x: 38.5, z: 240, rotY: -Math.PI * 0.6 },
-    { x: 15.5, z: 380, rotY: Math.PI * 0.8 }, { x: 38.5, z: 520, rotY: -Math.PI * 0.2 },
-    { x: 15.5, z: 660, rotY: Math.PI * 0.5 }, { x: 38.5, z: 800, rotY: -Math.PI * 0.7 },
-    { x: 15.5, z: 940, rotY: Math.PI * 0.4 }, { x: 38.5, z: 1080, rotY: -Math.PI * 0.3 },
-  ], 'Run');
-  // Puppy — moved onto the avenue sidewalk bands per request, overriding the
-  // earlier yard-only placement.
-  spawnAnimatedNPC(ASSETS.STREET_PUPPY, [
-    { x: 38.5, z: 180, rotY: Math.PI * 0.4 }, { x: 15.5, z: 320, rotY: -Math.PI * 0.2 },
-    { x: 38.5, z: 460, rotY: Math.PI * 0.6 }, { x: 15.5, z: 600, rotY: -Math.PI * 0.4 },
-    { x: 38.5, z: 740, rotY: Math.PI * 0.3 }, { x: 15.5, z: 880, rotY: -Math.PI * 0.5 },
-  ]);
+// Evenly spreads `count` points along the avenue's sidewalk bands, alternating
+// sides, with a seeded PRNG so the same seed always gives the same layout
+// (deterministic across reloads, no need to hand-type dozens of coordinates).
+function avenueSpots(count, seed) {
+  let s = seed;
+  const rnd = () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
+  const zMin = 90, zMax = 1490, span = zMax - zMin;
+  const spots = [];
+  for (let i = 0; i < count; i++) {
+    const z = zMin + (i / count) * span + (rnd() - 0.5) * (span / count) * 0.5;
+    const side = i % 2 === 0 ? 1 : -1;
+    spots.push({ x: side > 0 ? 38.5 : 15.5, z, rotY: rnd() * Math.PI * 2 });
+  }
+  return spots;
+}
 
-  // Texting pedestrian — uploaded with no animation despite the name (checked: 0
-  // skins, 0 clips — a frozen pose, not a walk cycle). Static placement, with the
-  // same small idle bob the perched birds already use so it doesn't read as
-  // completely inert.
+function loadStreetNPCs() {
+  // Bird — 50 across the avenue (was 10). Each file instance already bundles 5
+  // skins/birds, so 50 placements reads as a genuinely dense flock along the
+  // route, not 50 lone birds.
+  spawnAnimatedNPC(ASSETS.STREET_BIRD, avenueSpots(50, 11001));
+  // Rat — 30 across the avenue (was 8). "Run" is the only clip in the file; it
+  // plays as an in-place loop rather than a path.
+  spawnAnimatedNPC(ASSETS.STREET_RAT, avenueSpots(30, 22002), 'Run');
+
+  // Texting pedestrian — 60 across the avenue (was 2). Uploaded with no
+  // animation despite the name (checked: 0 skins, 0 clips — a frozen pose, not a
+  // walk cycle). Static placement, with the same small idle bob the perched
+  // birds already use so it doesn't read as completely inert. Kept as its own
+  // seed/array (not spawnAnimatedNPC, which is skeleton-clone only) so the 6
+  // puppies below can co-locate with specific instances of it.
+  const texterSpots = avenueSpots(60, 33003);
   loader.parse(ASSETS.STREET_TEXTER, '', (gltf) => {
-    const spots = [{ x: 41, z: 210, rotY: -Math.PI / 2 }, { x: 12.5, z: 460, rotY: Math.PI / 2 }];
-    for (const s of spots) {
+    for (const s of texterSpots) {
       const clone = gltf.scene.clone(true);   // no skeleton to worry about — unrigged
       clone.position.set(s.x, 0, s.z);
       clone.rotation.y = s.rotY;
@@ -7641,8 +7635,24 @@ function loadStreetNPCs() {
       scene.add(clone);
       perchedBirds.push({ mesh: clone, baseY: 0, phase: Math.random() * 6.28 });   // reuses the idle-bob update loop below
     }
-    if (window.__gameNote) window.__gameNote('texting pedestrian loaded OK');
+    if (window.__gameNote) window.__gameNote('texting pedestrian loaded OK, ' + texterSpots.length + ' placed');
   }, (e) => { console.warn('texter load failed:', e); if (window.__gameNote) window.__gameNote('TEXTER FAILED: ' + ((e && e.message) || e)); });
+
+  // Puppy — stays at 6 total, but now co-located next to 6 specific texter
+  // instances (evenly picked across the 60) rather than spread independently —
+  // "next to NPC" as asked. Small x-offset so the dog sits beside the person,
+  // not inside them.
+  const puppySpots = [];
+  for (let i = 0; i < 6; i++) {
+    // +(i%2) breaks a real bug: floor(i*60/6) alone is always even (0,10,20...),
+    // and texterSpots alternates side by even/odd index — so without this every
+    // dog would land on the same sidewalk. This gives 3 east, 3 west.
+    const idx = Math.floor(i * texterSpots.length / 6) + (i % 2);
+    const t = texterSpots[idx];
+    const side = t.x > 27 ? 1 : -1;
+    puppySpots.push({ x: t.x + side * 1.4, z: t.z + 0.6, rotY: t.rotY });
+  }
+  spawnAnimatedNPC(ASSETS.STREET_PUPPY, puppySpots);
 
   // Vehicle display — reframed as a small used-car-lot scene rather than
   // traffic-integrated NPCs (the file is one 57m-wide compound Sketchfab scene, 76
