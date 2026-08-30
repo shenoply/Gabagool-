@@ -912,7 +912,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 00:01';
+  window.__BUILD = '2026-08-31 00:08';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7967,14 +7967,9 @@ function buildBranchRoad2() {
 // its own declaration further down the file (temporal dead zone, would crash the
 // whole boot sequence) — caught before push.
 function buildChicagoAndIndustrial() {
-  loader.parse(ASSETS.CHICAGO_BUILDINGS, '', (gltf) => {
-    const c = gltf.scene;
-    c.position.set(180, 0, 1150);   // pushed further from the road (was 125) for real clearance margin
-    c.rotation.y = -Math.PI / 2;
-    c.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
-    scene.add(c);
-    if (window.__gameNote) window.__gameNote('chicago buildings loaded OK');
-  }, (e) => { console.warn('chicago load failed:', e); if (window.__gameNote) window.__gameNote('CHICAGO FAILED: ' + ((e && e.message) || e)); });
+  // Chicago buildings REMOVED temporarily to test the green-mess report directly -
+  // precise math on its actual world-space bounds (X 160-227) says it shouldn't
+  // reach anywhere near the reported area, but testing beats trusting the math.
 
   loader.parse(ASSETS.INDUSTRIAL_BUILDINGS, '', (gltf) => {
     const ind = gltf.scene;
