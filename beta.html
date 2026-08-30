@@ -911,7 +911,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 20:23';
+  window.__BUILD = '2026-08-30 20:32';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -10616,21 +10616,6 @@ function tick() {
   requestAnimationFrame(tick);
 }
 tick();
-window.__testHooks = {
-  teleportCar(x, z) { if (typeof carState !== 'undefined') { carState.x = x; carState.z = z; carState.vx = 0; carState.vz = 0; } },
-  teleportChar(x, z) { if (typeof character !== 'undefined' && character) { character.position.x = x; character.position.z = z; } },
-  getState() {
-    return {
-      hasCharacter: typeof character !== 'undefined' && !!character,
-      hasCarState: typeof carState !== 'undefined',
-      drivingMode: typeof drivingMode !== 'undefined' ? drivingMode : null,
-      carXZ: typeof carState !== 'undefined' ? [carState.x, carState.z] : null,
-      charXZ: (typeof character !== 'undefined' && character) ? [character.position.x, character.position.z] : null,
-    };
-  },
-  setFreeCam(on) { if (typeof freeCamMode !== 'undefined') { freeCamMode = on; if (on && typeof freeCamPos !== 'undefined' && typeof camera !== 'undefined') freeCamPos.copy(camera.position); } },
-  setFreeCamPos(x, y, z) { if (typeof freeCamPos !== 'undefined') freeCamPos.set(x, y, z); },
-};
 </script>
   <script>
     /* Register the asset cache. Scoped to this directory, so it covers index.html
