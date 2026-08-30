@@ -914,7 +914,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 00:57';
+  window.__BUILD = '2026-08-31 01:00';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -4407,7 +4407,12 @@ function setRadioStation(i) {
       // buttons, which call setRadioStation directly) is the only thing that
       // should start something different. Was auto-advancing to a random
       // station instead; that's been reversed per direct request.
-      bgAudio.loop = true;
+      // Same station, next track in its playlist - not a repeat, not a random
+      // station switch. setRadioStation(radioIndex) with the CURRENT station
+      // reuses the trackIdx-advance logic already above, so this naturally
+      // moves to the next song under the same station rather than replaying
+      // this one or jumping stations.
+      bgAudio.onended = () => { if (soundOn) setRadioStation(radioIndex); };
     }
   }
   if (typeof saveGameState === 'function') saveGameState(); // remember the station across reloads
