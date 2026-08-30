@@ -615,7 +615,6 @@ const ASSETS = {
   CITY_BUILDINGS2: 'city_buildings2.glb',
   KFC: 'kfc.glb',
   CHICAGO_BUILDINGS: 'chicago_buildings.glb',
-  CCITY_BUILDINGS: 'ccity_buildings.glb',
   BUILDINGS_FRONT: 'buildings_front.glb',
   INDUSTRIAL_BUILDINGS: 'industrial_buildings.glb',
   TRAFFIC_PACK: 'traffic.glb',
@@ -908,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 13:22';
+  window.__BUILD = '2026-08-30 13:27';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1826,7 +1825,7 @@ const DEBUG_MARKERS = [
   { n: 'junkyard', x: 110, z: 1500, anim: false },
   { n: 'old school', x: 58, z: 1080, anim: false },
   { n: 'chicago buildings', x: 125, z: 1150, anim: false },
-  { n: 'ccity buildings (end of branch road)', x: 310, z: 796, anim: false },
+  { n: 'right turn plaza (no building)', x: 280, z: 796, anim: false },
   { n: 'left turn (2nd branch road, toward industrial)', x: -100, z: 1500, anim: false },
   { n: 'industrial buildings', x: -140, z: 1580, anim: false },
   { n: 'downtown skyline (left)', x: -125, z: CITY_BACKDROP_POS.z, anim: false },
@@ -7621,14 +7620,8 @@ function buildBranchRoad() {
   plaza.receiveShadow = true;
   scene.add(plaza);
 
-  loader.parse(ASSETS.CCITY_BUILDINGS, '', (gltf) => {
-    const c = gltf.scene;
-    c.position.set(endX + 30, 0, BRANCH_ROAD_Z);
-    c.rotation.y = -Math.PI / 2; // face back toward the branch road
-    c.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
-    scene.add(c);
-    if (window.__gameNote) window.__gameNote('ccity buildings loaded OK at end of branch road');
-  }, (e) => { console.warn('ccity load failed:', e); if (window.__gameNote) window.__gameNote('CCITY FAILED: ' + ((e && e.message) || e)); });
+  // ccity_buildings REMOVED per request. Road and plaza stay — still a real
+  // place to drive to, just no building there now.
 }
 
 /* Second branch road — left turn, west side, at BRANCH_ROAD_Z2 (z=1500, a real
