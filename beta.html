@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 13:27';
+  window.__BUILD = '2026-08-30 13:30';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7491,6 +7491,8 @@ function buildRecreationAreas() {
   for (const c of courts) buildAccessRoad(c.x, c.z);
   for (const l of lots) buildAccessRoad(l.x, l.z);
   buildAccessRoad(58, 1080); // old school — same corridor, same treatment
+  buildAccessRoad(110, 1500); // junkyard — never had one, confirmed missing on inspection
+  buildAccessRoad(44, 1540); // factories — same, never had one
 
   // Loop road — court 1 (58,220) and lot 1 (58,400) are both east side, 180 units
   // apart. A service road at x=80 (clear of both footprints - court spans to
