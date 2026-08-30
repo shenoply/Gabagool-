@@ -914,7 +914,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 01:00';
+  window.__BUILD = '2026-08-31 01:04';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7250,7 +7250,7 @@ function loadMeshyBuildings() {
      baked in. Not a Meshy asset — the only tree species left that isn't. */
   load(ASSETS.STREET_TREE_C, (src) => plantAvenue(src));
 
-  const EAST_X = 44, WEST_X = 10;
+  const EAST_X = 49, WEST_X = 5;   // was 44/10 - same clearance issue as the factories fix, separate instance here. Road edges are 37/17, so this was only ~7 units clearance each side - widened to ~12
   const FACE_W = -Math.PI / 2, FACE_E = Math.PI / 2;
   const PAIRS = [
     [ASSETS.PORK_STORE,  ASSETS.PORK_STORE_LOD],
@@ -7934,12 +7934,22 @@ function buildNewVehiclesAndGolf() {
       { x: 48, z: 1085, rotY: -Math.PI / 2 },  // old school area
     ];
     let placed = 0;
+    const signMat = new THREE.MeshStandardMaterial({ color: 0xf5c518, roughness: 0.6 });
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.7 });
     for (const s of spots) {
       const t = gltf.scene.clone(true);
       t.position.set(s.x, 0, s.z);
       t.rotation.y = s.rotY;
       t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
       scene.add(t);
+      // Stand sign, offset a couple units from the car itself
+      const sign = new THREE.Group();
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 2.1, 6), poleMat);
+      pole.position.y = 1.05; sign.add(pole);
+      const board = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 0.04), signMat);
+      board.position.y = 2.05; sign.add(board);
+      sign.position.set(s.x + (s.rotY < 0 ? 2.2 : -2.2), 0, s.z - 2);
+      scene.add(sign);
       placed++;
     }
     if (window.__gameNote) window.__gameNote('taxis loaded OK, ' + placed + ' placed');
@@ -8100,9 +8110,17 @@ function buildBranchRoad2() {
 // its own declaration further down the file (temporal dead zone, would crash the
 // whole boot sequence) — caught before push.
 function buildChicagoAndIndustrial() {
-  // Chicago buildings REMOVED temporarily to test the green-mess report directly -
-  // precise math on its actual world-space bounds (X 160-227) says it shouldn't
-  // reach anywhere near the reported area, but testing beats trusting the math.
+  // Chicago buildings - restored. The removal was a direct test; the actual
+  // green-mess cause was confirmed separately (old_school.glb, via precise
+  // coordinate matching), so this was never the culprit.
+  loader.parse(ASSETS.CHICAGO_BUILDINGS, '', (gltf) => {
+    const c = gltf.scene;
+    c.position.set(180, 0, 1150);
+    c.rotation.y = -Math.PI / 2;
+    c.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(c);
+    if (window.__gameNote) window.__gameNote('chicago buildings loaded OK');
+  }, (e) => { console.warn('chicago load failed:', e); if (window.__gameNote) window.__gameNote('CHICAGO FAILED: ' + ((e && e.message) || e)); });
 
   loader.parse(ASSETS.INDUSTRIAL_BUILDINGS, '', (gltf) => {
     const ind = gltf.scene;
@@ -8272,7 +8290,7 @@ function buildStreetDetail() {
   // 3. bus shelter at two junctions
   const glassMat = new THREE.MeshStandardMaterial({ color: 0x9fb6c4, roughness: 0.15, metalness: 0.2, transparent: true, opacity: 0.32 });
   const frameMat = new THREE.MeshStandardMaterial({ color: 0x2e3236, roughness: 0.6, metalness: 0.5 });
-  for (const z of [180, 444]) {
+  for (const z of [180, 444, 700, 950, 1150, 1350]) {
     const g = new THREE.Group();
     const roof = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.12, 1.6), frameMat);
     roof.position.y = 2.4; g.add(roof);
