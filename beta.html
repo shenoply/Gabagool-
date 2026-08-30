@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 13:55';
+  window.__BUILD = '2026-08-30 14:24';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -6609,8 +6609,8 @@ function updateHouseAudio() {
   if (!character || drivingMode) { houseAudioBtn.style.display = 'none'; return; }
   const d = Math.hypot(character.position.x, character.position.z);
   const near = d < 18;
-  houseAudioBtn.style.display = (near && !onCall && sfxOn && houseAudioState !== 'meadow' && houseAudioState !== 'gap' && houseAudioState !== 'carmella') ? '' : 'none';
-  if (houseAudioState === 'done' || houseAudioState === 'gap' || onCall || !sfxOn) return;
+  houseAudioBtn.style.display = (near && !onCall && houseAudioState !== 'meadow' && houseAudioState !== 'gap' && houseAudioState !== 'carmella') ? '' : 'none';
+  if (houseAudioState === 'done' || houseAudioState === 'gap' || onCall) return;
   if (houseAudioState === 'idle') {
     if (!near) return;
     startHouseAudioSequence();
@@ -6668,7 +6668,7 @@ function updateExtraCalls(dt) {
       ringingExtraKey = null;
     }
   }
-  if (!sfxOn || inInterior || onCall || phoneRingPopupOpen || ringingExtraKey) return;
+  if (inInterior || onCall || phoneRingPopupOpen || ringingExtraKey) return;
   extraCallTimer -= dt;
   if (extraCallTimer <= 0) {
     extraCallTimer = 90 + Math.random() * 90;   // spaced apart, "more duration" per request
@@ -8459,13 +8459,21 @@ function buildSideRoadBarriers() {
   const mat = new THREE.MeshStandardMaterial({ color: 0xc8c4b8, roughness: 0.95 });
   const stripe = new THREE.MeshStandardMaterial({ color: 0xd8582a, roughness: 0.95 });
   const g = new THREE.Group();
+  // Every real road built this session that touches the main avenue at a
+  // JUNCTION_Z z-value, keyed 'z,side'. Checked directly against every road
+  // segment in buildJunctionExpansion/buildBranchRoad/buildBranchRoad2 — 3 were
+  // actually being barricaded (z796 west, z444 east, z1500 east) despite being
+  // real drivable roads. "Don't block the map, I want to drive all of it."
+  const OPEN = new Set([
+    '796,1',    // original right-turn branch road
+    '1500,-1',  // branch road 2, to industrial
+    '796,-1',   // west connector to industrial (junction expansion)
+    '444,1',    // plaza's 3rd exit rejoins here
+    '1500,1',   // junkyard access road
+  ]);
   for (const jz of JUNCTION_Z) {
     for (const side of [1, -1]) {
-      // One deliberate gap: z=796, east side (side=1) — the new right-turn branch
-      // to the ccity buildings. Every other junction, both sides, stays exactly as
-      // barriered as before.
-      if (jz === BRANCH_ROAD_Z && side === 1) continue;
-      if (jz === BRANCH_ROAD_Z2 && side === -1) continue;
+      if (OPEN.has(jz + ',' + side)) continue;
       // a low jersey barrier across the side road mouth
       const b = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.85, 8.4), mat);
       b.position.set(ROAD_CX + side * (ROAD_HW + 3.2), 0.42, jz);
@@ -9398,6 +9406,11 @@ tapToPlayBtn.addEventListener('click', () => {
     bgAudio.play().catch(() => { soundOn = false; updateSoundUI(); });
     updateSoundUI();
     document.querySelectorAll('.track-btn').forEach((b) => b.classList.toggle('active', b.dataset.track === '1'));
+    // Once the intro song finishes, switch to a random radio station rather than
+    // just stopping. One-shot listener — only for this specific initial playback.
+    bgAudio.addEventListener('ended', () => {
+      setRadioStation(Math.floor(Math.random() * RADIO_STATIONS.length));
+    }, { once: true });
   }
   maybeFinishLoading();
 });
