@@ -450,6 +450,7 @@
     <div id="speedo-gear" style="margin-top:2px;opacity:0.75;">GEAR 1</div>
   </div>
   <div id="compass" style="position:fixed;left:50%;transform:translateX(-50%);top:106px;z-index:11;display:none;font:700 10px/1.4 ui-monospace,Menlo,Consolas,monospace;color:var(--text-dim);background:var(--panel);border:1px solid var(--panel-border);border-radius:10px;padding:6px 12px;backdrop-filter:blur(6px);text-align:center;"></div>
+  <div id="coords-display" style="position:fixed;left:8px;top:8px;z-index:11;font:700 10px/1.3 ui-monospace,Menlo,Consolas,monospace;color:#e8c05a;background:rgba(10,10,10,0.55);border-radius:6px;padding:3px 7px;pointer-events:none;"></div>
   <div id="pos-readout" style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:150px;z-index:30;font:800 13px/1 ui-monospace,Menlo,Consolas,monospace;color:#ffd166;background:rgba(10,12,16,0.9);border:1px solid #665;border-radius:8px;padding:8px 14px;">X 0.0   Z 0.0</div>
   <div id="game-clock" style="position:fixed;left:12px;top:62px;z-index:12;font:700 12px/1 ui-monospace,Menlo,Consolas,monospace;color:var(--text-dim);background:var(--panel);border:1px solid var(--panel-border);border-radius:999px;padding:7px 12px;backdrop-filter:blur(6px);">12:00 AM</div>
   <div id="status-panel">
@@ -620,7 +621,7 @@ const ASSETS = {
   POLICE_CAR: 'police_car.glb',
   TAXI_CAR: 'taxi_car.glb',
   POLICE_OFFICER: 'police_officer.glb',
-  GOLF_COURSE: 'golf_course_final.glb',
+  GOLF_COURSE: 'golf_course_v2.glb',
   TRAFFIC_PACK: 'traffic.glb',
   HOUSE: 'house.glb',
   COLLISION: 'collision.glb', // position-only, low-poly proxy — used for raycasting, never rendered
@@ -911,7 +912,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 20:39';
+  window.__BUILD = '2026-08-30 22:02';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -5363,6 +5364,12 @@ function bearingLabel(fromX, fromZ, facing, toX, toZ) {
 }
 function updateCompass() {
   const el = document.getElementById('compass');
+  const coordEl = document.getElementById('coords-display');
+  if (coordEl && (drivingMode || character)) {
+    const cx = drivingMode ? carState.x : character.position.x;
+    const cz = drivingMode ? carState.z : character.position.z;
+    coordEl.textContent = 'X ' + cx.toFixed(1) + '  Z ' + cz.toFixed(1);
+  }
   if (!el) return;
   if (photoMode || (!drivingMode && !character)) { el.style.display = 'none'; return; }
   const x = drivingMode ? carState.x : character.position.x;
@@ -7822,13 +7829,13 @@ function buildNewVehiclesAndGolf() {
     if (window.__gameNote) window.__gameNote('taxi loaded OK');
   }, (e) => { console.warn('taxi load failed:', e); if (window.__gameNote) window.__gameNote('TAXI FAILED: ' + ((e && e.message) || e)); });
 
-  // Golf course - scaled to 90 wide (not the original 330) specifically so it can
-  // sit close to home as requested, rather than pushed far out to accommodate a
-  // much bigger footprint. x=-215 still clears the west perimeter road (x=-160)
-  // by a 10-unit margin; z=180 keeps it near the early part of the avenue.
+  // Golf course - shrunk further (60 wide, not 90) and pulled in to x=-140,z=100
+  // specifically because "too far, want visible from home" - distance from home
+  // is now ~172 units, down from ~280. Still clears the west perimeter road
+  // (x=-160) by 10 units.
   loader.parse(ASSETS.GOLF_COURSE, '', (gltf) => {
     const g = gltf.scene;
-    g.position.set(-215, 0, 180);
+    g.position.set(-140, 0, 100);
     g.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
     scene.add(g);
     if (window.__gameNote) window.__gameNote('golf course loaded OK');
