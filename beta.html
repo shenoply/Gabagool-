@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 13:38';
+  window.__BUILD = '2026-08-30 13:45';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7626,6 +7626,45 @@ function buildBranchRoad() {
   // place to drive to, just no building there now.
 }
 
+/* Branch-road traffic — real AI cars that drive from the main-road junction out
+   to the plaza and back, U-turning at both ends, instead of the branch road
+   being a dead, empty stub. This is what actually makes the junction feel used
+   rather than decorative. Not a routing/pathfinding system (this game is
+   free-roam, cars don't path-plan) — just a genuine back-and-forth patrol on
+   real geometry, staggered so it reads as ongoing traffic rather than one car
+   looping in isolation. */
+const branchRoadCars = [];
+function buildBranchTraffic() {
+  if (branchRoadCars.length || typeof trafficCars === 'undefined' || !trafficCars.length) return;
+  const nearX = ROAD_CX + ROAD_HW + 4;   // just past the main road edge
+  const farX = 280;                      // the plaza
+  let seed = 4471;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  for (let i = 0; i < 3; i++) {
+    const src = trafficCars[Math.floor(rnd() * trafficCars.length)];
+    if (!src || !src.mesh) continue;
+    const mesh = src.mesh.clone(true);
+    mesh.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.frustumCulled = true; } });
+    scene.add(mesh);
+    branchRoadCars.push({
+      mesh, nearX, farX,
+      t: rnd(),                          // 0..1 position along the road, staggered per car
+      dir: rnd() < 0.5 ? 1 : -1,         // 1 = heading toward the plaza, -1 = heading back
+      speed: 0.10 + rnd() * 0.04,        // fraction of the road per second
+    });
+  }
+}
+function updateBranchTraffic(dt) {
+  for (const c of branchRoadCars) {
+    c.t += c.dir * c.speed * dt;
+    if (c.t >= 1) { c.t = 1; c.dir = -1; }      // hit the plaza — U-turn back toward the main road
+    if (c.t <= 0) { c.t = 0; c.dir = 1; }       // hit the main-road junction — U-turn back out
+    const x = c.nearX + (c.farX - c.nearX) * c.t;
+    c.mesh.position.set(x, 0, BRANCH_ROAD_Z);
+    c.mesh.rotation.y = c.dir > 0 ? -Math.PI / 2 : Math.PI / 2;
+  }
+}
+
 /* Second branch road — left turn, west side, at BRANCH_ROAD_Z2 (z=1500, a real
    junction). Leads toward industrial_buildings, which was already placed at
    (-140, 1580) by buildChicagoAndIndustrial — not moved, the road is built to
@@ -9224,6 +9263,7 @@ function endLoad(name) {
     setTimeout(buildRecreationAreas, 2600);   // court + lots; lot cars use the same traffic meshes if ready
     setTimeout(buildBranchRoad, 2650);
     setTimeout(buildBranchRoad2, 2670);
+    setTimeout(buildBranchTraffic, 2690);   // needs trafficCars, same reason buildParkedCars is deferred
     setTimeout(buildChicagoAndIndustrial, 2700);
     setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
     setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
@@ -10313,6 +10353,7 @@ function tick() {
     if (scene.fog.density !== want) scene.fog.density = want;
   }
   updateCrossTraffic(dt);
+  updateBranchTraffic(dt);
   updateStreetDetail(dt);
   updateBuildingLOD();
   updateCallStrip();
