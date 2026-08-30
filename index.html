@@ -912,7 +912,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 00:08';
+  window.__BUILD = '2026-08-31 00:11';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7880,38 +7880,84 @@ function buildNewVehiclesAndGolf() {
     }
     if (window.__gameNote) window.__gameNote('taxis loaded OK, ' + placed + ' placed');
   }, (e) => { console.warn('taxi load failed:', e); if (window.__gameNote) window.__gameNote('TAXI FAILED: ' + ((e && e.message) || e)); });
+  // Golf course - rebuilt procedurally per direct request ("looks terrible,
+  // build one that matches the map" instead of a mismatched real-photo
+  // texture). Same low-poly flat-shaded style as every other built feature.
+  // Fairway reuses groundMat directly - the exact material the main ground
+  // uses, not a similar one - so there's no blending problem to solve, it's
+  // literally the same grass. At x=-140,z=100: ~172 units from home, clears
+  // the west perimeter road (x=-160) by 10 units, same footprint as before.
+  function buildGolfCourseProcedural() {
+    const cx = -140, cz = 100;
+    const golf = new THREE.Group();
 
-  // Golf course - shrunk further (60 wide, not 90) and pulled in to x=-140,z=100
-  // specifically because "too far, want visible from home" - distance from home
-  // is now ~172 units, down from ~280. Still clears the west perimeter road
-  // (x=-160) by 10 units.
-  loader.parse(ASSETS.GOLF_COURSE, '', (gltf) => {
-    const g = gltf.scene;
-    g.position.set(-140, 0, 100);
-    g.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
-    scene.add(g);
-    // Blend halo: the golf course texture is a real aerial photo, the rest of
-    // the ground is a procedural grass shader - a hard cutoff between the two
-    // styles always reads as a seam ("didn't blend"). This is a radial-gradient
-    // plane, same green as the main ground, opaque at its outer rim and fading
-    // to fully transparent well inside the golf course's own footprint, so the
-    // photo texture takes over cleanly in the middle instead of stopping short.
-    const haloCanvas = document.createElement('canvas');
-    haloCanvas.width = haloCanvas.height = 256;
-    const hctx = haloCanvas.getContext('2d');
-    const grad = hctx.createRadialGradient(128, 128, 64, 128, 128, 128);
-    grad.addColorStop(0, 'rgba(74,107,58,0)');
-    grad.addColorStop(1, 'rgba(74,107,58,1)');
-    hctx.fillStyle = grad;
-    hctx.fillRect(0, 0, 256, 256);
-    const haloTex = new THREE.CanvasTexture(haloCanvas);
-    const haloMat = new THREE.MeshStandardMaterial({ map: haloTex, transparent: true, roughness: 0.95 });
-    const halo = new THREE.Mesh(new THREE.CircleGeometry(60, 32), haloMat);
-    halo.rotation.x = -Math.PI / 2;
-    halo.position.set(-140, 0.01, 100);
-    scene.add(halo);
-    if (window.__gameNote) window.__gameNote('golf course loaded OK');
-  }, (e) => { console.warn('golf course load failed:', e); if (window.__gameNote) window.__gameNote('GOLF COURSE FAILED: ' + ((e && e.message) || e)); });
+    // Fairway - an elongated rough oval, built from a stretched circle so it
+    // reads as a fairway shape rather than a perfectly round patch.
+    const fairwayShape = new THREE.Shape();
+    const fw = 34, fd = 26; // half-width, half-depth
+    for (let i = 0; i <= 32; i++) {
+      const a = (i / 32) * Math.PI * 2;
+      const wob = 1 + Math.sin(a * 3) * 0.08; // gentle irregularity, not a perfect ellipse
+      const x = Math.cos(a) * fw * wob, y = Math.sin(a) * fd * wob;
+      if (i === 0) fairwayShape.moveTo(x, y); else fairwayShape.lineTo(x, y);
+    }
+    const fairway = new THREE.Mesh(new THREE.ShapeGeometry(fairwayShape), groundMat);
+    fairway.rotation.x = -Math.PI / 2;
+    fairway.position.set(0, 0.015, 0);
+    fairway.receiveShadow = true;
+    golf.add(fairway);
+
+    // Greens - two small circles, a brighter flat green so they read as the
+    // putting surface against the fairway's textured grass.
+    const greenMat = new THREE.MeshStandardMaterial({ color: 0x5a9c4a, roughness: 0.85 });
+    const greenSpots = [{ x: -18, z: -12 }, { x: 20, z: 10 }];
+    for (const gs of greenSpots) {
+      const green = new THREE.Mesh(new THREE.CircleGeometry(6, 24), greenMat);
+      green.rotation.x = -Math.PI / 2;
+      green.position.set(gs.x, 0.02, gs.z);
+      green.receiveShadow = true;
+      golf.add(green);
+      // Flag + pin
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 3, 6), new THREE.MeshStandardMaterial({ color: 0xd8d4c8 }));
+      pole.position.set(gs.x, 1.5, gs.z);
+      golf.add(pole);
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.55), new THREE.MeshStandardMaterial({ color: 0xd8482a, side: THREE.DoubleSide }));
+      flag.position.set(gs.x + 0.45, 2.75, gs.z);
+      golf.add(flag);
+    }
+
+    // Bunkers - a few sand-colored patches for visual interest
+    const sandMat = new THREE.MeshStandardMaterial({ color: 0xd9c48a, roughness: 0.9 });
+    const bunkers = [{ x: -6, z: 8, r: 4.5 }, { x: 12, z: -14, r: 3.6 }, { x: -22, z: 4, r: 3 }];
+    for (const b of bunkers) {
+      const bunker = new THREE.Mesh(new THREE.CircleGeometry(b.r, 18), sandMat);
+      bunker.rotation.x = -Math.PI / 2;
+      bunker.position.set(b.x, 0.018, b.z);
+      bunker.receiveShadow = true;
+      golf.add(bunker);
+    }
+
+    golf.position.set(cx, 0, cz);
+    scene.add(golf);
+
+    // Trees around the perimeter - reuses the same tree asset already loaded
+    // elsewhere, scattered around the fairway's edge rather than a bare patch.
+    loader.parse(ASSETS.STREET_TREE_D, '', (gltf) => {
+      let seed = 771;
+      const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2;
+        const r = 40 + rnd() * 10;
+        const t = gltf.scene.clone(true);
+        t.position.set(cx + Math.cos(a) * r, 0, cz + Math.sin(a) * r * 0.78);
+        t.rotation.y = rnd() * Math.PI * 2;
+        t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+        scene.add(t);
+      }
+      if (window.__gameNote) window.__gameNote('golf course (procedural) loaded OK');
+    }, (e) => { if (window.__gameNote) window.__gameNote('golf course trees failed, course itself is fine: ' + ((e && e.message) || e)); });
+  }
+  buildGolfCourseProcedural();
 }
 
 function buildPerimeterTrees() {
