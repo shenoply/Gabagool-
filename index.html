@@ -615,6 +615,7 @@ const ASSETS = {
   STREET_TREE_D: 'street_tree_d.glb',
   CITY_BUILDINGS2: 'city_buildings2.glb',
   KFC: 'kfc.glb',
+  GOLF_CART: 'golf_cart.glb',
   CHICAGO_BUILDINGS: 'chicago_buildings.glb',
   BUILDINGS_FRONT: 'buildings_front.glb',
   INDUSTRIAL_BUILDINGS: 'industrial_buildings.glb',
@@ -912,7 +913,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 00:11';
+  window.__BUILD = '2026-08-31 00:14';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7956,6 +7957,24 @@ function buildNewVehiclesAndGolf() {
       }
       if (window.__gameNote) window.__gameNote('golf course (procedural) loaded OK');
     }, (e) => { if (window.__gameNote) window.__gameNote('golf course trees failed, course itself is fine: ' + ((e && e.message) || e)); });
+
+    // Golf carts - 3 parked around the course, static decoration for now (see
+    // the response text for what "ridable" would actually take).
+    loader.parse(ASSETS.GOLF_CART, '', (gltf) => {
+      const spots = [
+        { x: -10, z: -6, rotY: 0.4 },
+        { x: 8, z: 16, rotY: -1.1 },
+        { x: -24, z: 10, rotY: 2.2 },
+      ];
+      for (const s of spots) {
+        const cart = gltf.scene.clone(true);
+        cart.position.set(s.x, 0, s.z);   // local to the golf group, which is already positioned at (cx,cz) - NOT cx+s.x, that would double-offset
+        cart.rotation.y = s.rotY;
+        cart.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+        golf.add(cart);
+      }
+      if (window.__gameNote) window.__gameNote('golf carts loaded OK, 3 placed');
+    }, (e) => { if (window.__gameNote) window.__gameNote('GOLF CART FAILED: ' + ((e && e.message) || e)); });
   }
   buildGolfCourseProcedural();
 }
