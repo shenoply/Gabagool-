@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 16:53';
+  window.__BUILD = '2026-08-30 17:35';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7666,6 +7666,32 @@ const ROAD_PATROLS = [
   { axis: 'z', fixed: 310, from: 40, to: 1500, count: 4 },
 ];
 const roadPatrolCars = [];
+/* Proximity-based loading — content registers a trigger point + radius instead
+   of a fixed delay, and only actually fetches/builds once the player (on foot or
+   driving) gets within range. Checked every ~1s, not every frame - a handful of
+   distance calcs is cheap, but no reason to run it 60x/sec for something that
+   only needs to catch a threshold crossing. */
+const PROXIMITY_LOADS = [];
+function registerProximityLoad(x, z, radius, fn) {
+  PROXIMITY_LOADS.push({ x, z, radius: radius * radius, fn, fired: false });
+}
+let proximityCheckTimer = 0;
+function updateProximityLoads(dt) {
+  proximityCheckTimer -= dt;
+  if (proximityCheckTimer > 0) return;
+  proximityCheckTimer = 1;
+  const px = drivingMode ? carState.x : (character ? character.position.x : 0);
+  const pz = drivingMode ? carState.z : (character ? character.position.z : 0);
+  for (const p of PROXIMITY_LOADS) {
+    if (p.fired) continue;
+    const dx = p.x - px, dz = p.z - pz;
+    if (dx * dx + dz * dz < p.radius) {
+      p.fired = true;
+      try { p.fn(); } catch (e) { console.warn('proximity load failed:', e); }
+    }
+  }
+}
+
 function buildRoadPatrols() {
   if (roadPatrolCars.length || typeof trafficCars === 'undefined' || !trafficCars.length) return;
   let seed = 4471;
@@ -9391,9 +9417,13 @@ function endLoad(name) {
     setTimeout(buildBranchRoad, 2650);
     setTimeout(buildBranchRoad2, 2670);
     setTimeout(buildRoadPatrols, 2690);   // needs trafficCars, same reason buildParkedCars is deferred
-    setTimeout(buildJunctionExpansion, 2710);
-    setTimeout(buildPerimeterTrees, 2730);
-    setTimeout(buildChicagoAndIndustrial, 2700);
+    // Proximity-gated instead of fixed-timer — these are the farthest content
+    // from spawn (junction z~796, chicago/industrial z~1150-1580) and might never
+    // be visited in a given session. No reason to force the fetch/build cost on
+    // every player regardless of where they actually go.
+    registerProximityLoad(27, 796, 260, buildJunctionExpansion);
+    registerProximityLoad(-160, 700, 260, buildPerimeterTrees);
+    registerProximityLoad(125, 1150, 300, buildChicagoAndIndustrial);
     setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
     setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
@@ -10488,6 +10518,7 @@ function tick() {
   }
   updateCrossTraffic(dt);
   updateRoadPatrols(dt);
+  updateProximityLoads(dt);
   updateStreetDetail(dt);
   updateBuildingLOD();
   updateCallStrip();
@@ -10534,6 +10565,21 @@ function tick() {
   requestAnimationFrame(tick);
 }
 tick();
+window.__testHooks = {
+  teleportCar(x, z) { if (typeof carState !== 'undefined') { carState.x = x; carState.z = z; carState.vx = 0; carState.vz = 0; } },
+  teleportChar(x, z) { if (typeof character !== 'undefined' && character) { character.position.x = x; character.position.z = z; } },
+  getState() {
+    return {
+      hasCharacter: typeof character !== 'undefined' && !!character,
+      hasCarState: typeof carState !== 'undefined',
+      drivingMode: typeof drivingMode !== 'undefined' ? drivingMode : null,
+      carXZ: typeof carState !== 'undefined' ? [carState.x, carState.z] : null,
+      charXZ: (typeof character !== 'undefined' && character) ? [character.position.x, character.position.z] : null,
+    };
+  },
+  setFreeCam(on) { if (typeof freeCamMode !== 'undefined') { freeCamMode = on; if (on && typeof freeCamPos !== 'undefined' && typeof camera !== 'undefined') freeCamPos.copy(camera.position); } },
+  setFreeCamPos(x, y, z) { if (typeof freeCamPos !== 'undefined') freeCamPos.set(x, y, z); },
+};
 </script>
   <script>
     /* Register the asset cache. Scoped to this directory, so it covers index.html
