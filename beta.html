@@ -501,6 +501,7 @@
     <button id="phone-btn" title="Phone">📱</button>
     <button id="freecam-btn" title="Free camera">🎥</button>
     <button id="markers-btn" title="Show asset markers">📍</button>
+    <button id="map-btn" title="Map">🗺️</button>
   </div>
 
   <div id="action-pad" style="position:fixed;right:14px;bottom:calc(220px + env(safe-area-inset-bottom,0px));z-index:11;display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
@@ -913,7 +914,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 00:14';
+  window.__BUILD = '2026-08-31 00:18';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -10590,6 +10591,59 @@ function openCarSelectDialog() {
   });
   document.getElementById('car-select-cancel').addEventListener('click', closeCarSelectDialog);
 }
+/* In-game map. A scaled top-down overlay, not a 3D minimap - the world is
+   long and narrow (X -215..310, Z -62..1580), so this uses one consistent
+   scale for both axes to stay accurate to the real shape rather than
+   distorting it to fill a square. Points of interest are a curated list, not
+   the full DEBUG_MARKERS array - that has 80+ entries (every bird, every
+   patrol car) and would be unreadable clutter here. */
+const MAP_SCALE = 0.29;
+const MAP_OX = 24, MAP_OZ = 24; // world (-215,-62) -> svg (24,24), small margin
+function mapX(wx) { return MAP_OX + (wx + 215) * MAP_SCALE; }
+function mapZ(wz) { return MAP_OZ + (wz + 62) * MAP_SCALE; }
+const MAP_POINTS = [
+  { n: 'Skylines', x: -55, z: -40 }, { n: 'Home', x: 0, z: 0 },
+  { n: 'KFC 1', x: 45, z: 150 }, { n: 'Court 1', x: 58, z: 220 },
+  { n: 'Lot 1', x: 58, z: 400 }, { n: 'Lot 2', x: -8, z: 550 },
+  { n: 'Court 2', x: -5, z: 600 }, { n: 'KFC 2', x: -20, z: 650 },
+  { n: 'Lot 3', x: 58, z: 750 }, { n: 'Right turn / plaza', x: 280, z: 796 },
+  { n: 'Court 3', x: 58, z: 900 }, { n: 'Lot 4', x: -8, z: 950 },
+  { n: 'Old school', x: 58, z: 1080 }, { n: 'Chicago blvd', x: 180, z: 1150 },
+  { n: 'Junkyard', x: 110, z: 1500 }, { n: 'Left turn / industrial', x: -160, z: 1500 },
+  { n: 'Factories', x: 75, z: 1540 }, { n: 'Golf course', x: -140, z: 100 },
+];
+let mapOpen = false;
+const mapOverlay = document.createElement('div');
+mapOverlay.id = 'map-overlay';
+mapOverlay.style.cssText = 'position:fixed;inset:0;z-index:90;background:rgba(10,12,16,0.94);display:none;flex-direction:column;align-items:center;justify-content:center;';
+mapOverlay.innerHTML =
+  '<div style="position:relative;width:220px;height:480px;background:#1c2a18;border:1px solid var(--panel-border);border-radius:12px;overflow:hidden;">' +
+  '<div id="map-road" style="position:absolute;left:' + (mapX(27) - 4) + 'px;top:' + mapZ(-62) + 'px;width:8px;height:' + (mapZ(1580) - mapZ(-62)) + 'px;background:#3a3a38;"></div>' +
+  MAP_POINTS.map((p) => '<div class="map-pt" style="position:absolute;left:' + (mapX(p.x) - 2) + 'px;top:' + (mapZ(p.z) - 2) + 'px;width:4px;height:4px;border-radius:50%;background:#e0c440;"></div>' +
+    '<div style="position:absolute;left:' + (mapX(p.x) + 4) + 'px;top:' + (mapZ(p.z) - 5) + 'px;font:600 6px sans-serif;color:#c8c4b8;white-space:nowrap;">' + p.n + '</div>').join('') +
+  '<div id="map-player" style="position:absolute;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:9px solid #ff8a3d;transform-origin:50% 70%;"></div>' +
+  '</div>' +
+  '<div style="margin-top:10px;font:600 11px sans-serif;color:var(--text-dim);">tap anywhere to close</div>';
+document.body.appendChild(mapOverlay);
+function toggleMap() {
+  mapOpen = !mapOpen;
+  mapOverlay.style.display = mapOpen ? 'flex' : 'none';
+  if (mapOpen) updateMapPlayer();
+}
+mapOverlay.addEventListener('click', () => { mapOpen = false; mapOverlay.style.display = 'none'; });
+document.getElementById('map-btn').addEventListener('click', (e) => { e.stopPropagation(); toggleMap(); });
+function updateMapPlayer() {
+  if (!mapOpen) return;
+  const el = document.getElementById('map-player');
+  if (!el) return;
+  const px = drivingMode ? carState.x : (character ? character.position.x : 0);
+  const pz = drivingMode ? carState.z : (character ? character.position.z : 0);
+  const facing = drivingMode ? carState.heading : (character ? character.rotation.y : 0);
+  el.style.left = (mapX(px) - 5) + 'px';
+  el.style.top = (mapZ(pz) - 9) + 'px';
+  el.style.transform = 'rotate(' + (facing * 180 / Math.PI) + 'deg)';
+}
+
 const driveToggle = document.getElementById('drive-toggle');
 let driveToggleBusy = false;
 driveToggle.addEventListener('click', () => {
@@ -10769,6 +10823,7 @@ function tick() {
   updateInteriorReverb();
   updatePhoneRinger();
   updateGarageProximity();
+  updateMapPlayer();
   if (georgeSongActive) {
     const gd = character ? Math.hypot(character.position.x - GEORGE_POS.x, character.position.z - GEORGE_POS.z) : 0;
     if (drivingMode || gd > 12) stopGeorgeSong(); // drive off or walk away — George stops singing
