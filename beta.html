@@ -912,7 +912,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 22:35';
+  window.__BUILD = '2026-08-30 23:50';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -4401,6 +4401,15 @@ function setRadioStation(i) {
       const wasOn = soundOn;
       bgAudio.src = trackSrc;
       if (wasOn) setTimeout(() => bgAudio.play().catch(() => {}), 260); // let the static land first
+      // Real fix: nothing previously happened when a track finished naturally -
+      // no loop, no advance, it just went silent. Now picks a genuinely random
+      // station (not the one that just played) per request, not a fixed order.
+      bgAudio.onended = () => {
+        if (!soundOn) return;
+        let next = Math.floor(Math.random() * RADIO_STATIONS.length);
+        if (RADIO_STATIONS.length > 1 && next === radioIndex) next = (next + 1) % RADIO_STATIONS.length;
+        setRadioStation(next);
+      };
     }
   }
   if (typeof saveGameState === 'function') saveGameState(); // remember the station across reloads
@@ -9598,19 +9607,13 @@ tapToPlayBtn.addEventListener('click', () => {
 
   audioUnlocked = true;
   initAmbientAudio();
-  currentTrack = 1; // "Gabagool Woke Up"
-  if (bgAudio) {
-    bgAudio.src = BG_TRACKS[currentTrack];
-    soundOn = true;
-    bgAudio.play().catch(() => { soundOn = false; updateSoundUI(); });
-    updateSoundUI();
-    document.querySelectorAll('.track-btn').forEach((b) => b.classList.toggle('active', b.dataset.track === '1'));
-    // Once the intro song finishes, switch to a random radio station rather than
-    // just stopping. One-shot listener — only for this specific initial playback.
-    bgAudio.addEventListener('ended', () => {
-      setRadioStation(Math.floor(Math.random() * RADIO_STATIONS.length));
-    }, { once: true });
-  }
+  // No auto-play per explicit request - "I don't want any music to play unless
+  // I play it". This replaces the earlier Gabagool-song-then-radio behavior,
+  // which was a direct prior request too - requirements genuinely changed here,
+  // not a bug fix. soundOn stays false; nothing plays until the player picks a
+  // track themselves via the UI.
+  soundOn = false;
+  updateSoundUI();
   maybeFinishLoading();
 });
 
