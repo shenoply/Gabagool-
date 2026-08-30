@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 15:07';
+  window.__BUILD = '2026-08-30 15:18';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7746,6 +7746,30 @@ function buildJunctionExpansion() {
   buildRoadSegment(280, 796, 310, 796);
 }
 
+/* Trees along both perimeter roads — they were bare paved strips with nothing
+   around them ("no trees or nothing keep around the blocks"). Same street_tree_d
+   asset already loaded elsewhere, one fetch, scattered every ~40 units along
+   both sides of each road for their full length. */
+function buildPerimeterTrees() {
+  loader.parse(ASSETS.STREET_TREE_D, '', (gltf) => {
+    const lines = [-160, 310];
+    let placed = 0;
+    for (const roadX of lines) {
+      for (let z = 60; z < 1480; z += 40) {
+        for (const side of [1, -1]) {
+          const t = gltf.scene.clone(true);
+          t.position.set(roadX + side * 7, 0, z + (side > 0 ? 0 : 20));
+          t.rotation.y = Math.random() * Math.PI * 2;
+          t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+          scene.add(t);
+          placed++;
+        }
+      }
+    }
+    if (window.__gameNote) window.__gameNote('perimeter trees loaded OK, ' + placed + ' placed');
+  }, (e) => { console.warn('perimeter trees load failed:', e); if (window.__gameNote) window.__gameNote('PERIMETER TREES FAILED: ' + ((e && e.message) || e)); });
+}
+
 /* Second branch road — left turn, west side, at BRANCH_ROAD_Z2 (z=1500, a real
    junction). Leads toward industrial_buildings, which was already placed at
    (-140, 1580) by buildChicagoAndIndustrial — not moved, the road is built to
@@ -9360,6 +9384,7 @@ function endLoad(name) {
     setTimeout(buildBranchRoad2, 2670);
     setTimeout(buildRoadPatrols, 2690);   // needs trafficCars, same reason buildParkedCars is deferred
     setTimeout(buildJunctionExpansion, 2710);
+    setTimeout(buildPerimeterTrees, 2730);
     setTimeout(buildChicagoAndIndustrial, 2700);
     setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
     setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
