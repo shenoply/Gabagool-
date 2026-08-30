@@ -612,6 +612,10 @@ const ASSETS = {
   JUNKYARD: 'junkyard.glb',
   OLD_SCHOOL: 'old_school.glb',
   STREET_TREE_D: 'street_tree_d.glb',
+  CHICAGO_BUILDINGS: 'chicago_buildings.glb',
+  CCITY_BUILDINGS: 'ccity_buildings.glb',
+  BUILDINGS_FRONT: 'buildings_front.glb',
+  INDUSTRIAL_BUILDINGS: 'industrial_buildings.glb',
   TRAFFIC_PACK: 'traffic.glb',
   HOUSE: 'house.glb',
   COLLISION: 'collision.glb', // position-only, low-poly proxy — used for raycasting, never rendered
@@ -902,7 +906,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 02:17';
+  window.__BUILD = '2026-08-30 02:30';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1830,6 +1834,9 @@ const DEBUG_MARKERS = [
   { n: 'street court 3', x: 58, z: 900, anim: false },
   { n: 'junkyard', x: 110, z: 1500, anim: false },
   { n: 'old school', x: 58, z: 1080, anim: false },
+  { n: 'chicago buildings', x: 125, z: 1150, anim: false },
+  { n: 'ccity buildings (end of branch road)', x: 310, z: 796, anim: false },
+  { n: 'industrial buildings', x: -140, z: 1580, anim: false },
   { n: 'downtown skyline (left)', x: -125, z: CITY_BACKDROP_POS.z, anim: false },
   { n: 'downtown skyline (right)', x: 125, z: CITY_BACKDROP_POS.z, anim: false },
   { n: 'street tree D (1 of 10)', x: 43, z: 100, anim: false }, { n: 'street tree D (2 of 10)', x: 12, z: 220, anim: false },
@@ -7154,6 +7161,12 @@ function loadMeshyBuildings() {
     { key: ASSETS.BARBER_SHOP,    w: 10 },
     { key: ASSETS.CORNER_C,       w: 25 },
     { key: ASSETS.ROW_FOUR,       w: 40 },
+    // Native footprint 9.6 x 84.2 — treating the 84.2 dimension as the street
+    // frontage (a bundled row of facades, matching the "buildings_front" name and
+    // the same shallow-depth convention row_five_a already uses) rather than the
+    // narrow 9.6 axis. If it presents edge-on to the street instead, that's the
+    // fix: swap which axis this w refers to.
+    { key: ASSETS.BUILDINGS_FRONT, w: 84 },
   ];
 
   // work out every slot up front, so each model is loaded once and placed many times
@@ -7491,6 +7504,74 @@ function buildRecreationAreas() {
     }
     if (window.__gameNote) window.__gameNote('street_tree_d loaded OK, ' + spots.length + ' placed');
   }, (e) => { console.warn('street_tree_d load failed:', e); if (window.__gameNote) window.__gameNote('TREE D FAILED: ' + ((e && e.message) || e)); });
+}
+
+/* ================= BRANCH ROAD =================
+   The one drivable turn off the main avenue. Every other junction is genuinely
+   barriered (buildSideRoadBarriers) — this is the single exception, opened up at
+   BRANCH_ROAD_Z (z=796) on the east side only, i.e. a right turn heading away from
+   home. Simple paved strip east from the road edge to a small turnaround plaza
+   where ccity_buildings sits as the destination landmark. The car's own physics
+   already treat most of the world as drivable off the marked road (checked —
+   carState.offRoad is a flag for effects, not a hard collision boundary), so this
+   is mainly about (1) the barrier gap above, so there's nothing visually blocking
+   the turn, and (2) a paved surface + destination so it reads as a real place to
+   drive to rather than an accidental gap.
+*/
+function buildBranchRoad() {
+  const roadMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
+  const startX = ROAD_CX + ROAD_HW;      // 37 — main road's east edge
+  const endX = 280;
+  const roadLen = endX - startX;
+  const roadW = 9;
+  const strip = new THREE.Mesh(new THREE.PlaneGeometry(roadLen, roadW), roadMat);
+  strip.rotation.x = -Math.PI / 2; // same convention as the parking lots — w->world X, h->world Z, no extra rotation needed
+  strip.position.set(startX + roadLen / 2, 0.015, BRANCH_ROAD_Z);
+  strip.receiveShadow = true;
+  scene.add(strip);
+  // small paved turnaround plaza at the far end
+  const plaza = new THREE.Mesh(new THREE.CircleGeometry(22, 20), roadMat);
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.set(endX, 0.015, BRANCH_ROAD_Z);
+  plaza.receiveShadow = true;
+  scene.add(plaza);
+
+  loader.parse(ASSETS.CCITY_BUILDINGS, '', (gltf) => {
+    const c = gltf.scene;
+    c.position.set(endX + 30, 0, BRANCH_ROAD_Z);
+    c.rotation.y = -Math.PI / 2; // face back toward the branch road
+    c.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(c);
+    if (window.__gameNote) window.__gameNote('ccity buildings loaded OK at end of branch road');
+  }, (e) => { console.warn('ccity load failed:', e); if (window.__gameNote) window.__gameNote('CCITY FAILED: ' + ((e && e.message) || e)); });
+}
+
+// Chicago buildings — landmark on the avenue itself, same treatment as the
+// factories (a one-off large structure, not a repeated tile). East side, clear of
+// the branch road above.
+// Industrial buildings — extends the existing factory zone (z~1540) rather than a
+// new area, same "industrial end of the road" logic that put the factories there.
+// Both wrapped in one function and deferred alongside buildBranchRoad below —
+// calling loader.parse() at bare module top level here would hit loader before
+// its own declaration further down the file (temporal dead zone, would crash the
+// whole boot sequence) — caught before push.
+function buildChicagoAndIndustrial() {
+  loader.parse(ASSETS.CHICAGO_BUILDINGS, '', (gltf) => {
+    const c = gltf.scene;
+    c.position.set(125, 0, 1150);
+    c.rotation.y = -Math.PI / 2;
+    c.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(c);
+    if (window.__gameNote) window.__gameNote('chicago buildings loaded OK');
+  }, (e) => { console.warn('chicago load failed:', e); if (window.__gameNote) window.__gameNote('CHICAGO FAILED: ' + ((e && e.message) || e)); });
+
+  loader.parse(ASSETS.INDUSTRIAL_BUILDINGS, '', (gltf) => {
+    const ind = gltf.scene;
+    ind.position.set(-140, 0, 1580);
+    ind.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(ind);
+    if (window.__gameNote) window.__gameNote('industrial buildings loaded OK');
+  }, (e) => { console.warn('industrial load failed:', e); if (window.__gameNote) window.__gameNote('INDUSTRIAL FAILED: ' + ((e && e.message) || e)); });
 }
 
 /* ================= ANIMATED STREET NPCs =================
@@ -8027,6 +8108,7 @@ function updateStreetDetail(dt) {
 */
 const JUNCTION_Z = [];
 for (let z = 92; z < 1560; z += 88) JUNCTION_Z.push(z);
+const BRANCH_ROAD_Z = 796; // the one junction with its east-side barrier removed — see buildSideRoadBarriers and buildBranchRoad
 /* 22s was frantic — a light barely settled before flipping. 52s reads as a real
    junction: about 26s of main green, 4s amber, 19s cross green, 3s amber. */
 const CYCLE_SECONDS = 52;
@@ -8134,6 +8216,10 @@ function buildSideRoadBarriers() {
   const g = new THREE.Group();
   for (const jz of JUNCTION_Z) {
     for (const side of [1, -1]) {
+      // One deliberate gap: z=796, east side (side=1) — the new right-turn branch
+      // to the ccity buildings. Every other junction, both sides, stays exactly as
+      // barriered as before.
+      if (jz === BRANCH_ROAD_Z && side === 1) continue;
       // a low jersey barrier across the side road mouth
       const b = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.85, 8.4), mat);
       b.position.set(ROAD_CX + side * (ROAD_HW + 3.2), 0.42, jz);
@@ -8982,6 +9068,8 @@ function endLoad(name) {
     buildSideRoadBarriers();
     setTimeout(buildParkedCars, 2500);    // needs traffic meshes to exist first
     setTimeout(buildRecreationAreas, 2600);   // court + lots; lot cars use the same traffic meshes if ready
+    setTimeout(buildBranchRoad, 2650);
+    setTimeout(buildChicagoAndIndustrial, 2700);
     setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
     setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
