@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 13:45';
+  window.__BUILD = '2026-08-30 13:51';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1826,6 +1826,9 @@ const DEBUG_MARKERS = [
   { n: 'old school', x: 58, z: 1080, anim: false },
   { n: 'chicago buildings', x: 125, z: 1150, anim: false },
   { n: 'right turn plaza (no building)', x: 280, z: 796, anim: false },
+  { n: 'plaza 2nd exit (toward court3/old school)', x: 58, z: 990, anim: false },
+  { n: 'plaza 3rd exit (rejoins main road at z444)', x: 37, z: 444, anim: false },
+  { n: 'main junction west connector (to industrial)', x: -160, z: 796, anim: false },
   { n: 'left turn (2nd branch road, toward industrial)', x: -100, z: 1500, anim: false },
   { n: 'industrial buildings', x: -140, z: 1580, anim: false },
   { n: 'downtown skyline (left)', x: -125, z: CITY_BACKDROP_POS.z, anim: false },
@@ -7665,6 +7668,52 @@ function updateBranchTraffic(dt) {
   }
 }
 
+/* One straight paved segment between two points — always axis-aligned (same
+   convention every road in this game uses, no diagonals). Shared helper so the
+   3 new roads below are built consistently. */
+function buildRoadSegment(x1, z1, x2, z2) {
+  const mat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
+  const w = 8;
+  if (Math.abs(x1 - x2) < 0.01) {
+    const len = Math.abs(z2 - z1);
+    const strip = new THREE.Mesh(new THREE.PlaneGeometry(w, len), mat);
+    strip.rotation.x = -Math.PI / 2;
+    strip.position.set(x1, 0.013, (z1 + z2) / 2);
+    strip.receiveShadow = true;
+    scene.add(strip);
+  } else {
+    const len = Math.abs(x2 - x1);
+    const strip = new THREE.Mesh(new THREE.PlaneGeometry(len, w), mat);
+    strip.rotation.x = -Math.PI / 2;
+    strip.position.set((x1 + x2) / 2, 0.013, z1);
+    strip.receiveShadow = true;
+    scene.add(strip);
+  }
+}
+
+/* Turns the plaza from a dead end into a real multi-way junction, plus a second
+   route to the industrial area from the main junction. All L-shaped (two
+   straight segments), same paved-strip technique as every other road here. */
+function buildJunctionExpansion() {
+  // Plaza (280,796) south to the court-3/old-school corridor (58,990) — a
+  // second exit besides the original road back to the main avenue.
+  buildRoadSegment(280, 796, 280, 990);
+  buildRoadSegment(280, 990, 58, 990);
+
+  // Plaza north then west, rejoining the main road at a DIFFERENT junction
+  // (z=444) instead of the one it left from — genuinely a different side, not
+  // just the same road retraced. Makes the plaza a real 3-way junction.
+  buildRoadSegment(280, 796, 280, 444);
+  buildRoadSegment(280, 444, 37, 444);
+
+  // Main junction (z=796), west side this time (east is the original branch
+  // road) — a second, separate route down to the industrial area's existing
+  // plaza at (-160,1500), rather than only being reachable via the other
+  // (z=1500) branch turn.
+  buildRoadSegment(17, 796, -160, 796);
+  buildRoadSegment(-160, 796, -160, 1500);
+}
+
 /* Second branch road — left turn, west side, at BRANCH_ROAD_Z2 (z=1500, a real
    junction). Leads toward industrial_buildings, which was already placed at
    (-140, 1580) by buildChicagoAndIndustrial — not moved, the road is built to
@@ -9264,6 +9313,7 @@ function endLoad(name) {
     setTimeout(buildBranchRoad, 2650);
     setTimeout(buildBranchRoad2, 2670);
     setTimeout(buildBranchTraffic, 2690);   // needs trafficCars, same reason buildParkedCars is deferred
+    setTimeout(buildJunctionExpansion, 2710);
     setTimeout(buildChicagoAndIndustrial, 2700);
     setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
     setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
