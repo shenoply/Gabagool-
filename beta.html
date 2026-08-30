@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 16:52';
+  window.__BUILD = '2026-08-30 16:53';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1309,11 +1309,12 @@ function loadDowntownSkylineTwoSided() {
   const loader = new GLTFLoader();
   loader.parse(ASSETS.CITY_BUILDINGS2, '', (gltf) => {
     try {
-      // Native footprint 122.5 wide (narrower than the old 210-wide asset) — 150
-      // apart center-to-center still keeps clear separation with no overlap.
+      // Pulled closer per request - was x=+-90/z=-62, now nearer the house on
+      // both axes. Native footprint 122.5 wide, so 110 apart still keeps clear
+      // separation with no overlap between the two clusters.
       const positions = [
-        { x: -90, z: CITY_BACKDROP_POS.z },
-        { x: 90, z: CITY_BACKDROP_POS.z },
+        { x: -55, z: -40 },
+        { x: 55, z: -40 },
       ];
       for (const p of positions) {
         const city = gltf.scene.clone(true);
