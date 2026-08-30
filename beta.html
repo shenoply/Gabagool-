@@ -906,7 +906,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 02:47';
+  window.__BUILD = '2026-08-30 02:49';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -6859,20 +6859,25 @@ function buildRoadFurniture() {
     { z: 120, top: 'NORTH', bottom: 'Newark  12' },
     { z: 430, top: 'EXIT 14', bottom: 'Bloomfield Ave' },
     { z: 720, top: 'SOUTH', bottom: 'Newark Bay' },
+    // Branch road at z=796 is the one junction without a barrier — every other
+    // sign here is west side (unchanged), this one's east side and placed just
+    // before the turn, same lead-in distance real highway exit signs use.
+    { z: 770, top: 'RIGHT LANE', bottom: 'Local Access', side: 1 },
   ];
   for (const s of SIGNS) {
+    const side = s.side || -1;
     const g = new THREE.Group();
     const panel = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 3.2),
       new THREE.MeshStandardMaterial({ map: signTexture(s.top, s.bottom), roughness: 0.7, metalness: 0.05 }));
     panel.position.set(0, 6.2, 0);
-    panel.rotation.y = -Math.PI / 2;
+    panel.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
     g.add(panel);
     for (const dx of [-2.2, 2.2]) {
       const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 6.4, 6), steelMat);
       leg.position.set(0, 3.2, dx);
       g.add(leg);
     }
-    g.position.set(ROAD_CX - ROAD_HW - 3.2, 0, s.z);
+    g.position.set(ROAD_CX + side * (ROAD_HW + 3.2), 0, s.z);
     roadFurniture.add(g);
   }
 
