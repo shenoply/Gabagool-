@@ -908,7 +908,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 11:01';
+  window.__BUILD = '2026-08-30 13:01';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7474,6 +7474,25 @@ function buildRecreationAreas() {
     }
   }
 
+  // Access roads — short paved driveways connecting the main road edge to every
+  // court and lot. Before this they were only reachable by driving off-road
+  // across the grass gap; this gives each one an actual connection.
+  const accessRoadMat = new THREE.MeshStandardMaterial({ color: 0x2f2f2d, roughness: 0.93 });
+  function buildAccessRoad(destX, destZ) {
+    const east = destX > ROAD_CX;
+    const edgeX = east ? ROAD_CX + ROAD_HW : ROAD_CX - ROAD_HW;
+    const len = Math.abs(destX - edgeX);
+    const midX = (edgeX + destX) / 2;
+    const strip = new THREE.Mesh(new THREE.PlaneGeometry(len, 6), accessRoadMat);
+    strip.rotation.x = -Math.PI / 2;
+    strip.position.set(midX, 0.012, destZ);
+    strip.receiveShadow = true;
+    scene.add(strip);
+  }
+  for (const c of courts) buildAccessRoad(c.x, c.z);
+  for (const l of lots) buildAccessRoad(l.x, l.z);
+  buildAccessRoad(58, 1080); // old school — same corridor, same treatment
+
   // Putting green REMOVED per request.
 
   // Golf course REMOVED per request.
@@ -7532,17 +7551,15 @@ function buildRecreationAreas() {
     if (window.__gameNote) window.__gameNote('old school loaded OK');
   }, (e) => { console.warn('old school load failed:', e); if (window.__gameNote) window.__gameNote('OLD SCHOOL FAILED: ' + ((e && e.message) || e)); });
 
-  // Street tree D — scattered along both avenue sidewalks next to the existing
-  // tree line (plantAvenue plants at x~40.4-41.2 east / x~13.4-14.2 west, z=40 to
-  // 1200 step 11) rather than one single spot. Offset ~2 units further from the
-  // road than the existing trees so the two species sit side by side, not
-  // overlapping. One fetch, multiple clones.
+  // Street tree D — expanded from 10 to 60 per request ("much more alongside the
+  // road"). Same x-offsets as before (43 east / 12 west, next to the existing tree
+  // line), spaced every ~24 units instead of ~120.
   loader.parse(ASSETS.STREET_TREE_D, '', (gltf) => {
-    const spots = [
-      { x: 43, z: 100 }, { x: 12, z: 220 }, { x: 43, z: 340 }, { x: 12, z: 460 },
-      { x: 43, z: 580 }, { x: 12, z: 700 }, { x: 43, z: 820 }, { x: 12, z: 940 },
-      { x: 43, z: 1060 }, { x: 12, z: 1180 },
-    ];
+    const spots = [];
+    for (let i = 0; i < 60; i++) {
+      const z = 48 + i * 24;
+      spots.push({ x: i % 2 === 0 ? 43 : 12, z });
+    }
     for (const s of spots) {
       const t = gltf.scene.clone(true);
       t.position.set(s.x, 0, s.z);
@@ -8235,11 +8252,14 @@ function buildCrossTraffic() {
   if (crossCars.length || typeof trafficCars === 'undefined' || !trafficCars.length) return;
   let seed = 8642;
   const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
-  for (let i = 0; i < 10; i++) {
+  // Was 10 cars across only the first 8 of 17 junctions (Math.min(8,...)) - the
+  // other 9 had working lights and zero traffic ever. 21 cars, all 17 junctions,
+  // keeps roughly the same per-junction density as before rather than diluting it.
+  for (let i = 0; i < 21; i++) {
     const src = trafficCars[Math.floor(rnd() * trafficCars.length)];
     if (!src || !src.mesh) continue;
     const mesh = src.mesh.clone(true);
-    const jz = JUNCTION_Z[Math.floor(rnd() * Math.min(8, JUNCTION_Z.length))];
+    const jz = JUNCTION_Z[Math.floor(rnd() * JUNCTION_Z.length)];
     const dir = rnd() < 0.5 ? 1 : -1;
     mesh.position.set(ROAD_CX + dir * (55 + rnd() * 30), 0, jz + (dir > 0 ? 2.2 : -2.2));
     mesh.rotation.y = dir > 0 ? -Math.PI / 2 : Math.PI / 2;
