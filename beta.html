@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 13:51';
+  window.__BUILD = '2026-08-30 13:55';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7707,11 +7707,17 @@ function buildJunctionExpansion() {
   buildRoadSegment(280, 444, 37, 444);
 
   // Main junction (z=796), west side this time (east is the original branch
-  // road) — a second, separate route down to the industrial area's existing
-  // plaza at (-160,1500), rather than only being reachable via the other
-  // (z=1500) branch turn.
+  // road) — connects into a full-length west perimeter road below.
   buildRoadSegment(17, 796, -160, 796);
-  buildRoadSegment(-160, 796, -160, 1500);
+
+  // West perimeter — full length (z=40 to 1500, not just the 796-1500 stretch
+  // from before), stemming from the main junction via the connector above.
+  buildRoadSegment(-160, 40, -160, 1500);
+
+  // East perimeter — same idea, mirrored. Ties into the plaza (which is part of
+  // the same junction complex) rather than a separate connector back to z=796.
+  buildRoadSegment(310, 40, 310, 1500);
+  buildRoadSegment(280, 796, 310, 796);
 }
 
 /* Second branch road — left turn, west side, at BRANCH_ROAD_Z2 (z=1500, a real
