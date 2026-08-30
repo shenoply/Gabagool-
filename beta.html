@@ -607,6 +607,7 @@ const ASSETS = {
   CHASE_AUDIO: 'chase_audio.m4a',
   CUTSCENE: 'cutscene.mp4',
   CITY2: 'city2.glb',
+  DOWNTOWN_SKYLINE: 'downtown_skyline.glb',
   STREET_COURT: 'street_court.glb',
   JUNKYARD: 'junkyard.glb',
   OLD_SCHOOL: 'old_school.glb',
@@ -901,7 +902,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 00:52';
+  window.__BUILD = '2026-08-30 02:17';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1296,15 +1297,44 @@ function updateClouds(dt) {
     }
   }
 }
-// loadRealCityBackdrop() REMOVED — downtown_skyline.glb is no longer loaded at
-// all, per explicit request to keep behind-the-house as the pre-upload procedural
-// skyline. buildCitySkyline() below is what's actually called at boot now.
-// Switched back to the procedural skyline per explicit request — behind the house
-// should be exactly how it was in the live version before any of today's uploads.
-// downtown_skyline.glb is no longer loaded here at all (also removed as a separate
-// ask); buildCitySkyline() is the zero-asset procedural version, same one that was
-// live before any of this session's skyline work started.
-buildCitySkyline();
+// downtown_skyline.glb restored — what was actually wanted was two clusters of
+// this real asset (the low-poly buildings set), one on each side of the house,
+// not the procedural boxes buildCitySkyline() draws. One fetch, two clones,
+// mirrored left/right of the house rather than one cluster at a single spot.
+// Asset itself was never deleted from the repo, only its loading code — that's
+// restored here rather than re-uploaded.
+function loadDowntownSkylineTwoSided() {
+  const loader = new GLTFLoader();
+  loader.parse(ASSETS.DOWNTOWN_SKYLINE, '', (gltf) => {
+    try {
+      // Native footprint is 210 wide; placed 250 apart center-to-center so the
+      // two clusters sit clearly apart with no overlap. Same z as the original
+      // single-cluster spot (CITY_BACKDROP_POS.z) — that distance was tuned
+      // empirically for fog visibility, no reason to change it.
+      const positions = [
+        { x: -125, z: CITY_BACKDROP_POS.z },
+        { x: 125, z: CITY_BACKDROP_POS.z },
+      ];
+      for (const p of positions) {
+        const city = gltf.scene.clone(true);
+        city.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
+        city.position.set(p.x, -1, p.z);
+        city.rotation.y = Math.atan2(-p.x, -p.z); // face back toward the play area, same as before
+        scene.add(city);
+      }
+      if (window.__gameNote) window.__gameNote('downtown skyline loaded OK, 2 clusters placed');
+    } catch (e) {
+      showFatalError('City backdrop placement failed after loading:\n' + ((e && (e.stack || e.message)) || String(e)));
+    }
+  }, (err) => {
+    showFatalError('City GLB failed to parse:\n' + ((err && (err.stack || err.message)) || String(err)));
+    try { buildCitySkyline(); } catch (e2) {
+      showFatalError('Procedural skyline fallback ALSO failed:\n' + ((e2 && (e2.stack || e2.message)) || String(e2)));
+    }
+    if (window.__gameNote) window.__gameNote('DOWNTOWN SKYLINE FAILED: ' + ((err && err.message) || err));
+  });
+}
+loadDowntownSkylineTwoSided();
 buildClouds();
 
 /* ================= GEORGE — the singing lowrider guy =================
@@ -1800,6 +1830,8 @@ const DEBUG_MARKERS = [
   { n: 'street court 3', x: 58, z: 900, anim: false },
   { n: 'junkyard', x: 110, z: 1500, anim: false },
   { n: 'old school', x: 58, z: 1080, anim: false },
+  { n: 'downtown skyline (left)', x: -125, z: CITY_BACKDROP_POS.z, anim: false },
+  { n: 'downtown skyline (right)', x: 125, z: CITY_BACKDROP_POS.z, anim: false },
   { n: 'street tree D (1 of 10)', x: 43, z: 100, anim: false }, { n: 'street tree D (2 of 10)', x: 12, z: 220, anim: false },
 ];
 let debugMarkerGroup = null;
