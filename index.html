@@ -912,7 +912,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 22:13';
+  window.__BUILD = '2026-08-30 22:19';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7838,6 +7838,26 @@ function buildNewVehiclesAndGolf() {
     g.position.set(-140, 0, 100);
     g.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
     scene.add(g);
+    // Blend halo: the golf course texture is a real aerial photo, the rest of
+    // the ground is a procedural grass shader - a hard cutoff between the two
+    // styles always reads as a seam ("didn't blend"). This is a radial-gradient
+    // plane, same green as the main ground, opaque at its outer rim and fading
+    // to fully transparent well inside the golf course's own footprint, so the
+    // photo texture takes over cleanly in the middle instead of stopping short.
+    const haloCanvas = document.createElement('canvas');
+    haloCanvas.width = haloCanvas.height = 256;
+    const hctx = haloCanvas.getContext('2d');
+    const grad = hctx.createRadialGradient(128, 128, 64, 128, 128, 128);
+    grad.addColorStop(0, 'rgba(74,107,58,0)');
+    grad.addColorStop(1, 'rgba(74,107,58,1)');
+    hctx.fillStyle = grad;
+    hctx.fillRect(0, 0, 256, 256);
+    const haloTex = new THREE.CanvasTexture(haloCanvas);
+    const haloMat = new THREE.MeshStandardMaterial({ map: haloTex, transparent: true, roughness: 0.95 });
+    const halo = new THREE.Mesh(new THREE.CircleGeometry(60, 32), haloMat);
+    halo.rotation.x = -Math.PI / 2;
+    halo.position.set(-140, 0.01, 100);
+    scene.add(halo);
     if (window.__gameNote) window.__gameNote('golf course loaded OK');
   }, (e) => { console.warn('golf course load failed:', e); if (window.__gameNote) window.__gameNote('GOLF COURSE FAILED: ' + ((e && e.message) || e)); });
 }
