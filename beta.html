@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 17:35';
+  window.__BUILD = '2026-08-30 18:46';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -6874,24 +6874,7 @@ function buildRoadFurniture() {
   wireGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   roadFurniture.add(new THREE.LineSegments(wireGeo, new THREE.LineBasicMaterial({ color: 0x24262a, fog: true })));
 
-  /* Guardrail only past z=600, where the street trees end. Along the avenue itself
-     the trees mark the verge, which is how a real one looks — a barrier there would
-     fight them. */
-  const railZs = [];
-  for (let z = 600; z < Z1; z += 4) railZs.push(z);
-  const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 0.75, 0.12), darkMat, railZs.length * 2);
-  const beams = new THREE.InstancedMesh(new THREE.BoxGeometry(0.06, 0.32, 4.02), steelMat, railZs.length * 2);
-  let k = 0;
-  for (const side of [-1, 1]) {
-    const rx = ROAD_CX + side * (ROAD_HW + 1.6);
-    for (const z of railZs) {
-      m.makeTranslation(rx, 0.38, z); posts.setMatrixAt(k, m);
-      m.makeTranslation(rx, 0.62, z + 2); beams.setMatrixAt(k, m);
-      k++;
-    }
-  }
-  posts.castShadow = false; beams.castShadow = false;
-  roadFurniture.add(posts, beams);
+  // Guardrail REMOVED per request.
 
   function signTexture(top, bottom) {
     const c = document.createElement('canvas');
@@ -7003,7 +6986,7 @@ function buildRoadFurniture() {
 
   roadFurniture.traverse((o) => { if (o.isMesh || o.isLine) o.frustumCulled = true; });
   scene.add(roadFurniture);
-  if (window.__gameNote) window.__gameNote('roadside: ' + poleZs.length + ' poles, ' + railZs.length * 2 + ' rail posts');
+  if (window.__gameNote) window.__gameNote('roadside: ' + poleZs.length + ' poles');
 }
 
 /* ================= MESHY BUILDINGS (BETA) =================
@@ -7839,7 +7822,7 @@ function buildBranchRoad2() {
 function buildChicagoAndIndustrial() {
   loader.parse(ASSETS.CHICAGO_BUILDINGS, '', (gltf) => {
     const c = gltf.scene;
-    c.position.set(125, 0, 1150);
+    c.position.set(180, 0, 1150);   // pushed further from the road (was 125) for real clearance margin
     c.rotation.y = -Math.PI / 2;
     c.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
     scene.add(c);
