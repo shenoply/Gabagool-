@@ -617,6 +617,10 @@ const ASSETS = {
   CHICAGO_BUILDINGS: 'chicago_buildings.glb',
   BUILDINGS_FRONT: 'buildings_front.glb',
   INDUSTRIAL_BUILDINGS: 'industrial_buildings.glb',
+  POLICE_CAR: 'police_car.glb',
+  TAXI_CAR: 'taxi_car.glb',
+  POLICE_OFFICER: 'police_officer.glb',
+  GOLF_COURSE: 'golf_course.glb',
   TRAFFIC_PACK: 'traffic.glb',
   HOUSE: 'house.glb',
   COLLISION: 'collision.glb', // position-only, low-poly proxy — used for raycasting, never rendered
@@ -907,7 +911,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 19:10';
+  window.__BUILD = '2026-08-30 20:23';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7787,6 +7791,49 @@ function buildJunctionExpansion() {
    around them ("no trees or nothing keep around the blocks"). Same street_tree_d
    asset already loaded elsewhere, one fetch, scattered every ~40 units along
    both sides of each road for their full length. */
+function buildNewVehiclesAndGolf() {
+  // Police car + officer, parked together near the big junction - a small vignette
+  // rather than just a static prop dropped in isolation.
+  loader.parse(ASSETS.POLICE_CAR, '', (gltf) => {
+    const c = gltf.scene;
+    c.position.set(22, 0, 775);
+    c.rotation.y = Math.PI / 2;
+    c.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(c);
+    if (window.__gameNote) window.__gameNote('police car loaded OK');
+  }, (e) => { console.warn('police car load failed:', e); if (window.__gameNote) window.__gameNote('POLICE CAR FAILED: ' + ((e && e.message) || e)); });
+
+  loader.parse(ASSETS.POLICE_OFFICER, '', (gltf) => {
+    const o = gltf.scene;
+    o.position.set(25, 0, 778);
+    o.rotation.y = -Math.PI * 0.6;
+    o.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(o);
+    if (window.__gameNote) window.__gameNote('police officer loaded OK');
+  }, (e) => { console.warn('police officer load failed:', e); if (window.__gameNote) window.__gameNote('POLICE OFFICER FAILED: ' + ((e && e.message) || e)); });
+
+  // Taxi, near KFC1 - a plausible spot for one to be waiting
+  loader.parse(ASSETS.TAXI_CAR, '', (gltf) => {
+    const t = gltf.scene;
+    t.position.set(48, 0, 165);
+    t.rotation.y = -Math.PI / 2;
+    t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(t);
+    if (window.__gameNote) window.__gameNote('taxi loaded OK');
+  }, (e) => { console.warn('taxi load failed:', e); if (window.__gameNote) window.__gameNote('TAXI FAILED: ' + ((e && e.message) || e)); });
+
+  // Golf course - x=-350 clears the west perimeter road (x=-160) by 25 units given
+  // its 330-unit width, and z=150 keeps it close to home as specifically requested,
+  // rather than pushed far down the avenue.
+  loader.parse(ASSETS.GOLF_COURSE, '', (gltf) => {
+    const g = gltf.scene;
+    g.position.set(-350, 0, 150);
+    g.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
+    scene.add(g);
+    if (window.__gameNote) window.__gameNote('golf course loaded OK');
+  }, (e) => { console.warn('golf course load failed:', e); if (window.__gameNote) window.__gameNote('GOLF COURSE FAILED: ' + ((e && e.message) || e)); });
+}
+
 function buildPerimeterTrees() {
   loader.parse(ASSETS.STREET_TREE_D, '', (gltf) => {
     const lines = [-160, 310];
@@ -9427,6 +9474,7 @@ function endLoad(name) {
     registerProximityLoad(27, 796, 260, buildJunctionExpansion);
     registerProximityLoad(-160, 700, 260, buildPerimeterTrees);
     registerProximityLoad(125, 1150, 300, buildChicagoAndIndustrial);
+    setTimeout(buildNewVehiclesAndGolf, 2750);
     setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
     setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
