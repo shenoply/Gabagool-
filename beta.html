@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 14:24';
+  window.__BUILD = '2026-08-30 14:35';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7236,18 +7236,17 @@ function loadMeshyBuildings() {
   load(ASSETS.DUMPSTER, (src) => {
     const ALLEY_Z = JUNCTION_Z.slice(0, 8);
     ALLEY_Z.forEach((z, i) => {
-      put(src, EAST_X + 17 + (i % 2) * 4, z + 6, 1.55 + (i % 3) * 0.2);
-      put(src, WEST_X - 17 - (i % 2) * 4, z - 6, 1.55 + (i % 3) * 0.2);
+      put(src, EAST_X + 12 + (i % 2) * 4, z + 6, 1.55 + (i % 3) * 0.2);
+      put(src, WEST_X - 12 - (i % 2) * 4, z - 6, 1.55 + (i % 3) * 0.2);
     });
-    /* Chain-link fence, first pass. No placement convention existed for this prop
-       yet, so a short 3-panel screening run tucked behind each alley's dumpster —
-       ordinary urban set-dressing, and an easy thing to relocate once there's a
-       stronger opinion on where it belongs (vacant lots and the factory yard are
-       the obvious next candidates once those exist). */
+    /* Fence now backs all 8 dumpster spots, not just the first 4 - half of them
+       had no fence at all before, which is most of why they read as "alone."
+       Pulled closer to the building line too (was +17/-17, now +12/-12) so they
+       sit tucked against the alley rather than floating in open grass. */
     load(ASSETS.CHAIN_LINK_FENCE, (fenceSrc) => {
-      ALLEY_Z.slice(0, 4).forEach((z, i) => {
-        for (let p = -1; p <= 1; p++) put(fenceSrc, EAST_X + 24, z + 6 + p * 2.2, Math.PI / 2);
-        for (let p = -1; p <= 1; p++) put(fenceSrc, WEST_X - 24, z - 6 + p * 2.2, Math.PI / 2);
+      ALLEY_Z.forEach((z, i) => {
+        for (let p = -1; p <= 1; p++) put(fenceSrc, EAST_X + 19, z + 6 + p * 2.2, Math.PI / 2);
+        for (let p = -1; p <= 1; p++) put(fenceSrc, WEST_X - 19, z - 6 + p * 2.2, Math.PI / 2);
       });
     });
   });
@@ -7636,35 +7635,50 @@ function buildBranchRoad() {
    free-roam, cars don't path-plan) — just a genuine back-and-forth patrol on
    real geometry, staggered so it reads as ongoing traffic rather than one car
    looping in isolation. */
-const branchRoadCars = [];
-function buildBranchTraffic() {
-  if (branchRoadCars.length || typeof trafficCars === 'undefined' || !trafficCars.length) return;
-  const nearX = ROAD_CX + ROAD_HW + 4;   // just past the main road edge
-  const farX = 280;                      // the plaza
+/* Generalized from a single hardcoded branch-road patrol to cover multiple roads
+   — same technique (back-and-forth, U-turn at both ends), just parameterized by
+   which axis is fixed. Now covers the original branch road plus both full-length
+   perimeter roads, so AI traffic actually uses the road network built this
+   session instead of just the one turn. */
+const ROAD_PATROLS = [
+  { axis: 'x', fixed: 796, from: ROAD_CX + ROAD_HW + 4, to: 280, count: 3 },   // 796 = BRANCH_ROAD_Z (not yet declared at this point in the file)
+  { axis: 'z', fixed: -160, from: 40, to: 1500, count: 4 },
+  { axis: 'z', fixed: 310, from: 40, to: 1500, count: 4 },
+];
+const roadPatrolCars = [];
+function buildRoadPatrols() {
+  if (roadPatrolCars.length || typeof trafficCars === 'undefined' || !trafficCars.length) return;
   let seed = 4471;
   const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
-  for (let i = 0; i < 3; i++) {
-    const src = trafficCars[Math.floor(rnd() * trafficCars.length)];
-    if (!src || !src.mesh) continue;
-    const mesh = src.mesh.clone(true);
-    mesh.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.frustumCulled = true; } });
-    scene.add(mesh);
-    branchRoadCars.push({
-      mesh, nearX, farX,
-      t: rnd(),                          // 0..1 position along the road, staggered per car
-      dir: rnd() < 0.5 ? 1 : -1,         // 1 = heading toward the plaza, -1 = heading back
-      speed: 0.10 + rnd() * 0.04,        // fraction of the road per second
-    });
+  for (const patrol of ROAD_PATROLS) {
+    for (let i = 0; i < patrol.count; i++) {
+      const src = trafficCars[Math.floor(rnd() * trafficCars.length)];
+      if (!src || !src.mesh) continue;
+      const mesh = src.mesh.clone(true);
+      mesh.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.frustumCulled = true; } });
+      scene.add(mesh);
+      roadPatrolCars.push({
+        mesh, axis: patrol.axis, fixed: patrol.fixed, from: patrol.from, to: patrol.to,
+        t: rnd(),
+        dir: rnd() < 0.5 ? 1 : -1,
+        speed: 0.06 + rnd() * 0.03,
+      });
+    }
   }
 }
-function updateBranchTraffic(dt) {
-  for (const c of branchRoadCars) {
+function updateRoadPatrols(dt) {
+  for (const c of roadPatrolCars) {
     c.t += c.dir * c.speed * dt;
-    if (c.t >= 1) { c.t = 1; c.dir = -1; }      // hit the plaza — U-turn back toward the main road
-    if (c.t <= 0) { c.t = 0; c.dir = 1; }       // hit the main-road junction — U-turn back out
-    const x = c.nearX + (c.farX - c.nearX) * c.t;
-    c.mesh.position.set(x, 0, BRANCH_ROAD_Z);
-    c.mesh.rotation.y = c.dir > 0 ? -Math.PI / 2 : Math.PI / 2;
+    if (c.t >= 1) { c.t = 1; c.dir = -1; }
+    if (c.t <= 0) { c.t = 0; c.dir = 1; }
+    const v = c.from + (c.to - c.from) * c.t;
+    if (c.axis === 'x') {
+      c.mesh.position.set(v, 0, c.fixed);
+      c.mesh.rotation.y = c.dir > 0 ? -Math.PI / 2 : Math.PI / 2;
+    } else {
+      c.mesh.position.set(c.fixed, 0, v);
+      c.mesh.rotation.y = c.dir > 0 ? 0 : Math.PI;
+    }
   }
 }
 
@@ -7974,24 +7988,30 @@ function buildStreetDetail() {
     }
   }
 
-  // Big junction — the right-turn branch road (z=796) is the one genuinely
-  // major turn on the map, but had zero light of its own (just an open barrier
-  // gap). Same working geometry as above, scaled 1.6x so it actually reads as a
-  // major intersection, one on each side. Same trafficLights array, same
-  // junctionPhase(796) timing — this is a real working light, not a prop.
+  // Big junction — 1.6x scale alone didn't read as different enough ("didn't even
+  // notice it"). The actual signature of a major intersection isn't size, it's
+  // shape: a mast arm spanning the full road with the light hanging over the
+  // travel lane, not a small corner-mounted box like every standard junction
+  // here uses. Built that instead of just scaling the same design up further.
   for (const side of [1, -1]) {
     const g = new THREE.Group();
-    const scale = 1.6;
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08 * scale, 0.09 * scale, 5.2 * scale, 6), frameMat);
-    pole.position.y = 2.6 * scale; g.add(pole);
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(2.6 * scale, 0.09 * scale, 0.09 * scale), frameMat);
-    arm.position.set(1.3 * scale, 5.1 * scale, 0); g.add(arm);
+    const scale = 2.2;
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.11 * scale, 0.13 * scale, 6.4 * scale, 8), frameMat);
+    pole.position.y = 3.2 * scale; g.add(pole);
+    // Full-span mast arm, reaching over the travel lane rather than a short
+    // corner arm — this is the actual "big intersection" tell.
+    const mastLen = ROAD_HW * 2 + 3;
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09 * scale, 0.09 * scale, mastLen, 8), frameMat);
+    mast.rotation.z = Math.PI / 2;
+    mast.position.set(-side * mastLen / 2, 6.3 * scale, 0);
+    g.add(mast);
     const box = new THREE.Mesh(new THREE.BoxGeometry(0.34 * scale, 0.95 * scale, 0.28 * scale), frameMat);
-    box.position.set(2.5 * scale, 4.75 * scale, 0); g.add(box);
+    box.position.set(-side * (mastLen - 1.5), 5.85 * scale, 0);
+    g.add(box);
     const bulbs = [];
     ['#ff3b30', '#ffcc00', '#34c759'].forEach((c, i) => {
-      const b = new THREE.Mesh(new THREE.CircleGeometry(0.1 * scale, 10), lampOff());
-      b.position.set(2.5 * scale, (5.06 - i * 0.31) * scale, 0.145 * scale);
+      const b = new THREE.Mesh(new THREE.CircleGeometry(0.11 * scale, 10), lampOff());
+      b.position.set(-side * (mastLen - 1.5), (6.16 - i * 0.31) * scale, 0.145 * scale);
       b.userData.on = new THREE.Color(c);
       g.add(b); bulbs.push(b);
     });
@@ -9326,7 +9346,7 @@ function endLoad(name) {
     setTimeout(buildRecreationAreas, 2600);   // court + lots; lot cars use the same traffic meshes if ready
     setTimeout(buildBranchRoad, 2650);
     setTimeout(buildBranchRoad2, 2670);
-    setTimeout(buildBranchTraffic, 2690);   // needs trafficCars, same reason buildParkedCars is deferred
+    setTimeout(buildRoadPatrols, 2690);   // needs trafficCars, same reason buildParkedCars is deferred
     setTimeout(buildJunctionExpansion, 2710);
     setTimeout(buildChicagoAndIndustrial, 2700);
     setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
@@ -10422,7 +10442,7 @@ function tick() {
     if (scene.fog.density !== want) scene.fog.density = want;
   }
   updateCrossTraffic(dt);
-  updateBranchTraffic(dt);
+  updateRoadPatrols(dt);
   updateStreetDetail(dt);
   updateBuildingLOD();
   updateCallStrip();
