@@ -907,7 +907,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 13:30';
+  window.__BUILD = '2026-08-30 13:38';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7857,6 +7857,7 @@ function buildStreetDetail() {
   // 4. traffic lights at the junctions, cycling
   const lampOff = () => new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.4 });
   for (const z of CROSS) {
+    if (z === BRANCH_ROAD_Z) continue; // gets the bigger version below instead, not both
     for (const side of [1, -1]) {
       const g = new THREE.Group();
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 5.2, 6), frameMat);
@@ -7877,6 +7878,33 @@ function buildStreetDetail() {
       streetDetail.add(g);
       trafficLights.push({ bulbs, z });   // real junction, drives off junctionPhase
     }
+  }
+
+  // Big junction — the right-turn branch road (z=796) is the one genuinely
+  // major turn on the map, but had zero light of its own (just an open barrier
+  // gap). Same working geometry as above, scaled 1.6x so it actually reads as a
+  // major intersection, one on each side. Same trafficLights array, same
+  // junctionPhase(796) timing — this is a real working light, not a prop.
+  for (const side of [1, -1]) {
+    const g = new THREE.Group();
+    const scale = 1.6;
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08 * scale, 0.09 * scale, 5.2 * scale, 6), frameMat);
+    pole.position.y = 2.6 * scale; g.add(pole);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(2.6 * scale, 0.09 * scale, 0.09 * scale), frameMat);
+    arm.position.set(1.3 * scale, 5.1 * scale, 0); g.add(arm);
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.34 * scale, 0.95 * scale, 0.28 * scale), frameMat);
+    box.position.set(2.5 * scale, 4.75 * scale, 0); g.add(box);
+    const bulbs = [];
+    ['#ff3b30', '#ffcc00', '#34c759'].forEach((c, i) => {
+      const b = new THREE.Mesh(new THREE.CircleGeometry(0.1 * scale, 10), lampOff());
+      b.position.set(2.5 * scale, (5.06 - i * 0.31) * scale, 0.145 * scale);
+      b.userData.on = new THREE.Color(c);
+      g.add(b); bulbs.push(b);
+    });
+    g.position.set(ROAD_CX + side * (ROAD_HW + 1.9), 0, BRANCH_ROAD_Z + side * 7);
+    g.rotation.y = side > 0 ? Math.PI : 0;
+    streetDetail.add(g);
+    trafficLights.push({ bulbs, z: BRANCH_ROAD_Z });
   }
 
   // 9. fire hydrants
