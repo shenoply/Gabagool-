@@ -914,7 +914,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 00:18';
+  window.__BUILD = '2026-08-31 00:42';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -6764,7 +6764,7 @@ function updateExtraCalls(dt) {
   if (inInterior || onCall || phoneRingPopupOpen || ringingExtraKey) return;
   extraCallTimer -= dt;
   if (extraCallTimer <= 0) {
-    extraCallTimer = 90 + Math.random() * 90;   // spaced apart, "more duration" per request
+    extraCallTimer = 45 + Math.random() * 45;   // was 90-180s, reduced - that range may have been rare enough to go a whole session without one
     const now = Date.now();
     const eligible = Object.keys(EXTRA_CALL_STATE).filter((k) => {
       const s = EXTRA_CALL_STATE[k];
@@ -7641,14 +7641,11 @@ function buildRecreationAreas() {
   // Same "visible gap between front and back building rows" zone the courts/lots
   // use (x~58 east side), well clear of CITY_BACKDROP_POS (x-15/z-62, behind the
   // house) — explicitly never there again per request.
-  loader.parse(ASSETS.OLD_SCHOOL, '', (gltf) => {
-    const school = gltf.scene;
-    school.position.set(58, 0, 1080);
-    school.rotation.y = -Math.PI / 2;
-    school.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
-    scene.add(school);
-    if (window.__gameNote) window.__gameNote('old school loaded OK');
-  }, (e) => { console.warn('old school load failed:', e); if (window.__gameNote) window.__gameNote('OLD SCHOOL FAILED: ' + ((e && e.message) || e)); });
+  // old_school.glb REMOVED - the reported green-mess coordinates (X82.8,Z1079)
+  // fall exactly inside this building's computed world-space footprint
+  // (X 9.7-156.8, Z 1001.6-1163.8), an exact match. Materials were all
+  // generically named so a surgical per-submesh fix wasn't possible; removed
+  // the whole building per direct request instead.
 
   // Street tree D — expanded from 10 to 60 per request ("much more alongside the
   // road"). Same x-offsets as before (43 east / 12 west, next to the existing tree
@@ -7862,14 +7859,15 @@ function buildNewVehiclesAndGolf() {
   }, (e) => { console.warn('police officer load failed:', e); if (window.__gameNote) window.__gameNote('POLICE OFFICER FAILED: ' + ((e && e.message) || e)); });
 
   // Taxis - designated waiting spots along the main road, not just one. Near
-  // KFC1 (existing), KFC2, old school, court 1, and the right-turn plaza.
+  // KFC1, court 1, old school area, and 2 more spread along the main avenue -
+  // all on the main road corridor now, not scattered to a branch road.
   loader.parse(ASSETS.TAXI_CAR, '', (gltf) => {
     const spots = [
       { x: 48, z: 165, rotY: -Math.PI / 2 },   // KFC1
-      { x: -18, z: 655, rotY: Math.PI / 2 },   // KFC2
-      { x: 48, z: 1085, rotY: -Math.PI / 2 },  // old school
       { x: 42, z: 230, rotY: -Math.PI / 2 },   // court 1
-      { x: 260, z: 800, rotY: Math.PI },       // right-turn plaza
+      { x: 48, z: 470, rotY: -Math.PI / 2 },   // mid-avenue
+      { x: 48, z: 850, rotY: -Math.PI / 2 },   // mid-avenue, further down
+      { x: 48, z: 1085, rotY: -Math.PI / 2 },  // old school area
     ];
     let placed = 0;
     for (const s of spots) {
@@ -7896,7 +7894,7 @@ function buildNewVehiclesAndGolf() {
     // Fairway - an elongated rough oval, built from a stretched circle so it
     // reads as a fairway shape rather than a perfectly round patch.
     const fairwayShape = new THREE.Shape();
-    const fw = 34, fd = 26; // half-width, half-depth
+    const fw = 48, fd = 38; // half-width, half-depth - enlarged per request, west edge (-140-48=-188) still clears the perimeter road/trees at x=-160 by 28 units
     for (let i = 0; i <= 32; i++) {
       const a = (i / 32) * Math.PI * 2;
       const wob = 1 + Math.sin(a * 3) * 0.08; // gentle irregularity, not a perfect ellipse
@@ -7949,7 +7947,7 @@ function buildNewVehiclesAndGolf() {
       const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
       for (let i = 0; i < 10; i++) {
         const a = (i / 10) * Math.PI * 2;
-        const r = 40 + rnd() * 10;
+        const r = 58 + rnd() * 10; // pushed out from 40-50 to clear the enlarged fairway (fw=48)
         const t = gltf.scene.clone(true);
         t.position.set(cx + Math.cos(a) * r, 0, cz + Math.sin(a) * r * 0.78);
         t.rotation.y = rnd() * Math.PI * 2;
@@ -10615,7 +10613,7 @@ const MAP_POINTS = [
 let mapOpen = false;
 const mapOverlay = document.createElement('div');
 mapOverlay.id = 'map-overlay';
-mapOverlay.style.cssText = 'position:fixed;inset:0;z-index:90;background:rgba(10,12,16,0.94);display:none;flex-direction:column;align-items:center;justify-content:center;';
+mapOverlay.style.cssText = 'position:fixed;inset:0;z-index:210;background:rgba(10,12,16,0.94);display:none;flex-direction:column;align-items:center;justify-content:center;';
 mapOverlay.innerHTML =
   '<div style="position:relative;width:220px;height:480px;background:#1c2a18;border:1px solid var(--panel-border);border-radius:12px;overflow:hidden;">' +
   '<div id="map-road" style="position:absolute;left:' + (mapX(27) - 4) + 'px;top:' + mapZ(-62) + 'px;width:8px;height:' + (mapZ(1580) - mapZ(-62)) + 'px;background:#3a3a38;"></div>' +
