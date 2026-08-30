@@ -912,7 +912,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-30 23:50';
+  window.__BUILD = '2026-08-30 23:58';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -6462,9 +6462,15 @@ function showIncomingOnPhone(callerKey) {
           // next ring would land in the middle of this one.
           startVoiceCall(key);
         } else {
-          // Declined is final for that caller — it was shifted off the queue when the
-          // ring opened, so it simply never comes back. Next one in 30s.
-          scheduleNextPhoneRing(30);
+          // Declined is final for that caller - it was shifted off the queue when
+          // the ring opened, so it simply never comes back.
+          // Only reschedule the MAIN queue's own timer for a main-queue caller.
+          // Extra callers (melfi/vito/christopher/irina) have their own separate
+          // timer (extraCallTimer/updateExtraCalls) - this used to touch
+          // nextPhoneRingAt unconditionally for every decline, which cross-wired
+          // the two systems (e.g. could reset the main queue's "stop, empty" state
+          // back to 30s just because an unrelated extra caller was declined).
+          if (['boss', 'junior', 'carmine'].includes(key)) scheduleNextPhoneRing(30);
         }
         return;
       }
@@ -10454,19 +10460,63 @@ autoHuntToggle.addEventListener('click', () => {
   autoHuntToggle.classList.toggle('on', autoHuntEnabled);
 });
 
+const CAR_INFO = {
+  escalade: { name: 'Cadillac Escalade', desc: 'Full-size luxury SUV. Heavy and powerful, built for comfort over agility.', profile: CAR_PROFILES.escalade },
+  e50:      { name: 'Mercedes E50 AMG',  desc: 'Uses the Escalade\'s tuning for now — not yet given its own handling.', profile: CAR_PROFILES.escalade },
+  w201:     { name: 'Mercedes 190E',     desc: 'Uses the Escalade\'s tuning for now — not yet given its own handling.', profile: CAR_PROFILES.escalade },
+  pony:     { name: 'Hyundai Pony',      desc: 'Light and nimble. Lower top speed, but brakes and turns quicker.', profile: CAR_PROFILES.pony },
+};
+const carSelectDialog = document.createElement('div');
+carSelectDialog.id = 'car-select-dialog';
+carSelectDialog.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:80;background:var(--panel);border:1px solid var(--accent-dim);border-radius:16px;padding:16px 18px;max-width:90vw;width:340px;max-height:80vh;overflow-y:auto;backdrop-filter:blur(8px);box-shadow:0 12px 32px rgba(0,0,0,0.55);display:none;';
+document.body.appendChild(carSelectDialog);
+function closeCarSelectDialog() { carSelectDialog.style.display = 'none'; }
+function openCarSelectDialog() {
+  const options = [{ key: 'escalade', available: true }];
+  for (const gc of garageCars) options.push({ key: gc.key, available: true });
+  // Garage cars still loading (staggered 1200ms apart at boot) simply aren't
+  // offered yet, rather than showing a broken/unselectable entry.
+  let html = '<div style="font:800 14px/1.3 sans-serif;color:var(--accent);margin-bottom:12px;">Choose your ride</div>';
+  for (const opt of options) {
+    const info = CAR_INFO[opt.key];
+    const p = info.profile;
+    html += '<div class="car-opt" data-key="' + opt.key + '" style="border:1px solid var(--panel-border);border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer;">' +
+      '<div style="font:800 13px sans-serif;color:var(--text);">' + info.name + '</div>' +
+      '<div style="font:500 11px sans-serif;color:var(--text-dim);margin:4px 0 6px;">' + info.desc + '</div>' +
+      '<div style="font:700 10px ui-monospace,monospace;color:var(--accent-dim);">TOP SPEED ' + p.maxSpeed + '  •  GRIP ' + p.gripBase.toFixed(1) + '  •  TURN ' + p.turnRate.toFixed(2) + '</div>' +
+      '</div>';
+  }
+  html += '<button id="car-select-cancel" style="width:100%;background:transparent;border:1px solid var(--accent-dim);border-radius:10px;padding:10px;font-weight:700;font-size:13px;color:var(--text);margin-top:4px;">Cancel</button>';
+  carSelectDialog.innerHTML = html;
+  carSelectDialog.style.display = 'block';
+  carSelectDialog.querySelectorAll('.car-opt').forEach((el) => {
+    el.addEventListener('click', () => {
+      const key = el.dataset.key;
+      closeCarSelectDialog();
+      driveToggleBusy = true;
+      driveToggle.classList.add('on');
+      if (key === 'escalade') {
+        applyCarProfile('escalade');
+        enterDriveMode();
+      } else {
+        const gc = garageCars.find((g) => g.key === key);
+        applyCarProfile(key);
+        enterDriveMode(false, gc ? gc.group : undefined);
+      }
+      const waitForEntry = setInterval(() => {
+        if (drivingMode) { clearInterval(waitForEntry); driveToggleBusy = false; }
+      }, 100);
+    });
+  });
+  document.getElementById('car-select-cancel').addEventListener('click', closeCarSelectDialog);
+}
 const driveToggle = document.getElementById('drive-toggle');
 let driveToggleBusy = false;
 driveToggle.addEventListener('click', () => {
   if (inInterior) return; // no driving from indoors
   if (driveToggleBusy) return;
   if (!drivingMode) {
-    driveToggleBusy = true;
-    driveToggle.classList.add('on');
-    enterDriveMode();
-    // enterDriveMode's car load can take a moment on first use; re-enable once it's actually in
-    const waitForEntry = setInterval(() => {
-      if (drivingMode) { clearInterval(waitForEntry); driveToggleBusy = false; }
-    }, 100);
+    openCarSelectDialog();
   } else {
     exitDriveMode();
     driveToggle.classList.remove('on');
