@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 22:04';
+  window.__BUILD = '2026-08-31 20:32';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -8411,10 +8411,10 @@ function loadWildlife() {
   });
   loader.parse(ASSETS.DUMPSTER, '', (gltf) => {
     for (const c of clusters) {
-      for (let k = 0; k < 2; k++) {   // a pair per cluster, nose-to-tail with a little jog
+      for (let k = 0; k < 2; k++) {   // a pair per cluster, nose-to-tail, tight and square to the curb
         const d = gltf.scene.clone(true);
-        d.position.set(c.x + (rnd() - 0.5) * 1.2, 0, c.z + k * 3.2);
-        d.rotation.y = (c.side > 0 ? -Math.PI / 2 : Math.PI / 2) + (rnd() - 0.5) * 0.3;
+        d.position.set(c.x, 0, c.z + k * 2.4);
+        d.rotation.y = c.side > 0 ? -Math.PI / 2 : Math.PI / 2; // random jitter (was up to +-17deg) removed - it was reading as scattered rather than a placed pair. Base rotation itself is still unconfirmed against the model's native orientation.
         d.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
         scene.add(d);
       }
@@ -8570,7 +8570,12 @@ function updateWildlife(dt) {
    off outright — it renders at full clarity regardless of how far out the loop
    carries it. */
 let planeMesh = null;
-const PLANE_ORBIT = { cx: 27, cz: 800, rx: 320, rz: 320, y: 240, speed: 0.018, phase: 0 };
+// Was centered at z=800 (the big junction) with radius 320 - every screenshot
+// from actual play showed you near home (Z under 15), 800 units outside that
+// loop's reach the entire time regardless of phase. Re-centered on the avenue's
+// midpoint with rz stretched to nearly the full 0-1600 length so it actually
+// passes near home on every orbit, not just the far end.
+const PLANE_ORBIT = { cx: 27, cz: 800, rx: 180, rz: 750, y: 220, speed: 0.02, phase: 0 };
 function loadPlane() {
   loader.parse(ASSETS.PLANE, '', (gltf) => {
     const plane = gltf.scene;
@@ -8674,7 +8679,11 @@ function loadBusStops() {
   loader.parse(ASSETS.BUS_NAGOYA, '', (gltf) => {
     for (const s of BUS_STOPS) {
       const bus = gltf.scene.clone(true);
-      bus.rotation.y = 0; // parked facing +z
+      // Was rotation.y=0, assuming forward=Z like most vehicles here - wrong for
+      // this model, whose long (10.9m) axis sits on native X, not Z. Left
+      // unrotated it rendered broadside across the road. 90 deg swings the long
+      // axis onto Z, parallel to the avenue, matching the shelter's own rotation.
+      bus.rotation.y = Math.PI / 2;
       bus.position.set(s.x - s.side * 3.2, 0, s.z - 6);
       bus.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; } });
       scene.add(bus);
@@ -8697,9 +8706,17 @@ const BILLBOARD_SPOTS = [
   { x: 6, z: 1240, side: -1 },
 ];
 function loadBillboards() {
-  const scale = 0.0285; // single-billboard native height 333 -> ~9.5m panel+pole
-  const groundOffset = -358.2 * scale;
+  // Direct local-space measurement (position/scale/rotation all identity on the
+  // node itself) showed the raw geometry sits at local Y -363..161 but local Z
+  // 358..691 - the true "up" axis is Z, not Y, meaning the source file is
+  // authored Z-up. A yaw-only rotation.y left it lying flat, which read as
+  // "on the floor". Fix: tilt -90 about X (object space, corrects up-axis) THEN
+  // yaw around world Y (to face the road), composed as quaternions rather than
+  // Euler angles so the two don't fight each other.
+  const scale = 0.0285; // true vertical span (358..691 local Z) * scale -> ~9.5m
+  const groundOffset = -358.2 * scale; // local Z min, now mapped to world Y after the tilt
   const names = ['Object_2', 'Object_3', 'Object_4'];
+  const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
   loader.parse(ASSETS.BILLBOARD_PACK, '', (gltf) => {
     for (let i = 0; i < BILLBOARD_SPOTS.length; i++) {
       const s = BILLBOARD_SPOTS[i];
@@ -8709,7 +8726,8 @@ function loadBillboards() {
       const clone = src.clone(true);
       clone.scale.setScalar(scale);
       clone.position.set(s.x, groundOffset, s.z);
-      clone.rotation.y = s.side > 0 ? -Math.PI / 2 : Math.PI / 2;
+      const yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), s.side > 0 ? -Math.PI / 2 : Math.PI / 2);
+      clone.quaternion.copy(yaw.multiply(tilt));
       clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; } });
       scene.add(clone);
     }
