@@ -695,11 +695,14 @@ const ASSETS = {
   GRASS_COLOR: 'grass_color.webp',   // photoscanned ground grass, 1024 — replaces the procedural canvas texture
   GRASS_NORMAL: 'grass_normal.webp', // 512 is plenty for a normal map at this viewing distance
   FOREST_NEAR: 'pine_near.glb', // pine patch, 47,920 verts, ~51 x 46 units — cloned across the map
-  /* Wildlife batch: 12 species, decimated and scaled to real-world metres during
-     processing (verified via gltf-transform before wiring: doe 1.6m, raccoon 0.9m,
-     crow 0.5m, butterflies 0.13m — the tiny ones get code-side scale where placed).
-     All skinned+animated except the cat (0 skins, 0 clips — static poses only) and
-     the chipmunk (node animation, no skin — the mixer drives it the same way). */
+  /* Wildlife batch: 12 species. The GLB static bounds are MEANINGLESS for the
+     skinned ones — several rigs carry large bone-space scales, so the real size
+     only exists once the skeleton poses: butterflies render 4.25m across despite
+     a 0.13m static box, doe 216m, bird_fly 86m, blackrat 0.19m. Sizes were
+     measured through the game's own three+GLTFLoader+SkeletonUtils with each
+     species' actual clip playing, and the spawn scales below normalise those to
+     real-world metres. Cat is unrigged (0 skins, 0 clips — static poses only);
+     chipmunk is a node animation with no skin. */
   WL_RACCOON: 'wildlife_raccoon.glb',
   WL_BLACKRAT: 'wildlife_blackrat.glb',
   WL_BUTTERFLY1: 'wildlife_butterfly1.glb',
@@ -931,7 +934,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 13:01';
+  window.__BUILD = '2026-08-31 14:31';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -8455,7 +8458,7 @@ function loadWildlife() {
   for (const c of clusters) for (let k = 0; k < 3; k++) {
     ratSpots.push({ x: c.x + (rnd() - 0.5) * 4.5, z: c.z + 1.5 + (rnd() - 0.5) * 5.5, rotY: rnd() * 6.28 });
   }
-  spawnWildlife(ASSETS.WL_BLACKRAT, ratSpots, { clips: ['Mammals|idle_A1', 'Mammals|walk_A1', 'Mammals|walk_A2', 'Mammals|run_A1'] });
+  spawnWildlife(ASSETS.WL_BLACKRAT, ratSpots, { scale: 1.8, clips: ['Mammals|idle_A1', 'Mammals|walk_A1', 'Mammals|walk_A2', 'Mammals|run_A1'] }); // measured 0.19m posed — 1.8x to a real 0.35m rat
 
   // Crow — one on a lid per cluster (dumpster measures 1.8 high), four more on the
   // ground out by the courts/lots.
@@ -8493,9 +8496,10 @@ function loadWildlife() {
 
   // Doe — small herd grazing the golf-course fairway (cx -140, cz 100, half-extents
   // 48×38 — kept 10 in from the edges). Per-instance mix of eating/idle/lying clips.
+  // Renders 216m at scale 1 (bone-space scale in the rig) — 0.0079 → a real 1.7m doe.
   const doeSpots = [];
   for (let k = 0; k < 5; k++) doeSpots.push({ x: -140 + (rnd() - 0.5) * 76, z: 100 + (rnd() - 0.5) * 56, rotY: rnd() * 6.28 });
-  spawnWildlife(ASSETS.WL_DOE, doeSpots, { clips: ['Stand_Eating_01', 'Stand_Idle_02', 'Stand_Breathing_01', 'Lying_Breathing_01'] });
+  spawnWildlife(ASSETS.WL_DOE, doeSpots, { scale: 0.0079, clips: ['Stand_Eating_01', 'Stand_Idle_02', 'Stand_Breathing_01', 'Lying_Breathing_01'] });
 
   // Kingfisher — three at the west edge of the golf course by the perimeter trees,
   // on perched-idle clips.
@@ -8505,7 +8509,9 @@ function loadWildlife() {
 
   /* --- tier c: fliers --- */
   // Butterflies — drifting ellipses low over the verges (plus a few on the golf
-  // course), fast flutter bob. Native span is 0.13 so they get 2.5x to read at all.
+  // course), fast flutter bob. The rig renders 4.25m across with 'fly' playing
+  // (bone-space scale — nothing to do with the 0.13m static box), so 0.082
+  // brings it to a real 0.35m butterfly.
   const flutter = (cx, cz) => ({
     flier: 'flutter', cx, cz,
     rx: 1.6 + rnd() * 2.0, rz: 1.6 + rnd() * 2.0,
@@ -8518,15 +8524,16 @@ function loadWildlife() {
   for (let k = 0; k < 8; k++)  { const s = vergeSpots(1, 2.0)[0]; if (s) b2.push(flutter(s.x, s.z)); }
   for (let k = 0; k < 4; k++) b1.push(flutter(-140 + (rnd() - 0.5) * 70, 100 + (rnd() - 0.5) * 50));
   for (let k = 0; k < 4; k++) b2.push(flutter(-140 + (rnd() - 0.5) * 70, 100 + (rnd() - 0.5) * 50));
-  spawnWildlife(ASSETS.WL_BUTTERFLY1, b1, { scale: 2.5, clips: ['fly'] });
-  spawnWildlife(ASSETS.WL_BUTTERFLY2, b2, { scale: 2.5, clips: ['fly'] });
+  spawnWildlife(ASSETS.WL_BUTTERFLY1, b1, { scale: 0.082, clips: ['fly'] });
+  spawnWildlife(ASSETS.WL_BUTTERFLY2, b2, { scale: 0.083, clips: ['fly'] });
 
   // bird_fly — two circuits over the avenue, low enough to actually be seen
-  // (unlike the dawn/dusk sphere flock at y~34). Native span 0.3, scaled 3x.
+  // (unlike the dawn/dusk sphere flock at y~34). Renders 86m at scale 1 (same
+  // bone-space-scale story as the butterflies) — 0.0128 makes it a 1.1m bird.
   const birdSpots = [];
   for (let k = 0; k < 4; k++) birdSpots.push({ flier: 'loop', cx: 27, cz: 450,  rx: 120, rz: 120, baseY: 10 + k * 1.2, speed: 0.14 + rnd() * 0.04, phase: (k / 4) * 6.28, x: 27, z: 450, y: 11 });
   for (let k = 0; k < 4; k++) birdSpots.push({ flier: 'loop', cx: 27, cz: 1050, rx: 140, rz: 140, baseY: 12 + k * 1.2, speed: 0.12 + rnd() * 0.04, phase: (k / 4) * 6.28 + 0.8, x: 27, z: 1050, y: 13 });
-  spawnWildlife(ASSETS.WL_BIRD_FLY, birdSpots, { scale: 3 });
+  spawnWildlife(ASSETS.WL_BIRD_FLY, birdSpots, { scale: 0.0128 });
 
   // Eagles — two, soaring wide and high over the middle of the map. 2.2m wingspan
   // native, 1.6x so the silhouette still registers from the ground.
