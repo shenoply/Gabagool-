@@ -715,6 +715,12 @@ const ASSETS = {
   WL_DOE: 'wildlife_doe.glb',
   WL_EAGLE: 'wildlife_eagle.glb',
   WL_CROW: 'wildlife_crow.glb',
+  PLANE: 'plane.glb',
+  NYC_SKYLINE: 'nyc_skyline.glb',
+  AMERICAN_INTERSECTION: 'american_road_intersection.glb',
+  BUS_STATION: 'bus_station.glb',
+  BUS_NAGOYA: 'bus_nagoya.glb',
+  BILLBOARD_PACK: 'billboard_pack.glb',
 };
 
 // Fetch an asset as an ArrayBuffer and hand it to cb — same shape the old
@@ -934,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 15:36';
+  window.__BUILD = '2026-08-31 17:52';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7931,77 +7937,35 @@ function buildRoadSegment(x1, z1, x2, z2) {
 /* Turns the plaza from a dead end into a real multi-way junction, plus a second
    route to the industrial area from the main junction. All L-shaped (two
    straight segments), same paved-strip technique as every other road here. */
-function buildJunctionExpansion() {
-  // Intersection floor - was entirely absent, the roads just crossed with zero
-  // visual distinction ("no intersection floor design"). Crosswalks on all 4
-  // approaches, standard zebra-stripe pattern, at the actual crossing point.
-  (function buildIntersectionFloor() {
-    const cx = ROAD_CX, cz = BRANCH_ROAD_Z;
-    const half = ROAD_HW + 1; // just past the road edges, covers the full crossing box
-    const c = document.createElement('canvas');
-    c.width = c.height = 512;
-    const ctx = c.getContext('2d');
-    ctx.fillStyle = '#2f2f31'; // slightly lighter than the plain road tone - reads as a distinct surface
-    ctx.fillRect(0, 0, 512, 512);
-    ctx.fillStyle = 'rgba(235,235,235,0.75)';
-    const stripeW = 14, gap = 10, inset = 60;
-    // North/south crosswalks (stripes run horizontally, across the avenue)
-    for (let x = inset; x < 512 - inset; x += stripeW + gap) {
-      ctx.fillRect(x, 8, stripeW, 34);
-      ctx.fillRect(x, 512 - 42, stripeW, 34);
-    }
-    // East/west crosswalks (stripes run vertically, across the branch road)
-    for (let y = inset; y < 512 - inset; y += stripeW + gap) {
-      ctx.fillRect(8, y, 34, stripeW);
-      ctx.fillRect(512 - 42, y, 34, stripeW);
-    }
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2), mat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.set(cx, 0.017, cz); // just above the road strip to avoid z-fighting
-    floor.receiveShadow = true;
-    scene.add(floor);
-  })();
+/* True road-crossing point in the model's own local space is (-158,-179.6) -
+   NOT its bounding-box center, which is pulled off-axis by a decorative plaza
+   feature bulging into one quadrant (confirmed via a render pass: multiple
+   full-tile ground meshes all share this exact center, the plaza only adds
+   height not XZ offset). Scale (0.045) matches the paved road band's measured
+   width to this avenue's 20-unit width (ROAD_HW*2) - the tile's excess grass in
+   each quadrant runs wider than that and may overlap existing frontage/trees
+   near this junction; not visually confirmed in-engine. It's a symmetric 4-way
+   cross (both roads read the same width from above) so a rotation mismatch
+   would show as crosswalk stripes running the wrong way, not a width mismatch. */
+function buildAmericanIntersection() {
+  loader.parse(ASSETS.AMERICAN_INTERSECTION, '', (gltf) => {
+    const scale = 0.045;
+    const inner = gltf.scene;
+    inner.scale.setScalar(scale);
+    inner.position.set(158 * scale, 0, 179.6 * scale);
+    inner.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; } });
+    const group = new THREE.Group();
+    group.add(inner);
+    group.position.set(ROAD_CX, 0.02, BRANCH_ROAD_Z); // +0.02 to clear the existing road strip, avoid z-fighting
+    scene.add(group);
+  }, (e) => { console.warn('intersection load failed:', e); });
+}
 
-  // Painted turn arrows at the junction approaches - straight-ahead on both
-  // main-avenue approaches, a turn arrow on the branch-road approach.
-  (function buildTurnArrows() {
-    function arrowTexture(kind) {
-      const c = document.createElement('canvas');
-      c.width = c.height = 128;
-      const ctx = c.getContext('2d');
-      ctx.strokeStyle = 'rgba(230,230,225,0.85)';
-      ctx.fillStyle = 'rgba(230,230,225,0.85)';
-      ctx.lineWidth = 8;
-      ctx.lineCap = 'round';
-      if (kind === 'straight') {
-        ctx.beginPath(); ctx.moveTo(64, 110); ctx.lineTo(64, 24); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(64, 14); ctx.lineTo(44, 40); ctx.lineTo(84, 40); ctx.closePath(); ctx.fill();
-      } else { // right turn
-        ctx.beginPath(); ctx.moveTo(64, 110); ctx.lineTo(64, 64); ctx.quadraticCurveTo(64, 24, 104, 24); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(112, 24); ctx.lineTo(92, 12); ctx.lineTo(92, 36); ctx.closePath(); ctx.fill();
-      }
-      const t = new THREE.CanvasTexture(c);
-      t.colorSpace = THREE.SRGBColorSpace;
-      return t;
-    }
-    const straightMat = new THREE.MeshBasicMaterial({ map: arrowTexture('straight'), transparent: true, depthWrite: false });
-    const turnMat = new THREE.MeshBasicMaterial({ map: arrowTexture('right'), transparent: true, depthWrite: false });
-    // South approach (coming from home, heading toward the junction)
-    const a1 = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), straightMat);
-    a1.rotation.x = -Math.PI / 2; a1.position.set(ROAD_CX, 0.018, BRANCH_ROAD_Z - 16);
-    scene.add(a1);
-    // North approach
-    const a2 = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), straightMat);
-    a2.rotation.x = -Math.PI / 2; a2.rotation.z = Math.PI; a2.position.set(ROAD_CX, 0.018, BRANCH_ROAD_Z + 16);
-    scene.add(a2);
-    // Branch-road approach - turn arrow
-    const a3 = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), turnMat);
-    a3.rotation.x = -Math.PI / 2; a3.rotation.z = -Math.PI / 2; a3.position.set(ROAD_CX + ROAD_HW + 16, 0.018, BRANCH_ROAD_Z);
-    scene.add(a3);
-  })();
+function buildJunctionExpansion() {
+  // Replaced by a real intersection model (uploaded american_road_intersection.glb)
+  // - was two procedural stand-ins (a plain crosswalk floor + painted turn arrows)
+  // that would now double up against the model's own road markings.
+  buildAmericanIntersection();
 
   // Plaza (280,796) south to the court-3/old-school corridor (58,990) — a
   // second exit besides the original road back to the main avenue.
@@ -8595,6 +8559,161 @@ function updateWildlife(dt) {
       if (dx * dx + dz * dz < 40000) f.mixer.update(dt);
     }
   }
+}
+
+/* ================= SKY PLANE =================
+   A single 787 on a slow, high, wide circuit. Fog here is more aggressive at
+   range than it looks from FOG_OUTDOOR alone — CITY_BACKDROP_POS's own comment
+   says it had to be pulled in from ~110 to ~64 units because fog was swallowing
+   it (~52% blend at 110u). Being seen was explicitly the point of this one, so
+   rather than trust distance tuning alone, every material on it has fog turned
+   off outright — it renders at full clarity regardless of how far out the loop
+   carries it. */
+let planeMesh = null;
+const PLANE_ORBIT = { cx: 27, cz: 800, rx: 320, rz: 320, y: 240, speed: 0.018, phase: 0 };
+function loadPlane() {
+  loader.parse(ASSETS.PLANE, '', (gltf) => {
+    const plane = gltf.scene;
+    plane.scale.setScalar(1.47); // measured 42.8m longest -> ~63m, real 787-9 length
+    plane.traverse((m) => {
+      if (m.isMesh) {
+        m.castShadow = false; m.receiveShadow = false;
+        const mats = Array.isArray(m.material) ? m.material : [m.material];
+        for (const mm of mats) if (mm) mm.fog = false;
+      }
+    });
+    scene.add(plane);
+    planeMesh = plane;
+  }, (e) => { console.warn('plane load failed:', e); });
+}
+function updatePlane(dt) {
+  if (!planeMesh) return;
+  PLANE_ORBIT.phase += dt * PLANE_ORBIT.speed;
+  const x = PLANE_ORBIT.cx + Math.cos(PLANE_ORBIT.phase) * PLANE_ORBIT.rx;
+  const z = PLANE_ORBIT.cz + Math.sin(PLANE_ORBIT.phase) * PLANE_ORBIT.rz;
+  planeMesh.position.set(x, PLANE_ORBIT.y, z);
+  // Every other heading in this file assumes forward=+Z at rotation.y=0 (cars,
+  // characters). This model's nose points -Z natively (confirmed by direct
+  // top-down render) so the usual atan2(dx,dz) needs a 180 flip on top.
+  const dx = -Math.sin(PLANE_ORBIT.phase) * PLANE_ORBIT.rx;
+  const dz = Math.cos(PLANE_ORBIT.phase) * PLANE_ORBIT.rz;
+  planeMesh.rotation.y = Math.atan2(dx, dz) + Math.PI;
+}
+
+/* ================= NYC SKYLINE =================
+   The source file is a 19-building showcase row (all at local x~0 spaced along
+   z, or z~0 spaced along x) - not a pre-arranged skyline. 13 are used here: the
+   7 named/recognizable towers (Empire State, One WTC, Chrysler, MetLife,
+   Woolworth, NYT Building, Flatiron) plus 6 generic mid-rises as filler,
+   re-laid-out below into an actual cluster. The 6 unused small background
+   blocks were pruned out of the GLB itself before upload.
+   Scale: real building heights vary too much for one calibration to hold
+   exactly (checked against Empire State AND Flatiron - they don't agree with
+   each other under a single factor, this pack isn't photogrammetry-accurate),
+   so this targets a reasonable ~140m for the tallest (One WTC) rather than
+   chasing per-building real-world precision. Placed east of the avenue near
+   the big junction, framed as a distant skyline - not visually re-confirmed
+   after composing the new layout. */
+const NYC_SKYLINE_POS = { x: 340, z: 850 };
+function loadNYCSkyline() {
+  loader.parse(ASSETS.NYC_SKYLINE, '', (gltf) => {
+    const scale = 26.55; // tower_one_16 native height 5.274 -> ~140m
+    const src = gltf.scene;
+    const layout = [ // [node name, x offset, z offset] - meters, within the cluster
+      ['g3_10',              -70,  8],
+      ['g6_13',               -50, -6],
+      ['emp_state_final_14',  -28, 14],
+      ['woolworth_18',         -8, -4],
+      ['tower_one_16',          0, 10],   // tallest - anchor
+      ['metlife_15',            16, -8],
+      ['christler_17',          28,  6],
+      ['g4_11',                 42, -10],
+      ['new_york_times_19',     52, 12],
+      ['g1_8',                  66, -4],
+      ['flatiron_20',           78,  8],
+      ['g2_9',                  92, -6],
+      ['g5_12',                104,  4],
+    ];
+    const group = new THREE.Group();
+    for (const [name, ox, oz] of layout) {
+      const obj = src.getObjectByName(name);
+      if (!obj) { console.warn('nyc skyline: missing node', name); continue; }
+      const clone = obj.clone(true);
+      clone.scale.setScalar(scale);
+      clone.position.set(ox, 0, oz);
+      clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; } });
+      group.add(clone);
+    }
+    group.position.set(NYC_SKYLINE_POS.x, 0, NYC_SKYLINE_POS.z);
+    group.rotation.y = Math.atan2(-(NYC_SKYLINE_POS.x - ROAD_CX), -(NYC_SKYLINE_POS.z - BRANCH_ROAD_Z)); // face back toward the avenue
+    scene.add(group);
+  }, (e) => { console.warn('nyc skyline load failed:', e); });
+}
+
+/* ================= BUS STOPS =================
+   bus-station.glb is the shelter/platform structure (23x4.5x8.3m, matches a
+   real small transit stop - no scale correction needed). bus_nagoya.glb is the
+   actual vehicle (10.9x3.1x2.9m, already correct real-world bus proportions).
+   Neither model's own forward-facing axis was visually confirmed against the
+   avenue direction - orientation below is a reasonable default, not verified. */
+const BUS_STOPS = [
+  { x: 44, z: 340, side: 1 },
+  { x: 10, z: 660, side: -1 },
+  { x: 44, z: 1020, side: 1 },
+];
+function loadBusStops() {
+  loader.parse(ASSETS.BUS_STATION, '', (gltf) => {
+    for (const s of BUS_STOPS) {
+      const shelter = gltf.scene.clone(true);
+      shelter.rotation.y = Math.PI / 2; // long (23m) axis parallel to the avenue
+      shelter.position.set(s.x, 0, s.z);
+      shelter.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; } });
+      scene.add(shelter);
+    }
+  }, (e) => { console.warn('bus station load failed:', e); });
+  loader.parse(ASSETS.BUS_NAGOYA, '', (gltf) => {
+    for (const s of BUS_STOPS) {
+      const bus = gltf.scene.clone(true);
+      bus.rotation.y = 0; // parked facing +z
+      bus.position.set(s.x - s.side * 3.2, 0, s.z - 6);
+      bus.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; } });
+      scene.add(bus);
+    }
+  }, (e) => { console.warn('bus load failed:', e); });
+}
+
+/* ================= BILLBOARDS =================
+   The pack is 3 distinct billboard structures (different ad art per panel,
+   confirmed via render) laid out as a showcase row, plus one oversized shared
+   ground-plate mesh (Object_5, excluded here) spanning the whole row. All 3
+   share the same authored pedestal height (base sits ~358 native units above
+   their own origin, not at 0 - groundOffset below pulls that back down). Cycles
+   through the 3 variants across placements instead of dropping the whole
+   3-billboard cluster down repeatedly. */
+const BILLBOARD_SPOTS = [
+  { x: 48, z: 260, side: 1 },
+  { x: 6, z: 580, side: -1 },
+  { x: 48, z: 940, side: 1 },
+  { x: 6, z: 1240, side: -1 },
+];
+function loadBillboards() {
+  const scale = 0.0285; // single-billboard native height 333 -> ~9.5m panel+pole
+  const groundOffset = -358.2 * scale;
+  const names = ['Object_2', 'Object_3', 'Object_4'];
+  loader.parse(ASSETS.BILLBOARD_PACK, '', (gltf) => {
+    for (let i = 0; i < BILLBOARD_SPOTS.length; i++) {
+      const s = BILLBOARD_SPOTS[i];
+      const name = names[i % names.length];
+      const src = gltf.scene.getObjectByName(name);
+      if (!src) { console.warn('billboard: missing node', name); continue; }
+      const clone = src.clone(true);
+      clone.scale.setScalar(scale);
+      clone.position.set(s.x, groundOffset, s.z);
+      clone.rotation.y = s.side > 0 ? -Math.PI / 2 : Math.PI / 2;
+      clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; } });
+      scene.add(clone);
+    }
+  }, (e) => { console.warn('billboard load failed:', e); });
 }
 
 /* ================= STREET DETAIL =================
@@ -10093,6 +10212,10 @@ function endLoad(name) {
     setTimeout(buildNewVehiclesAndGolf, 2750);
     setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
     setTimeout(loadWildlife, 3300);           // 12 wildlife species + avenue dumpster clusters — biggest optional batch, lowest priority; the concurrency-1 queue trickles it in behind everything above
+    setTimeout(loadPlane, 3350);              // always-on, not proximity-gated - it's meant to be visible from anywhere
+    setTimeout(loadBusStops, 3450);
+    setTimeout(loadBillboards, 3550);
+    registerProximityLoad(NYC_SKYLINE_POS.x, NYC_SKYLINE_POS.z, 300, loadNYCSkyline); // same far-content treatment as chicago/industrial - may never be visited
     setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
        low-poly next to a photoscanned character reads as a different game, and I
@@ -11300,6 +11423,7 @@ function tick() {
   updateSmoke(dt);
   updateDucks(dt);
   updateWildlife(dt);
+  updatePlane(dt);
   updateVoiceBarks(dt);
   updateAmbientAudio(dt);
   if (mixer) mixer.update(dt);
