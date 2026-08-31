@@ -695,6 +695,23 @@ const ASSETS = {
   GRASS_COLOR: 'grass_color.webp',   // photoscanned ground grass, 1024 — replaces the procedural canvas texture
   GRASS_NORMAL: 'grass_normal.webp', // 512 is plenty for a normal map at this viewing distance
   FOREST_NEAR: 'pine_near.glb', // pine patch, 47,920 verts, ~51 x 46 units — cloned across the map
+  /* Wildlife batch: 12 species, decimated and scaled to real-world metres during
+     processing (verified via gltf-transform before wiring: doe 1.6m, raccoon 0.9m,
+     crow 0.5m, butterflies 0.13m — the tiny ones get code-side scale where placed).
+     All skinned+animated except the cat (0 skins, 0 clips — static poses only) and
+     the chipmunk (node animation, no skin — the mixer drives it the same way). */
+  WL_RACCOON: 'wildlife_raccoon.glb',
+  WL_BLACKRAT: 'wildlife_blackrat.glb',
+  WL_BUTTERFLY1: 'wildlife_butterfly1.glb',
+  WL_BUTTERFLY2: 'wildlife_butterfly2.glb',
+  WL_KINGFISHER: 'wildlife_kingfisher.glb',
+  WL_BIRD_FLY: 'wildlife_bird_fly.glb',
+  WL_CHIPMUNK: 'wildlife_chipmunk.glb',
+  WL_SONGBIRD: 'wildlife_songbird.glb',
+  WL_CAT: 'wildlife_cat.glb',
+  WL_DOE: 'wildlife_doe.glb',
+  WL_EAGLE: 'wildlife_eagle.glb',
+  WL_CROW: 'wildlife_crow.glb',
 };
 
 // Fetch an asset as an ArrayBuffer and hand it to cb — same shape the old
@@ -914,7 +931,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 09:43';
+  window.__BUILD = '2026-08-31 13:01';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -8344,6 +8361,208 @@ function loadStreetNPCs() {
   }, (e) => { console.warn('signal load failed:', e); if (window.__gameNote) window.__gameNote('SIGNALS FAILED: ' + ((e && e.message) || e)); });
 }
 
+/* ================= WILDLIFE =================
+   The 12 wildlife_*.glb files (already decimated and scaled to real-world metres in
+   the repo — verified: doe 1.6m long, raccoon 0.9m, crow 0.5m, butterflies 0.13m)
+   wired in as three tiers:
+     a) scavengers anchored to NEW avenue dumpster clusters — the existing alley
+        dumpsters sit at x=61/-7, set well back; these new pairs go on the frontage
+        line (x=45/9) at junction shoulders, where the tree run thins, so they're
+        actually visible from the road,
+     b) verge/frontage ground species living where the trees already are,
+     c) code-driven fliers (butterflies drift low over the verges, bird_fly runs two
+        circuits over the avenue, eagles soar wide and high).
+   Ground species follow the established street-NPC convention: skinned clips playing
+   in place (same as the existing rats' 'Run'), no pathing. Seeded placement like
+   avenueSpots/plantAvenue so every load is identical. Clip names below were read
+   from the files (gltf-transform), with animations[0] as the fallback so a rename
+   in a future re-export degrades gracefully instead of breaking.
+   Everything here is self-contained: two integration points only (the deferred
+   setTimeout alongside loadStreetNPCs, and updateWildlife(dt) in the tick). */
+let wildlifeMixers = [];   // { mixer, x, z } — same 120-unit distance-cull idea as npcMixers, kept separate so this block owns its own update
+let wildlifeFliers = [];   // butterflies / bird_fly / eagles — position written per-frame in updateWildlife
+
+function spawnWildlife(assetKey, spots, opts = {}) {
+  loader.parse(assetKey, '', (gltf) => {
+    const hasClips = gltf.animations && gltf.animations.length > 0;
+    // resolve candidate clips once per file, pick per instance below
+    let candidates = null;
+    if (hasClips && opts.clips) {
+      candidates = opts.clips.map((n) => THREE.AnimationClip.findByName(gltf.animations, n)).filter(Boolean);
+      if (candidates.length === 0) candidates = null;
+    }
+    for (const pos of spots) {
+      const clone = SkeletonUtils.clone(gltf.scene);   // safe for the unrigged ones too — degrades to a plain hierarchy copy
+      clone.position.set(pos.x, pos.y || 0, pos.z);
+      if (opts.scale) clone.scale.setScalar(opts.scale);
+      if (pos.rotY !== undefined) clone.rotation.y = pos.rotY;
+      clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+      scene.add(clone);
+      if (hasClips) {
+        const mixer = new THREE.AnimationMixer(clone);
+        const clip = candidates ? candidates[Math.floor(Math.random() * candidates.length)] : gltf.animations[0];
+        const action = mixer.clipAction(clip);
+        action.play();
+        action.time = Math.random() * clip.duration;    // desync the copies —
+        action.timeScale = 0.85 + Math.random() * 0.3;  // — and their tempo, so 24 rats don't twitch in unison
+        if (pos.flier) { pos.mixer = mixer; pos.mesh = clone; wildlifeFliers.push(pos); }
+        else wildlifeMixers.push({ mixer, x: pos.x, z: pos.z });
+      } else if (pos.flier) { pos.mesh = clone; wildlifeFliers.push(pos); }
+      // unrigged + grounded (the cat): nothing to update — a sitting cat is allowed to sit still
+    }
+    if (window.__gameNote) window.__gameNote(assetKey + ' loaded OK (' + spots.length + ' placed)');
+  }, (e) => { console.warn('wildlife load failed:', assetKey, e); if (window.__gameNote) window.__gameNote('WILDLIFE FAILED (' + assetKey + '): ' + ((e && e.message) || e)); });
+}
+
+function loadWildlife() {
+  let seed = 60660;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+
+  /* --- new avenue dumpster clusters: the anchor points --- */
+  // Junction shoulders, alternating sides. Trees skip the junction mouths (±9) and
+  // buildings leave them clear too, so z = jz+13 on the frontage line sits in a
+  // natural gap — reads as the alley-corner spot dumpsters actually occupy.
+  const clusters = [180, 356, 532, 708, 884, 1060, 1236, 1412].map((jz, i) => {
+    const side = i % 2 === 0 ? 1 : -1;
+    return { x: side > 0 ? 45 : 9, z: jz + 13, side };
+  });
+  loader.parse(ASSETS.DUMPSTER, '', (gltf) => {
+    for (const c of clusters) {
+      for (let k = 0; k < 2; k++) {   // a pair per cluster, nose-to-tail with a little jog
+        const d = gltf.scene.clone(true);
+        d.position.set(c.x + (rnd() - 0.5) * 1.2, 0, c.z + k * 3.2);
+        d.rotation.y = (c.side > 0 ? -Math.PI / 2 : Math.PI / 2) + (rnd() - 0.5) * 0.3;
+        d.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
+        scene.add(d);
+      }
+    }
+    if (window.__gameNote) window.__gameNote('avenue dumpster clusters loaded OK (' + clusters.length + ' pairs)');
+  }, (e) => { console.warn('avenue dumpsters failed:', e); if (window.__gameNote) window.__gameNote('AVENUE DUMPSTERS FAILED: ' + ((e && e.message) || e)); });
+
+  /* --- tier a: scavengers on the clusters --- */
+  // Raccoon — one nosing each cluster from the road side, plus two at the deep
+  // alley dumpsters that already exist, so the old spots get life too.
+  const raccoonSpots = clusters.map((c) => ({
+    x: c.x - c.side * 2.4, z: c.z + 1.4 + (rnd() - 0.5),
+    rotY: (c.side > 0 ? -Math.PI / 2 : Math.PI / 2) + (rnd() - 0.5) * 0.6,   // nose toward the bins
+  }));
+  raccoonSpots.push({ x: 61, z: 98, rotY: rnd() * 6.28 }, { x: -7, z: 174, rotY: rnd() * 6.28 });
+  spawnWildlife(ASSETS.WL_RACCOON, raccoonSpots, { clips: ['Animation'] });
+
+  // Black rat — three scattered tight around each cluster; mixed idle/walk/run
+  // clips per instance (names read from the file's Mammals set).
+  const ratSpots = [];
+  for (const c of clusters) for (let k = 0; k < 3; k++) {
+    ratSpots.push({ x: c.x + (rnd() - 0.5) * 4.5, z: c.z + 1.5 + (rnd() - 0.5) * 5.5, rotY: rnd() * 6.28 });
+  }
+  spawnWildlife(ASSETS.WL_BLACKRAT, ratSpots, { clips: ['Mammals|idle_A1', 'Mammals|walk_A1', 'Mammals|walk_A2', 'Mammals|run_A1'] });
+
+  // Crow — one on a lid per cluster (dumpster measures 1.8 high), four more on the
+  // ground out by the courts/lots.
+  const crowSpots = clusters.map((c) => ({ x: c.x + (rnd() - 0.5), z: c.z + rnd() * 3, y: 1.82, rotY: rnd() * 6.28 }));
+  for (let k = 0; k < 4; k++) crowSpots.push({ x: 62 + rnd() * 14, z: 260 + k * 170 + rnd() * 40, rotY: rnd() * 6.28 });
+  spawnWildlife(ASSETS.WL_CROW, crowSpots, { clips: ['rig|rigAction', 'rig|Action'] });
+
+  /* --- tier b: verge and frontage ground species --- */
+  // Chipmunk + songbird share the tree-line band (x ≈ 27 ± 13.6, where plantAvenue
+  // puts the trunks), skipping junction mouths the same way the trees do.
+  const vergeSpots = (count, jitter) => {
+    const out = [];
+    let guard = 0;
+    while (out.length < count && guard++ < count * 8) {
+      const z = 55 + rnd() * 1135;
+      if (JUNCTION_Z.some((jz) => Math.abs(jz - z) < 10)) continue;
+      const side = rnd() < 0.5 ? 1 : -1;
+      out.push({ x: ROAD_CX + side * (ROAD_HW + 3.0 + rnd() * jitter), z, rotY: rnd() * 6.28 });
+    }
+    return out;
+  };
+  spawnWildlife(ASSETS.WL_CHIPMUNK, vergeSpots(14, 1.6));
+  const songbirdSpots = vergeSpots(12, 2.2);
+  for (let k = 0; k < 4; k++) songbirdSpots.push({ x: -140 + (rnd() - 0.5) * 70, z: 100 + (rnd() - 0.5) * 55, rotY: rnd() * 6.28 });
+  spawnWildlife(ASSETS.WL_SONGBIRD, songbirdSpots, { clips: ['Take 01'] });
+
+  // Cat — unrigged, static poses (checked: 0 skins, 0 clips — same situation as the
+  // texter). Two by the house stoop, six along the frontage line.
+  const catSpots = [{ x: -2, z: 57, rotY: 2.6 }, { x: 4, z: 55, rotY: -1.9 }];
+  for (let k = 0; k < 6; k++) {
+    const side = k % 2 === 0 ? 1 : -1;
+    catSpots.push({ x: side > 0 ? 46.5 : 7.5, z: 140 + k * 210 + rnd() * 60, rotY: rnd() * 6.28 });
+  }
+  spawnWildlife(ASSETS.WL_CAT, catSpots);
+
+  // Doe — small herd grazing the golf-course fairway (cx -140, cz 100, half-extents
+  // 48×38 — kept 10 in from the edges). Per-instance mix of eating/idle/lying clips.
+  const doeSpots = [];
+  for (let k = 0; k < 5; k++) doeSpots.push({ x: -140 + (rnd() - 0.5) * 76, z: 100 + (rnd() - 0.5) * 56, rotY: rnd() * 6.28 });
+  spawnWildlife(ASSETS.WL_DOE, doeSpots, { clips: ['Stand_Eating_01', 'Stand_Idle_02', 'Stand_Breathing_01', 'Lying_Breathing_01'] });
+
+  // Kingfisher — three at the west edge of the golf course by the perimeter trees,
+  // on perched-idle clips.
+  const kfSpots = [];
+  for (let k = 0; k < 3; k++) kfSpots.push({ x: -168 + rnd() * 10, z: 95 + k * 14 + rnd() * 6, rotY: rnd() * 6.28 });
+  spawnWildlife(ASSETS.WL_KINGFISHER, kfSpots, { clips: ['idleA1_bird', 'idleA2_bird', 'idleB1'] });
+
+  /* --- tier c: fliers --- */
+  // Butterflies — drifting ellipses low over the verges (plus a few on the golf
+  // course), fast flutter bob. Native span is 0.13 so they get 2.5x to read at all.
+  const flutter = (cx, cz) => ({
+    flier: 'flutter', cx, cz,
+    rx: 1.6 + rnd() * 2.0, rz: 1.6 + rnd() * 2.0,
+    baseY: 0.7 + rnd() * 1.1, bobAmp: 0.22 + rnd() * 0.2, bobFreq: 7 + rnd() * 5,
+    speed: 0.5 + rnd() * 0.5, phase: rnd() * 6.28,
+    x: cx, z: cz, y: 1,
+  });
+  const b1 = [], b2 = [];
+  for (let k = 0; k < 10; k++) { const s = vergeSpots(1, 2.0)[0]; if (s) b1.push(flutter(s.x, s.z)); }
+  for (let k = 0; k < 8; k++)  { const s = vergeSpots(1, 2.0)[0]; if (s) b2.push(flutter(s.x, s.z)); }
+  for (let k = 0; k < 4; k++) b1.push(flutter(-140 + (rnd() - 0.5) * 70, 100 + (rnd() - 0.5) * 50));
+  for (let k = 0; k < 4; k++) b2.push(flutter(-140 + (rnd() - 0.5) * 70, 100 + (rnd() - 0.5) * 50));
+  spawnWildlife(ASSETS.WL_BUTTERFLY1, b1, { scale: 2.5, clips: ['fly'] });
+  spawnWildlife(ASSETS.WL_BUTTERFLY2, b2, { scale: 2.5, clips: ['fly'] });
+
+  // bird_fly — two circuits over the avenue, low enough to actually be seen
+  // (unlike the dawn/dusk sphere flock at y~34). Native span 0.3, scaled 3x.
+  const birdSpots = [];
+  for (let k = 0; k < 4; k++) birdSpots.push({ flier: 'loop', cx: 27, cz: 450,  rx: 120, rz: 120, baseY: 10 + k * 1.2, speed: 0.14 + rnd() * 0.04, phase: (k / 4) * 6.28, x: 27, z: 450, y: 11 });
+  for (let k = 0; k < 4; k++) birdSpots.push({ flier: 'loop', cx: 27, cz: 1050, rx: 140, rz: 140, baseY: 12 + k * 1.2, speed: 0.12 + rnd() * 0.04, phase: (k / 4) * 6.28 + 0.8, x: 27, z: 1050, y: 13 });
+  spawnWildlife(ASSETS.WL_BIRD_FLY, birdSpots, { scale: 3 });
+
+  // Eagles — two, soaring wide and high over the middle of the map. 2.2m wingspan
+  // native, 1.6x so the silhouette still registers from the ground.
+  spawnWildlife(ASSETS.WL_EAGLE, [
+    { flier: 'loop', cx: 27, cz: 800, rx: 280, rz: 280, baseY: 52, speed: 0.05, phase: 0,    x: 27, z: 800, y: 52 },
+    { flier: 'loop', cx: 27, cz: 800, rx: 360, rz: 360, baseY: 64, speed: 0.04, phase: 3.14, x: 27, z: 800, y: 64 },
+  ], { scale: 1.6 });
+}
+
+function updateWildlife(dt) {
+  if (wildlifeMixers.length === 0 && wildlifeFliers.length === 0) return;
+  const px = drivingMode ? carState.x : (character ? character.position.x : 0);
+  const pz = drivingMode ? carState.z : (character ? character.position.z : 0);
+  // grounded: same 120-unit skeletal cull as the street NPCs
+  for (const n of wildlifeMixers) {
+    const dx = n.x - px, dz = n.z - pz;
+    if (dx * dx + dz * dz < 14400) n.mixer.update(dt);
+  }
+  for (const f of wildlifeFliers) {
+    if (!f.mesh) continue;
+    f.phase += dt * f.speed;
+    const x = f.cx + Math.cos(f.phase) * f.rx;
+    const z = f.cz + Math.sin(f.phase) * f.rz;
+    const y = f.baseY + (f.bobAmp ? Math.sin(f.phase * f.bobFreq) * f.bobAmp : 0);
+    f.mesh.position.set(x, y, z);
+    // face along the direction of travel (ellipse tangent), +z-forward convention
+    f.mesh.rotation.y = Math.atan2(-Math.sin(f.phase) * f.rx, Math.cos(f.phase) * f.rz);
+    if (f.mixer) {
+      const dx = x - px, dz = z - pz;
+      // fliers get a wider mixer range (200) — a frozen-winged bird overhead is
+      // more noticeable than a frozen rat 130 units up the street
+      if (dx * dx + dz * dz < 40000) f.mixer.update(dt);
+    }
+  }
+}
+
 /* ================= STREET DETAIL =================
    Ten small additions that make the road read as a real one. Everything that repeats
    is an InstancedMesh, so the whole set is roughly a dozen draw calls rather than
@@ -9838,6 +10057,7 @@ function endLoad(name) {
     registerProximityLoad(125, 1150, 300, buildChicagoAndIndustrial);
     setTimeout(buildNewVehiclesAndGolf, 2750);
     setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
+    setTimeout(loadWildlife, 3300);           // 12 wildlife species + avenue dumpster clusters — biggest optional batch, lowest priority; the concurrency-1 queue trickles it in behind everything above
     setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
        low-poly next to a photoscanned character reads as a different game, and I
@@ -11044,6 +11264,7 @@ function tick() {
   }
   updateSmoke(dt);
   updateDucks(dt);
+  updateWildlife(dt);
   updateVoiceBarks(dt);
   updateAmbientAudio(dt);
   if (mixer) mixer.update(dt);
