@@ -934,7 +934,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 14:31';
+  window.__BUILD = '2026-08-31 14:59';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -8445,10 +8445,17 @@ function loadWildlife() {
   /* --- tier a: scavengers on the clusters --- */
   // Raccoon — one nosing each cluster from the road side, plus two at the deep
   // alley dumpsters that already exist, so the old spots get life too.
+  // Confirmed correctly sized and grounded (0.7-0.8m, feet at y=0) — the earlier
+  // report of not spotting one was a placement/luck issue, not a render bug, so this
+  // doubles the count per cluster rather than touching scale.
   const raccoonSpots = clusters.map((c) => ({
     x: c.x - c.side * 2.4, z: c.z + 1.4 + (rnd() - 0.5),
     rotY: (c.side > 0 ? -Math.PI / 2 : Math.PI / 2) + (rnd() - 0.5) * 0.6,   // nose toward the bins
   }));
+  for (const c of clusters) raccoonSpots.push({
+    x: c.x - c.side * 3.6, z: c.z - 1.8 + (rnd() - 0.5),
+    rotY: rnd() * 6.28,
+  });
   raccoonSpots.push({ x: 61, z: 98, rotY: rnd() * 6.28 }, { x: -7, z: 174, rotY: rnd() * 6.28 });
   spawnWildlife(ASSETS.WL_RACCOON, raccoonSpots, { clips: ['Animation'] });
 
@@ -8458,13 +8465,17 @@ function loadWildlife() {
   for (const c of clusters) for (let k = 0; k < 3; k++) {
     ratSpots.push({ x: c.x + (rnd() - 0.5) * 4.5, z: c.z + 1.5 + (rnd() - 0.5) * 5.5, rotY: rnd() * 6.28 });
   }
-  spawnWildlife(ASSETS.WL_BLACKRAT, ratSpots, { scale: 1.8, clips: ['Mammals|idle_A1', 'Mammals|walk_A1', 'Mammals|walk_A2', 'Mammals|run_A1'] }); // measured 0.19m posed — 1.8x to a real 0.35m rat
+  spawnWildlife(ASSETS.WL_BLACKRAT, ratSpots, { scale: 1.18, clips: ['Mammals|idle_A1', 'Mammals|walk_A1', 'Mammals|walk_A2', 'Mammals|run_A1'] }); // re-measured across all 12 clips, densely sampled: ~0.24m typical, not the 0.19m single sample this was first tuned against — 1.18x lands a real ~0.28m rat
 
   // Crow — one on a lid per cluster (dumpster measures 1.8 high), four more on the
   // ground out by the courts/lots.
-  const crowSpots = clusters.map((c) => ({ x: c.x + (rnd() - 0.5), z: c.z + rnd() * 3, y: 1.82, rotY: rnd() * 6.28 }));
-  for (let k = 0; k < 4; k++) crowSpots.push({ x: 62 + rnd() * 14, z: 260 + k * 170 + rnd() * 40, rotY: rnd() * 6.28 });
-  spawnWildlife(ASSETS.WL_CROW, crowSpots, { clips: ['rig|rigAction', 'rig|Action'] });
+  // 'rig|rigAction' measured 5.9m (broken/stray-bone clip in the source file) against
+  // 'rig|Action' at a normal 0.27m — the two are NOT interchangeable despite both
+  // being named animations on the same rig. Only rig|Action is used now. 0.18 is the
+  // measured ground-float at the new scale (1.5x), subtracted so feet actually land.
+  const crowSpots = clusters.map((c) => ({ x: c.x + (rnd() - 0.5), z: c.z + rnd() * 3, y: 1.82 - 0.18, rotY: rnd() * 6.28 }));
+  for (let k = 0; k < 4; k++) crowSpots.push({ x: 62 + rnd() * 14, z: 260 + k * 170 + rnd() * 40, y: -0.18, rotY: rnd() * 6.28 });
+  spawnWildlife(ASSETS.WL_CROW, crowSpots, { scale: 1.5, clips: ['rig|Action'] });
 
   /* --- tier b: verge and frontage ground species --- */
   // Chipmunk + songbird share the tree-line band (x ≈ 27 ± 13.6, where plantAvenue
@@ -8480,17 +8491,17 @@ function loadWildlife() {
     }
     return out;
   };
-  spawnWildlife(ASSETS.WL_CHIPMUNK, vergeSpots(14, 1.6));
+  spawnWildlife(ASSETS.WL_CHIPMUNK, vergeSpots(24, 1.6));
   const songbirdSpots = vergeSpots(12, 2.2);
   for (let k = 0; k < 4; k++) songbirdSpots.push({ x: -140 + (rnd() - 0.5) * 70, z: 100 + (rnd() - 0.5) * 55, rotY: rnd() * 6.28 });
-  spawnWildlife(ASSETS.WL_SONGBIRD, songbirdSpots, { clips: ['Take 01'] });
+  spawnWildlife(ASSETS.WL_SONGBIRD, songbirdSpots, { scale: 0.55, clips: ['Take 01'] }); // was unscaled at ~0.32m raw, ~2x a real songbird
 
   // Cat — unrigged, static poses (checked: 0 skins, 0 clips — same situation as the
   // texter). Two by the house stoop, six along the frontage line.
   const catSpots = [{ x: -2, z: 57, rotY: 2.6 }, { x: 4, z: 55, rotY: -1.9 }];
-  for (let k = 0; k < 6; k++) {
+  for (let k = 0; k < 12; k++) {
     const side = k % 2 === 0 ? 1 : -1;
-    catSpots.push({ x: side > 0 ? 46.5 : 7.5, z: 140 + k * 210 + rnd() * 60, rotY: rnd() * 6.28 });
+    catSpots.push({ x: side > 0 ? 46.5 : 7.5, z: 140 + k * 105 + rnd() * 50, rotY: rnd() * 6.28 });
   }
   spawnWildlife(ASSETS.WL_CAT, catSpots);
 
@@ -8498,7 +8509,7 @@ function loadWildlife() {
   // 48×38 — kept 10 in from the edges). Per-instance mix of eating/idle/lying clips.
   // Renders 216m at scale 1 (bone-space scale in the rig) — 0.0079 → a real 1.7m doe.
   const doeSpots = [];
-  for (let k = 0; k < 5; k++) doeSpots.push({ x: -140 + (rnd() - 0.5) * 76, z: 100 + (rnd() - 0.5) * 56, rotY: rnd() * 6.28 });
+  for (let k = 0; k < 7; k++) doeSpots.push({ x: -140 + (rnd() - 0.5) * 44, z: 100 + (rnd() - 0.5) * 34, rotY: rnd() * 6.28 });
   spawnWildlife(ASSETS.WL_DOE, doeSpots, { scale: 0.0079, clips: ['Stand_Eating_01', 'Stand_Idle_02', 'Stand_Breathing_01', 'Lying_Breathing_01'] });
 
   // Kingfisher — three at the west edge of the golf course by the perimeter trees,
