@@ -914,7 +914,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 03:13';
+  window.__BUILD = '2026-08-31 09:43';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -8234,11 +8234,12 @@ function buildChicagoAndIndustrial() {
    newly vendored in (three@0.160.1's copy, matching the pinned three.module.js
    revision exactly) since nothing here needed it before. */
 let npcMixers = [];
-function spawnAnimatedNPC(assetKey, positions, animName) {
+function spawnAnimatedNPC(assetKey, positions, animName, scale) {
   loader.parse(assetKey, '', (gltf) => {
     for (const pos of positions) {
       const clone = SkeletonUtils.clone(gltf.scene);
       clone.position.set(pos.x, 0, pos.z);
+      if (scale) clone.scale.setScalar(scale);
       if (pos.rotY !== undefined) clone.rotation.y = pos.rotY;
       clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
       scene.add(clone);
@@ -8272,7 +8273,9 @@ function loadStreetNPCs() {
   // Bird — 50 across the avenue (was 10). Each file instance already bundles 5
   // skins/birds, so 50 placements reads as a genuinely dense flock along the
   // route, not 50 lone birds.
-  spawnAnimatedNPC(ASSETS.STREET_BIRD, avenueSpots(50, 11001));
+  // Bird - scaled 3x (native 0.39x0.25x0.20 was genuinely too small to notice
+  // at normal viewing distance, "never seen it" wasn't a bug, just true).
+  spawnAnimatedNPC(ASSETS.STREET_BIRD, avenueSpots(50, 11001), undefined, 3);
   // Rat — 30 across the avenue (was 8). "Run" is the only clip in the file; it
   // plays as an in-place loop rather than a path.
   spawnAnimatedNPC(ASSETS.STREET_RAT, avenueSpots(30, 22002), 'Run');
