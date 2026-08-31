@@ -934,7 +934,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 14:59';
+  window.__BUILD = '2026-08-31 15:36';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1826,15 +1826,19 @@ updateCamera();
    logic and a fly-camera is a different model (camera itself moves), so branching
    at the top avoids fighting the existing math. Reuses camYaw/camPitch (the same
    state the touch-drag look already writes to) so look controls behave the same
-   in both modes, and reuses joyVec for movement so the existing joystick doubles
-   as fly controls without a new input scheme. State (freeCamMode/freeCamPos/
-   freeCamRise) is declared up above updateCamera — see the note there. */
+   in both modes. Movement was joyVec-only at first, which nothing on desktop
+   ever writes to outside of dragging the joystick with a mouse — so the button
+   existed and worked, but there was no keyboard way to actually fly anywhere.
+   stepFreeCam now branches on anyMoveKey() first, same as the driving code's
+   keyManual/joyManual split, so WASD/arrows fly it and the joystick still works
+   as a fallback. State (freeCamMode/freeCamPos/freeCamRise) is declared up above
+   updateCamera — see the note there. */
 function toggleFreeCam() {
   freeCamMode = !freeCamMode;
   const btn = document.getElementById('freecam-btn');
   if (btn) btn.style.background = freeCamMode ? 'var(--accent)' : '';
   if (freeCamMode) freeCamPos.copy(camera.position);
-  if (window.__gameNote) window.__gameNote('free camera ' + (freeCamMode ? 'ON — joystick flies, zoom +/- go up/down' : 'OFF'));
+  if (window.__gameNote) window.__gameNote('free camera ' + (freeCamMode ? 'ON — WASD/arrows or joystick to fly, zoom +/- for up/down' : 'OFF'));
 }
 const _freeCamFwd = new THREE.Vector3(), _freeCamRight = new THREE.Vector3(), _freeCamLook = new THREE.Vector3();
 const _freeCamVel = new THREE.Vector3();
@@ -1847,9 +1851,21 @@ function stepFreeCam(dt) {
   const speed = 55;
   _freeCamFwd.set(Math.sin(camYaw), 0, Math.cos(camYaw));
   _freeCamRight.set(Math.cos(camYaw), 0, -Math.sin(camYaw));
+  // keyManual/joyManual split, same as the driving code above — WASD/arrows win
+  // when held, joystick otherwise. Without this branch flying was joyVec-only,
+  // which is never written to by keyboard input.
+  let flyX = 0, flyY = 0;
+  if (anyMoveKey()) {
+    if (move.up) flyY += 1;
+    if (move.down) flyY -= 1;
+    if (move.right) flyX += 1;
+    if (move.left) flyX -= 1;
+  } else {
+    flyX = joyVec.x; flyY = joyVec.y;
+  }
   const targetVel = new THREE.Vector3()
-    .addScaledVector(_freeCamFwd, joyVec.y * speed)
-    .addScaledVector(_freeCamRight, joyVec.x * speed);
+    .addScaledVector(_freeCamFwd, flyY * speed)
+    .addScaledVector(_freeCamRight, flyX * speed);
   targetVel.y = freeCamRise * speed * 0.7;
   const ease = 1 - Math.pow(0.001, dt);   // frame-rate independent smoothing
   _freeCamVel.lerp(targetVel, ease);
@@ -9268,6 +9284,7 @@ const DESKTOP_KEYS = {
   'p':      () => { phoneOpen ? closePhone() : openPhone(); },
   'c':      () => togglePhotoMode(),
   'g':      () => toggleCigar(),
+  'q':      () => { const b = document.getElementById('freecam-btn'); if (b) b.click(); }, // the button existed but had no keyboard route in — same click-dispatch pattern as 'e'/'h' above
   'escape': () => { if (phoneOpen) closePhone(); },
 };
 
