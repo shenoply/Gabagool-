@@ -914,7 +914,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 01:04';
+  window.__BUILD = '2026-08-31 03:13';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -6948,6 +6948,63 @@ function buildRoadFurniture() {
     m.makeTranslation(poleX, 9.7, z); arms.setMatrixAt(i, m);
   });
   poles.castShadow = false; arms.castShadow = false;
+
+  // Storm drains - simple dark grates along the curb line, regular intervals.
+  {
+    const drainMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1c, roughness: 0.7, metalness: 0.3 });
+    const drainZs = [];
+    for (let z = Z0 + 20; z < Z1; z += 84) drainZs.push(z);
+    for (const side of [1, -1]) {
+      for (const z of drainZs) {
+        const drain = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 0.7), drainMat);
+        drain.rotation.x = -Math.PI / 2;
+        drain.position.set(ROAD_CX + side * (ROAD_HW - 0.5), 0.016, z);
+        drain.receiveShadow = true;
+        roadFurniture.add(drain);
+      }
+    }
+  }
+
+  // Curbs - a distinct lighter strip along both road edges, not the same
+  // asphalt tone running straight into the sidewalk. Slightly raised so it
+  // reads as an actual curb, not just a paint line.
+  {
+    const curbMat = new THREE.MeshStandardMaterial({ color: 0xa8a8a0, roughness: 0.85 });
+    const curbLen = Z1 - Z0;
+    for (const side of [1, -1]) {
+      const curb = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.16, curbLen), curbMat);
+      curb.position.set(ROAD_CX + side * (ROAD_HW + 0.18), 0.08, Z0 + curbLen / 2);
+      curb.receiveShadow = true;
+      roadFurniture.add(curb);
+    }
+  }
+
+  // Streetlight ground glow - a soft pool of light under each lamp, reusing
+  // the exact same pole positions already computed above. Cheap: one shared
+  // canvas texture, one InstancedMesh, no new assets to load.
+  {
+    const gc = document.createElement('canvas');
+    gc.width = gc.height = 128;
+    const gctx = gc.getContext('2d');
+    const grad = gctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,214,140,0.45)');
+    grad.addColorStop(1, 'rgba(255,214,140,0)');
+    gctx.fillStyle = grad;
+    gctx.fillRect(0, 0, 128, 128);
+    const glowTex = new THREE.CanvasTexture(gc);
+    const glowMat = new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, depthWrite: false });
+    const glowGeo = new THREE.PlaneGeometry(7, 7);
+    const glows = new THREE.InstancedMesh(glowGeo, glowMat, poleZs.length);
+    const gm = new THREE.Matrix4();
+    const rot = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+    poleZs.forEach((z, i) => {
+      gm.makeTranslation(poleX, 0.02, z);
+      gm.multiply(rot);
+      glows.setMatrixAt(i, gm);
+    });
+    glows.castShadow = false; glows.receiveShadow = false;
+    roadFurniture.add(glows);
+  }
   roadFurniture.add(poles, arms);
 
   // sagging wires — a catenary dip is what makes it read as a power line
@@ -7870,6 +7927,44 @@ function buildJunctionExpansion() {
     floor.position.set(cx, 0.017, cz); // just above the road strip to avoid z-fighting
     floor.receiveShadow = true;
     scene.add(floor);
+  })();
+
+  // Painted turn arrows at the junction approaches - straight-ahead on both
+  // main-avenue approaches, a turn arrow on the branch-road approach.
+  (function buildTurnArrows() {
+    function arrowTexture(kind) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 128;
+      const ctx = c.getContext('2d');
+      ctx.strokeStyle = 'rgba(230,230,225,0.85)';
+      ctx.fillStyle = 'rgba(230,230,225,0.85)';
+      ctx.lineWidth = 8;
+      ctx.lineCap = 'round';
+      if (kind === 'straight') {
+        ctx.beginPath(); ctx.moveTo(64, 110); ctx.lineTo(64, 24); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(64, 14); ctx.lineTo(44, 40); ctx.lineTo(84, 40); ctx.closePath(); ctx.fill();
+      } else { // right turn
+        ctx.beginPath(); ctx.moveTo(64, 110); ctx.lineTo(64, 64); ctx.quadraticCurveTo(64, 24, 104, 24); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(112, 24); ctx.lineTo(92, 12); ctx.lineTo(92, 36); ctx.closePath(); ctx.fill();
+      }
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    }
+    const straightMat = new THREE.MeshBasicMaterial({ map: arrowTexture('straight'), transparent: true, depthWrite: false });
+    const turnMat = new THREE.MeshBasicMaterial({ map: arrowTexture('right'), transparent: true, depthWrite: false });
+    // South approach (coming from home, heading toward the junction)
+    const a1 = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), straightMat);
+    a1.rotation.x = -Math.PI / 2; a1.position.set(ROAD_CX, 0.018, BRANCH_ROAD_Z - 16);
+    scene.add(a1);
+    // North approach
+    const a2 = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), straightMat);
+    a2.rotation.x = -Math.PI / 2; a2.rotation.z = Math.PI; a2.position.set(ROAD_CX, 0.018, BRANCH_ROAD_Z + 16);
+    scene.add(a2);
+    // Branch-road approach - turn arrow
+    const a3 = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), turnMat);
+    a3.rotation.x = -Math.PI / 2; a3.rotation.z = -Math.PI / 2; a3.position.set(ROAD_CX + ROAD_HW + 16, 0.018, BRANCH_ROAD_Z);
+    scene.add(a3);
   })();
 
   // Plaza (280,796) south to the court-3/old-school corridor (58,990) — a
