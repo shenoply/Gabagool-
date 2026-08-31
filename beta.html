@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 20:32';
+  window.__BUILD = '2026-08-31 21:02';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -10444,7 +10444,14 @@ loader.parse(buffer, '', (gltf) => {
   camDistMin = fitDist * 0.7;
   camDistMax = fitDist * 3.5;
   camera.near = Math.max(0.02, sphere.radius * 0.02);
-  camera.far = Math.max(100, sphere.radius * 40);
+  // Was Math.max(100, sphere.radius*40) using the CHARACTER's own bounding
+  // sphere - for a 1.75m character that's exactly 100, and this is the ONLY
+  // place camera.far is ever set in the whole file, so the real draw distance
+  // has been a hard 100-unit clip this whole time regardless of fog. Never
+  // mattered before because everything else stays low/close enough that fog
+  // fades it out around the same range - the plane (220 altitude) and the NYC
+  // skyline (towers up to ~140m) are the first things to actually exceed it.
+  camera.far = 4000;
   camera.updateProjectionMatrix();
 
   // House model confirmed working — restoring the call.
