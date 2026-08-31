@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 21:02';
+  window.__BUILD = '2026-08-31 21:40';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1787,6 +1787,10 @@ let camPullIn = 0; // eased distance reduction, so it doesn't snap
 let freeCamMode = false;
 const freeCamPos = new THREE.Vector3();
 let freeCamRise = 0; // -1 falling, 0 still, 1 rising — driven by the zoom +/- buttons while active
+// World-pause: freezes traffic/NPCs/day-night/animations while free-camming so
+// exploring or lining up a screenshot doesn't fight a world that keeps moving.
+// Camera/render/free-cam movement itself are NOT gated by this - see tick().
+let worldPaused = false;
 
 function updateCamera(dt) {
   if (freeCamMode) { stepFreeCam(dt || 0.016); return; }
@@ -1855,7 +1859,16 @@ function stepFreeCam(dt) {
   // map is a lot bigger now (multiple 1500-unit roads), 26 units/sec made
   // crossing it tedious.
   const speed = 55;
-  _freeCamFwd.set(Math.sin(camYaw), 0, Math.cos(camYaw));
+  // Was Math.sin(camYaw)/Math.cos(camYaw) directly - that's the ORBIT camera's
+  // convention for the vector from target TO camera (see updateCamera above:
+  // x = camTarget.x + dist*sin(camYaw)...), and the orbit camera then looks
+  // BACK at the target, so its actual view direction is the NEGATIVE of that.
+  // Free-cam reused camYaw the same way but treated it as the view direction
+  // directly, so "forward" was pointing the way the camera's rear faces -
+  // W/up flew backward relative to what you were looking at. Right was
+  // (independently, correctly) derived via forward-cross-up, so only fwd needed
+  // negating.
+  _freeCamFwd.set(-Math.sin(camYaw), 0, -Math.cos(camYaw));
   _freeCamRight.set(Math.cos(camYaw), 0, -Math.sin(camYaw));
   // keyManual/joyManual split, same as the driving code above — WASD/arrows win
   // when held, joystick otherwise. Without this branch flying was joyVec-only,
@@ -8021,12 +8034,19 @@ function buildNewVehiclesAndGolf() {
   // KFC1, court 1, old school area, and 2 more spread along the main avenue -
   // all on the main road corridor now, not scattered to a branch road.
   loader.parse(ASSETS.TAXI_CAR, '', (gltf) => {
+    // rotY was -90deg on all 5, assuming the model needed correcting like most
+    // vehicles here - measured directly (rotation sweep, minimizing world-space
+    // X-width): the raw model is ALREADY aligned long-axis-on-Z at rotation 0,
+    // real ~3.5m x 6.5m footprint confirmed. The -90 was taking an already-correct
+    // car and rotating it 90deg into the wrong orientation. x moved onto the same
+    // sidewalk-edge line used everywhere else (was 48/42, off in the frontage
+    // past where buildings sit).
     const spots = [
-      { x: 48, z: 165, rotY: -Math.PI / 2 },   // KFC1
-      { x: 42, z: 230, rotY: -Math.PI / 2 },   // court 1
-      { x: 48, z: 470, rotY: -Math.PI / 2 },   // mid-avenue
-      { x: 48, z: 850, rotY: -Math.PI / 2 },   // mid-avenue, further down
-      { x: 48, z: 1085, rotY: -Math.PI / 2 },  // old school area
+      { x: 38.5, z: 165, rotY: 0 },   // KFC1
+      { x: 38.5, z: 230, rotY: 0 },   // court 1
+      { x: 38.5, z: 470, rotY: 0 },   // mid-avenue
+      { x: 38.5, z: 850, rotY: 0 },   // mid-avenue, further down
+      { x: 38.5, z: 1085, rotY: 0 },  // old school area
     ];
     let placed = 0;
     const signMat = new THREE.MeshStandardMaterial({ color: 0xf5c518, roughness: 0.6 });
@@ -8043,7 +8063,10 @@ function buildNewVehiclesAndGolf() {
       pole.position.y = 1.05; sign.add(pole);
       const board = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 0.04), signMat);
       board.position.y = 2.05; sign.add(board);
-      sign.position.set(s.x + (s.rotY < 0 ? 2.2 : -2.2), 0, s.z - 2);
+      // Stand sign, offset into the frontage (away from the road) - was keyed
+      // off rotY's sign to decide which side, dead logic now that all 5 spots
+      // share the same rotY=0 and the same road side.
+      sign.position.set(s.x + 2.2, 0, s.z - 2);
       scene.add(sign);
       placed++;
     }
@@ -8579,6 +8602,10 @@ const PLANE_ORBIT = { cx: 27, cz: 800, rx: 180, rz: 750, y: 220, speed: 0.02, ph
 function loadPlane() {
   loader.parse(ASSETS.PLANE, '', (gltf) => {
     const plane = gltf.scene;
+    const panel = plane.getObjectByName('Plane'); // a flat 10-tri display panel
+    // beneath the model - confirmed via gltf-transform inspection, a leftover
+    // Sketchfab-viewer ground plate, not part of the actual aircraft.
+    if (panel && panel.parent) panel.parent.remove(panel);
     plane.scale.setScalar(1.47); // measured 42.8m longest -> ~63m, real 787-9 length
     plane.traverse((m) => {
       if (m.isMesh) {
@@ -8661,10 +8688,10 @@ function loadNYCSkyline() {
    actual vehicle (10.9x3.1x2.9m, already correct real-world bus proportions).
    Neither model's own forward-facing axis was visually confirmed against the
    avenue direction - orientation below is a reasonable default, not verified. */
-const BUS_STOPS = [
-  { x: 44, z: 340, side: 1 },
-  { x: 10, z: 660, side: -1 },
-  { x: 44, z: 1020, side: 1 },
+const BUS_STOPS = [ // x matches the game's own established sidewalk-edge line (see avenueSpots)
+  { x: 38.5, z: 340, side: 1 },
+  { x: 15.5, z: 660, side: -1 },
+  { x: 38.5, z: 1020, side: 1 },
 ];
 function loadBusStops() {
   loader.parse(ASSETS.BUS_STATION, '', (gltf) => {
@@ -8684,7 +8711,7 @@ function loadBusStops() {
       // unrotated it rendered broadside across the road. 90 deg swings the long
       // axis onto Z, parallel to the avenue, matching the shelter's own rotation.
       bus.rotation.y = Math.PI / 2;
-      bus.position.set(s.x - s.side * 3.2, 0, s.z - 6);
+      bus.position.set(s.x - s.side * 1.6, 0, s.z - 6); // tucked right against the shelter, both now on the sidewalk-edge line
       bus.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; } });
       scene.add(bus);
     }
@@ -9422,6 +9449,7 @@ const DESKTOP_KEYS = {
   'c':      () => togglePhotoMode(),
   'g':      () => toggleCigar(),
   'q':      () => { const b = document.getElementById('freecam-btn'); if (b) b.click(); }, // the button existed but had no keyboard route in — same click-dispatch pattern as 'e'/'h' above
+  'z':      () => { worldPaused = !worldPaused; if (window.__gameNote) window.__gameNote('world ' + (worldPaused ? 'PAUSED — traffic/NPCs/day-night frozen, camera still free' : 'RUNNING')); },
   'escape': () => { if (phoneOpen) closePhone(); },
 };
 
@@ -11353,6 +11381,11 @@ function tick() {
   if (renderPaused) return; // rAF is already throttled when hidden, but this skips the work too
   const dt = Math.min(clock.getDelta(), 0.05);
   updatePerf(dt);
+  // World-pause ('z') gates everything below except perf tracking - camera
+  // update and the render call itself stay outside this, at the closing brace
+  // near updateCamera(dt), so free-cam keeps moving and the screen keeps
+  // rendering while the world itself is frozen.
+  if (!worldPaused) {
   updateDayNight(dt);
   updateSkids(dt);
   updateTallGrass(clock.elapsedTime);
@@ -11465,6 +11498,7 @@ function tick() {
       if (dx * dx + dz * dz < 14400) n.mixer.update(dt);   // 120*120
     }
   }
+  } // close world-pause gate — camera update/render below always run so free-cam keeps working while paused
   updateCamera(dt);
   updatePovCamera(); // overrides the orbit camera while in first person
   if (character && !drivingMode) {
