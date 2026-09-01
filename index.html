@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 17:50';
+  window.__BUILD = '2026-09-01 17:58';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -2025,7 +2025,7 @@ scene.add(hemi);
 const key = new THREE.DirectionalLight(0xffc487, 2.7); // brighter, slightly less orange-saturated
 key.position.set(9, 5.5, 6);
 key.castShadow = true;
-key.shadow.mapSize.set(2048, 2048);
+key.shadow.mapSize.set(1024, 1024); // was 2048 - desktop-tier resolution, a real distinct cost from draw distance since this renders every frame regardless of scene distance
 // Widened to match the actual yard size (worldBound ~22) — the old ±6 frustum
 // only covered a small patch near the origin, leaving much of the house and
 // yard with no real shadow detail at all, which read as flat/muddy.
