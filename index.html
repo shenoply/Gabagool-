@@ -685,8 +685,8 @@ const ASSETS = {
   STREET_BIRD: 'street_bird.glb',
   STREET_RAT: 'street_rat.glb',
   STREET_PUPPY: 'street_puppy.glb',
-  STREET_TEXTER: 'street_texter.glb',
-  VEHICLE_LOT_DISPLAY: 'vehicle_lot_display.glb',
+  STREET_TEXTER: 'street_texter_lo.glb', // was 17,528 tris for a static frozen-pose prop - decimated to 3,944 (77% cut), visually confirmed identical before shipping
+  VEHICLE_LOT_DISPLAY: 'vehicle_lot_display_lo.glb', // 17,073 -> ~11K tris, a multi-car compound scene so less aggressive reduction than the single-mesh assets
   PEDESTRIAN_SIGNAL: 'pedestrian_signal.glb',
   PORK_STORE_LOD: 'pork_store_lod.glb',
   BARBER_SHOP_LOD: 'barber_shop_lod.glb',
@@ -711,7 +711,7 @@ const ASSETS = {
   WL_BIRD_FLY: 'wildlife_bird_fly.glb',
   WL_CHIPMUNK: 'wildlife_chipmunk.glb',
   WL_SONGBIRD: 'wildlife_songbird.glb',
-  WL_CAT: 'wildlife_cat.glb',
+  WL_CAT: 'wildlife_cat_lo.glb', // was 38,958 tris for a static unrigged sitting cat - the single biggest per-instance offender found this pass. Decimated to 3,116 (92% cut), visually confirmed identical before shipping. x14 instances = ~500K triangles saved
   WL_DOE: 'wildlife_doe.glb',
   WL_EAGLE: 'wildlife_eagle.glb',
   WL_CROW: 'wildlife_crow.glb',
@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 10:19';
+  window.__BUILD = '2026-09-01 10:26';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
