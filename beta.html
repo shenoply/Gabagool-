@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-08-31 21:40';
+  window.__BUILD = '2026-09-01 00:09';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -10213,6 +10213,10 @@ function endLoad(name) {
   if (pendingLoads === 0) {
     allLoaded = true;
     maybeFinishLoading();
+    // Boss call countdown now starts here instead of at tap - see the comment
+    // in the tap handler above. 30s from an actually-playable state, not from
+    // whenever the player happened to tap.
+    scheduleNextPhoneRing(30);
     // Scenery starts downloading only once the game is actually playable, so it
     // never competes with the critical assets or delays the start screen.
     // Staggered rather than simultaneous: firing every secondary request at once is
@@ -10222,24 +10226,31 @@ function endLoad(name) {
     // actually play, instead of popping in seconds later.
     applyGroundGrassTexture();
     loadForest();
-    setTimeout(() => { try { buildTallGrass(); } catch (e) { console.warn('tall grass failed:', e); } }, 5200);
-    setTimeout(() => { try { buildDust(); buildRain(); buildPuddles(); } catch (e) { console.warn('weather failed:', e); } }, 6200);
-    setTimeout(() => { try { buildFireflies(); buildLeaves(); buildCelestialBodies(); } catch (e) { console.warn('ambient particles failed:', e); } }, 7200);
-    setTimeout(loadInterior, 9000); // last in the queue — biggest file, least urgent
-    buildRoadFurniture(); // procedural, no download
+    setTimeout(() => { try { buildTallGrass(); } catch (e) { console.warn('tall grass failed:', e); } }, 5600);
+    setTimeout(() => { try { buildDust(); buildRain(); buildPuddles(); } catch (e) { console.warn('weather failed:', e); } }, 6600);
+    setTimeout(() => { try { buildFireflies(); buildLeaves(); buildCelestialBodies(); } catch (e) { console.warn('ambient particles failed:', e); } }, 7600);
+    setTimeout(loadInterior, 9500); // last in the queue — biggest file, least urgent
+    // The 9 calls below used to all fire in this same synchronous tick - the
+    // actual stutter right as the loading screen closes and you get control.
+    // Spread a frame or two apart instead (16-96ms) rather than pushed seconds
+    // out: still done well under a tenth of a second, so nothing pops in while
+    // you're already moving (that was the reason buildings/streets went
+    // synchronous in the first place - see the old comment below), but the
+    // browser gets a paint between each instead of one long blocking frame.
+    setupDesktop();
+    setTimeout(() => { buildRoadFurniture(); }, 16); // procedural, no download
     /* Buildings used to arrive 11s in, so the world assembled itself around you
        while you were already driving. They now start immediately, before the
        deferred scenery, so the street is standing by the time you move. */
-    loadMeshyBuildings();
-    buildCrossStreets();  // geometry only, no reason to defer
-    buildStreetDetail();
-    setupDesktop();
-    buildJunctionMarkings();
-    buildSideRoadBarriers();
-    setTimeout(buildParkedCars, 2500);    // needs traffic meshes to exist first
-    setTimeout(buildRecreationAreas, 2600);   // court + lots; lot cars use the same traffic meshes if ready
-    setTimeout(buildBranchRoad, 2650);
-    setTimeout(buildBranchRoad2, 2670);
+    setTimeout(() => { loadMeshyBuildings(); }, 32);
+    setTimeout(() => { buildCrossStreets(); }, 48);  // geometry only, no reason to defer
+    setTimeout(() => { buildStreetDetail(); }, 64);
+    setTimeout(() => { buildJunctionMarkings(); }, 80);
+    setTimeout(() => { buildSideRoadBarriers(); }, 96);
+    setTimeout(buildParkedCars, 2600);    // needs traffic meshes to exist first
+    setTimeout(buildRecreationAreas, 2900);   // court + lots; lot cars use the same traffic meshes if ready
+    setTimeout(buildBranchRoad, 3100);
+    setTimeout(buildBranchRoad2, 3300);
     // Real bug fix: trafficCars was only ever populated inside enterDriveMode(),
     // so anyone on foot when buildCrossTraffic/buildRoadPatrols ran (2690-3000ms
     // after load) got permanently zero traffic - both are one-shot and never
@@ -10247,7 +10258,7 @@ function endLoad(name) {
     // loadTrafficPack guards against double-loading, so this is a no-op if the
     // player has already entered a car by this point.
     setTimeout(() => { loadTrafficPack(() => { if (trafficCars.length === 0) spawnTrafficCars(); }); }, 1800);
-    setTimeout(buildRoadPatrols, 2690);   // needs trafficCars, same reason buildParkedCars is deferred
+    setTimeout(buildRoadPatrols, 3500);   // needs trafficCars, same reason buildParkedCars is deferred
     // Proximity-gated instead of fixed-timer — these are the farthest content
     // from spawn (junction z~796, chicago/industrial z~1150-1580) and might never
     // be visited in a given session. No reason to force the fetch/build cost on
@@ -10255,14 +10266,14 @@ function endLoad(name) {
     registerProximityLoad(27, 796, 260, buildJunctionExpansion);
     registerProximityLoad(-160, 700, 260, buildPerimeterTrees);
     registerProximityLoad(125, 1150, 300, buildChicagoAndIndustrial);
-    setTimeout(buildNewVehiclesAndGolf, 2750);
-    setTimeout(loadStreetNPCs, 2700);         // bird/rat/puppy/texter/vehicle display/signals
-    setTimeout(loadWildlife, 3300);           // 12 wildlife species + avenue dumpster clusters — biggest optional batch, lowest priority; the concurrency-1 queue trickles it in behind everything above
-    setTimeout(loadPlane, 3350);              // always-on, not proximity-gated - it's meant to be visible from anywhere
-    setTimeout(loadBusStops, 3450);
-    setTimeout(loadBillboards, 3550);
+    setTimeout(buildNewVehiclesAndGolf, 3900);
+    setTimeout(loadStreetNPCs, 3700);         // bird/rat/puppy/texter/vehicle display/signals
+    setTimeout(loadWildlife, 4600);           // 12 wildlife species + avenue dumpster clusters — biggest optional batch, lowest priority; the concurrency-1 queue trickles it in behind everything above
+    setTimeout(loadPlane, 4750);              // always-on, not proximity-gated - it's meant to be visible from anywhere
+    setTimeout(loadBusStops, 4900);
+    setTimeout(loadBillboards, 5050);
     registerProximityLoad(NYC_SKYLINE_POS.x, NYC_SKYLINE_POS.z, 300, loadNYCSkyline); // same far-content treatment as chicago/industrial - may never be visited
-    setTimeout(buildCrossTraffic, 3000);  // same // ~14MB of scenery, lowest priority — safe to build early
+    setTimeout(buildCrossTraffic, 4200);  // same // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
        low-poly next to a photoscanned character reads as a different game, and I
        made it worse by putting it 20 units from the road at 7.5x scale. Kept the
@@ -10322,7 +10333,12 @@ function maybeFinishLoading() {
 tapToPlayBtn.addEventListener('click', () => {
   if (hasTappedStart) return;
   hasTappedStart = true;
-  scheduleNextPhoneRing(30); // first call: the Boss, 30s in
+  // scheduleNextPhoneRing(30) used to fire right here, at tap - meaning the
+  // countdown to the first call ran during asset loading itself, regardless of
+  // how long that took. On a slow connection the Boss could ring while the
+  // world was still assembling. Moved to fire only once allLoaded is true (see
+  // the pendingLoads===0 block below) - the game has to actually be playable
+  // before anything starts trying to get your attention.
   tapToPlayBtn.style.display = 'none';
   loadingSpinner.style.display = '';
   loadingLabel.style.display = '';
