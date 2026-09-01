@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 00:25';
+  window.__BUILD = '2026-09-01 00:30';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7572,6 +7572,7 @@ function buildParkedCars() {
     c.rotation.y = (side > 0 ? 0 : Math.PI) + (rnd() - 0.5) * 0.06;
     c.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
     parkedCars.add(c);
+    registerFarCull(c);
   }
   scene.add(parkedCars);
   if (window.__gameNote) window.__gameNote('parked cars: ' + parkedCars.children.length);
@@ -7647,6 +7648,7 @@ function buildRecreationAreas() {
       court.position.set(cpos.x, 0, cpos.z);
       court.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
       scene.add(court);
+      registerFarCull(court);
     }
     if (window.__gameNote) window.__gameNote('street court loaded OK, ' + courts.length + ' placed');
   }, (e) => { console.warn('street court load failed:', e); if (window.__gameNote) window.__gameNote('COURT FAILED: ' + ((e && e.message) || e)); });
@@ -7682,6 +7684,7 @@ function buildRecreationAreas() {
         c.rotation.y = Math.PI / 2 + (rnd() - 0.5) * 0.05;
         c.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
         scene.add(c);
+        registerFarCull(c);
       }
     }
   }
@@ -7738,6 +7741,7 @@ function buildRecreationAreas() {
     yard.position.set(110, 0, 1500);
     yard.rotation.y = -Math.PI / 2;
     yard.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true; } });
+    registerFarCull(yard);
     scene.add(yard);
     if (window.__gameNote) window.__gameNote('junkyard loaded OK');
   }, (e) => { console.warn('junkyard load failed:', e); if (window.__gameNote) window.__gameNote('JUNKYARD FAILED: ' + ((e && e.message) || e)); });
