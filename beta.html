@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 13:40';
+  window.__BUILD = '2026-09-01 15:20';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1165,7 +1165,13 @@ function updateDayNight(dt) {
 // shorter absolute range. That's what keeps this from reading as things
 // spawning in front of you: the transition is buried in haze that was already
 // there, not a new hard edge.
-const FOG_OUTDOOR = 0.0062, FOG_INDOOR = 0.05;
+// Second, larger tightening: the first pass (0.0035->0.0062) barely moved fps
+// because near the AVENUE ENTRANCE (where testing actually happened, z~-5 to
+// 27) the content starts at z=40-180 and was ALL still within the 380-unit
+// cull regardless - that cutoff only helps someone in the MIDDLE of the
+// avenue looking both ways, not someone at the start. This is a real cut into
+// near-field density, not just the far margin.
+const FOG_OUTDOOR = 0.0107, FOG_INDOOR = 0.05;
 scene.fog = new THREE.FogExp2(0xc9784a, FOG_OUTDOOR); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
 /* ---------- Image-based lighting ----------
@@ -8737,7 +8743,7 @@ function updateWildlife(dt) {
    static building/tree/prop was recomposing position/quaternion/scale into a
    matrix every single frame for nothing. Frozen once, valid forever. */
 const farCullList = [];
-const FAR_CULL_DIST = 380; // matched to the new, denser fog (0.0062) - ~0.9% visibility at 350, this gives a small margin beyond that rather than sitting exactly on it
+const FAR_CULL_DIST = 220; // matched to the new fog - ~1% visibility at 200, small margin beyond it
 function registerFarCull(obj) {
   if (!obj) return;
   obj.updateMatrixWorld(true);
