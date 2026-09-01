@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 17:33';
+  window.__BUILD = '2026-09-01 17:50';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1178,7 +1178,7 @@ function updateDayNight(dt) {
 // cull regardless - that cutoff only helps someone in the MIDDLE of the
 // avenue looking both ways, not someone at the start. This is a real cut into
 // near-field density, not just the far margin.
-const FOG_OUTDOOR = 0.021, FOG_INDOOR = 0.05; // was 0.0105 - doubled to pull the derived cull distance from ~259 to ~130 units, a real testable cut to sustained draw/cull load per direct request
+const FOG_OUTDOOR = 0.007, FOG_INDOOR = 0.05; // reduced again - was too heavy at 0.021, this is lighter than even the original 0.0105
 /* Anti-pop guarantee, by construction rather than by eye.
    FogExp2 leaves visibility = exp(-(density*dist)^2). Solving for the distance
    at which only 0.06% of an object still shows through:
@@ -8767,7 +8767,7 @@ function updateWildlife(dt) {
    static building/tree/prop was recomposing position/quaternion/scale into a
    matrix every single frame for nothing. Frozen once, valid forever. */
 const farCullList = [];
-const FAR_CULL_DIST = FOG_CULL_SAFETY / FOG_OUTDOOR; // ~259 at the current density - derived, never hand-set, so it can't drift out of the invisible band
+const FAR_CULL_DIST = 100; // was derived from fog (FOG_CULL_SAFETY/FOG_OUTDOOR) - decoupled now that fog is being reduced (see farther before fade) while cull distance needs to drop further (disappear sooner) - those pull opposite ways under the old shared formula. Fixed, independent value, reduced further per direct request. Trade-off: no longer guaranteed invisible-before-culled, so some mild pop-in at the edge is possible now.
 function registerFarCull(obj) {
   if (!obj) return;
   obj.updateMatrixWorld(true);
