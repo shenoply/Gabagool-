@@ -941,7 +941,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 21:15';
+  window.__BUILD = '2026-09-02 00:35';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1201,8 +1201,15 @@ function updateDayNight(dt) {
    models near, simplified LOD models beyond) over far lighter geometry than the
    80-120k-triangle buildings here - so the RATIO is the portable part; the
    absolute far plane is set to what this device sustains. */
-const FOG_NEAR = 95;                              // haze onset - SA's ~0.35 x far
-const FOG_FAR = 275;                              // solid fog; nothing past this is visible
+/* Pulled in hard, using the one thing linear fog buys that exponential could
+   not: at `far` the scene is 100% sky colour, so the cull point can sit
+   anywhere without pop-in. Measured tradeoff from live testing - cull 100 gave
+   32-36fps, cull 275 gave 20fps - so distance is still the dominant cost when
+   facing down the avenue. 160 sits near the fast end of that curve while
+   staying far enough to keep the street readable, and unlike the old 100 it
+   costs nothing in pop-in. SA's ~0.35 start:far ratio kept. */
+const FOG_NEAR = 55;                              // haze onset - SA's ~0.35 x far
+const FOG_FAR = 160;                              // solid fog; nothing past this is visible - FAR_CULL_DIST tracks this automatically
 const FOG_INDOOR_NEAR = 2, FOG_INDOOR_FAR = 34;   // indoors the horizon is a wall
 /* Anti-pop guarantee, by construction rather than by eye.
    FogExp2 leaves visibility = exp(-(density*dist)^2). Solving for the distance
