@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 00:30';
+  window.__BUILD = '2026-09-01 00:35';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1758,8 +1758,12 @@ function applySharpenToObject(root, strength) {
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.2, 1100); // must exceed fog far, or buildings clip instead of fading // far raised 220->600 to match the enlarged fog range. Near stays 0.2 (raised from 0.05 originally, since a 4400:1 ratio caused depth-buffer flicker on the city backdrop); 3000:1 is still comfortably safe.
 let camYaw = Math.PI * 0.25;
-let camPitch = 0.32;
-let camDist = 5.5;
+// Frame-friendly walk preset: was 0.32 rad (~18deg, grazing) which points the
+// frustum straight down the avenue's entire length - the maximum-geometry view.
+// 0.6 (~34deg) keeps the horizon band out of frame with the street still
+// readable ahead. Drag/zoom still free on top of it.
+let camPitch = 0.6;
+let camDist = 6.5;
 let camDistMin = 1.8;
 let camDistMax = 9;
 const camTarget = new THREE.Vector3(0, 0.9, 0);
@@ -7326,13 +7330,7 @@ function loadMeshyBuildings() {
     let seed = 90210;
     const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
     const CROSS_Z = JUNCTION_Z;
-    for (let z = 40; z < 1200; z += 11) {
-      if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
-      for (const side of [1, -1]) {
-        const s2 = 0.85 + rnd() * 0.4;
-        const px = ROAD_CX + side * (ROAD_HW + 3.4 + rnd() * 0.8);
-        const pz = z + (rnd() - 0.5) * 3;
-        const ry = rnd() * Math.PI * 2;
+    const plantOne = (px, pz, ry, s2) => {
         const t = src.clone(true);
         t.position.set(px, 0, pz);
         t.scale.setScalar(s2);
@@ -7351,8 +7349,24 @@ function loadMeshyBuildings() {
         scene.add(t);
         njBuildings.push(t);
         registerFarCull(t);
+    };
+    // Precompute every tree's placement (deterministic, same seed sequence as
+    // the old inline loop), then plant near-home immediately and defer the far
+    // half - same near-first split as the building rows above. ~180 clones in
+    // one synchronous burst was one of the heaviest single moments in the load.
+    const nearTrees = [], farTrees = [];
+    for (let z = 40; z < 1200; z += 11) {
+      if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
+      for (const side of [1, -1]) {
+        const s2 = 0.85 + rnd() * 0.4;
+        const px = ROAD_CX + side * (ROAD_HW + 3.4 + rnd() * 0.8);
+        const pz = z + (rnd() - 0.5) * 3;
+        const ry = rnd() * Math.PI * 2;
+        (pz < 520 ? nearTrees : farTrees).push([px, pz, ry, s2]);
       }
     }
+    for (const a of nearTrees) plantOne(a[0], a[1], a[2], a[3]);
+    if (farTrees.length) setTimeout(() => { for (const a of farTrees) plantOne(a[0], a[1], a[2], a[3]); }, 5000);
   };
   /* street_tree_c: a legacy .3ds asset (bark + alpha-masked leaf card,
      German-authored: "Rinde" = bark, "Blatt" = leaf), converted with assimp since
@@ -7441,7 +7455,17 @@ function loadMeshyBuildings() {
     }
   }
   for (const key of Object.keys(slots)) {
-    load(key, (src) => { for (const p of slots[key]) put(src, p.x, p.z, p.rot); });
+    load(key, (src) => {
+      // Near-home first ("load the part of the map that shows from the house
+      // first"): the parse cost is per-file and can't be split, but the per-
+      // building clone/traverse cost can. Everything visible from spawn goes up
+      // the moment its file is parsed; the far half of the avenue defers 4.5s -
+      // beyond the fog horizon from spawn anyway, so nothing visible pops.
+      const near = slots[key].filter((p) => p.z < 520);
+      const far = slots[key].filter((p) => p.z >= 520);
+      for (const p of near) put(src, p.x, p.z, p.rot);
+      if (far.length) setTimeout(() => { for (const p of far) put(src, p.x, p.z, p.rot); }, 4500);
+    });
   }
 
   load(ASSETS.DUMPSTER, (src) => {
@@ -7506,7 +7530,11 @@ function loadMeshyBuildings() {
 /* THREE.LOD only switches level when update() is called with the camera. */
 function updateBuildingLOD() {
   for (const b of njBuildings) if (b.isLOD) b.update(camera);
-  if (loadMeshyBuildings._fade) loadMeshyBuildings._fade();
+  /* _fade() call removed: its opacity logic was already disabled per its own
+     comments, but its leftover b.visible=true ran EVERY FRAME on every
+     njBuildings entry (all buildings + ~180 street trees) - silently undoing
+     the far-cull sweep within a frame of every toggle. The far-cull registry
+     owns visibility for these now. */
 }
 
 /* ================= CROSS-STREETS AND PARKED CARS =================
@@ -9817,6 +9845,11 @@ function enterDriveMode(withMission, overrideCar) {
       if (trafficCars.length === 0) spawnTrafficCars();
       savedCharacterPos = character ? character.position.clone() : null;
       if (character) character.visible = false;
+      // Drive camera preset (frame-friendly): forward visibility matters more
+      // than on foot, so shallower than the walk preset - but 0.45 still keeps
+      // the deep horizon out of the top of the frame vs the old inherited 0.32.
+      camPitch = 0.45;
+      camDist = Math.min(camDistMax, 9.5);
       if (enterDriveMode._inPlace && car) {
         // Taking a car you walked up to: drive it from where it is parked rather
         // than teleporting it to the top of the highway. Getting in should not
@@ -9936,7 +9969,8 @@ function exitDriveMode() {
     character.visible = true;
     if (savedCharacterPos) character.position.copy(savedCharacterPos);
   }
-  camDist = Math.max(camDistMin, Math.min(camDistMax, camDist));
+  camPitch = 0.6;  // back to the walk preset
+  camDist = Math.max(camDistMin, Math.min(camDistMax, 6.5));
   camera.fov = 45;
   camera.updateProjectionMatrix();
   document.getElementById('speed-vignette').style.opacity = 0;
