@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 15:20';
+  window.__BUILD = '2026-09-01 15:55';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1171,7 +1171,19 @@ function updateDayNight(dt) {
 // cull regardless - that cutoff only helps someone in the MIDDLE of the
 // avenue looking both ways, not someone at the start. This is a real cut into
 // near-field density, not just the far margin.
-const FOG_OUTDOOR = 0.0107, FOG_INDOOR = 0.05;
+const FOG_OUTDOOR = 0.0105, FOG_INDOOR = 0.05;
+/* Anti-pop guarantee, by construction rather than by eye.
+   FogExp2 leaves visibility = exp(-(density*dist)^2). Solving for the distance
+   at which only 0.06% of an object still shows through:
+       (density*d)^2 = ln(1/0.0006) = 7.4   ->   d = 2.72 / density
+   Culling at exactly that distance means anything switching off is already
+   99.94% fog - below the 8-bit colour threshold, so the change cannot produce a
+   visible edge on any display. Deriving it from FOG_OUTDOOR (instead of the two
+   being separate hand-tuned numbers that can silently drift apart) is what makes
+   "never see things spawn in or out" a property of the code rather than a hope:
+   retune fog however aggressively and the cull point follows automatically,
+   always staying inside the invisible band. */
+const FOG_CULL_SAFETY = 2.72;
 scene.fog = new THREE.FogExp2(0xc9784a, FOG_OUTDOOR); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
 /* ---------- Image-based lighting ----------
@@ -8743,7 +8755,7 @@ function updateWildlife(dt) {
    static building/tree/prop was recomposing position/quaternion/scale into a
    matrix every single frame for nothing. Frozen once, valid forever. */
 const farCullList = [];
-const FAR_CULL_DIST = 220; // matched to the new fog - ~1% visibility at 200, small margin beyond it
+const FAR_CULL_DIST = FOG_CULL_SAFETY / FOG_OUTDOOR; // ~259 at the current density - derived, never hand-set, so it can't drift out of the invisible band
 function registerFarCull(obj) {
   if (!obj) return;
   obj.updateMatrixWorld(true);
@@ -8815,7 +8827,26 @@ function registerInstancedFarCull(...meshesAndPlacements) {
     pos.set(p.px, 0, p.pz); quat.setFromAxisAngle(_UP, p.ry); scl.setScalar(p.s2);
     return new THREE.Matrix4().compose(pos, quat, scl);
   });
-  instancedCullList.push({ meshes, placements, realMatrices, visible: placements.map(() => true) });
+  // Cull sphere sized from the actual geometry rather than a hardcoded
+  // tree-shaped guess - buildings are far larger than the old radius-10 and
+  // would have been culled while still partly on screen.
+  // Max across ALL meshes in the group, not just meshes[0]: for trees that
+  // first entry is the trunk, whose bounding sphere is far narrower than the
+  // canopy sharing the same transforms - sizing off it alone would cull trees
+  // while their leaves were still on screen.
+  let r = 0, cy = 0;
+  for (const mesh of meshes) {
+    const g = mesh.geometry;
+    if (!g) continue;
+    if (!g.boundingSphere) g.computeBoundingSphere();
+    if (g.boundingSphere && g.boundingSphere.radius > r) {
+      r = g.boundingSphere.radius;
+      cy = g.boundingSphere.center.y;
+    }
+  }
+  r = (r || 10) * 1.15; // margin so nothing clips out at the frustum edge
+  for (const p of placements) { p.cullR = r; p.cullY = cy; }
+  instancedCullList.push({ meshes, placements, realMatrices, lastCount: -1 });
 }
 let _instCullTimer = 0;
 // Real camera frustum, reused every sweep rather than allocated fresh.
@@ -8839,24 +8870,31 @@ function updateInstancedFarCull(dt) {
   // as before, now correctly reproduced per-instance instead of per-object.
   _instCullMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   _instCullFrustum.setFromProjectionMatrix(_instCullMatrix);
+  /* COMPACTION, not zero-scaling. The previous version swapped hidden instances
+     to a zero-scale matrix, which was my own mistake: a zero-scale instance is
+     still fully vertex-processed by the GPU every frame - it just rasterizes to
+     nothing. For 180 trees at ~16K tris each that is ~2.9M vertices of pure
+     waste per frame, and the same again across the 10 instanced building types.
+     InstancedMesh.count tells the GPU to only process the FIRST n instances, so
+     packing every visible instance into the front of the matrix buffer and
+     setting count = visibleCount makes hidden instances cost literally zero.
+     That is the difference between "drawn invisibly" and "not drawn". */
   for (const group of instancedCullList) {
-    let changed = false;
+    let n = 0;
     for (let i = 0; i < group.placements.length; i++) {
       const p = group.placements[i];
       const dx = p.px - px, dz = p.pz - pz;
-      let shouldShow = (dx * dx + dz * dz) <= d2;
-      if (shouldShow) {
-        // radius ~10 covers the tree's full canopy spread around its trunk position
-        _instCullSphere.set(_instCullVec3.set(p.px, 6, p.pz), 10);
-        shouldShow = _instCullFrustum.intersectsSphere(_instCullSphere);
-      }
-      if (shouldShow === group.visible[i]) continue;
-      group.visible[i] = shouldShow;
-      const m = shouldShow ? group.realMatrices[i] : _ZERO_M4;
-      for (const mesh of group.meshes) mesh.setMatrixAt(i, m);
-      changed = true;
+      if ((dx * dx + dz * dz) > d2) continue;
+      _instCullSphere.set(_instCullVec3.set(p.px, p.cullY, p.pz), p.cullR);
+      if (!_instCullFrustum.intersectsSphere(_instCullSphere)) continue;
+      for (const mesh of group.meshes) mesh.setMatrixAt(n, group.realMatrices[i]);
+      n++;
     }
-    if (changed) for (const mesh of group.meshes) mesh.instanceMatrix.needsUpdate = true;
+    if (n !== group.lastCount) {
+      for (const mesh of group.meshes) mesh.count = n;
+      group.lastCount = n;
+    }
+    for (const mesh of group.meshes) mesh.instanceMatrix.needsUpdate = true;
   }
 }
 
