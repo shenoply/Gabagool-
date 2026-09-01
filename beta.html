@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 01:06';
+  window.__BUILD = '2026-09-01 04:23';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -8462,10 +8462,10 @@ function spawnWildlife(assetKey, spots, opts = {}) {
         action.play();
         action.time = Math.random() * clip.duration;    // desync the copies —
         action.timeScale = 0.85 + Math.random() * 0.3;  // — and their tempo, so 24 rats don't twitch in unison
-        if (pos.flier) { pos.mixer = mixer; pos.mesh = clone; wildlifeFliers.push(pos); }
-        else wildlifeMixers.push({ mixer, x: pos.x, z: pos.z });
-      } else if (pos.flier) { pos.mesh = clone; wildlifeFliers.push(pos); }
-      // unrigged + grounded (the cat): nothing to update — a sitting cat is allowed to sit still
+        if (pos.flier) { pos.mixer = mixer; pos.mesh = clone; wildlifeFliers.push(pos); registerFarCullMoving(clone); }
+        else { wildlifeMixers.push({ mixer, x: pos.x, z: pos.z }); registerFarCull(clone); }
+      } else if (pos.flier) { pos.mesh = clone; wildlifeFliers.push(pos); registerFarCullMoving(clone); }
+      else { registerFarCull(clone); } // unrigged + grounded (the cat): nothing to update — a sitting cat is allowed to sit still
     }
     if (window.__gameNote) window.__gameNote(assetKey + ' loaded OK (' + spots.length + ' placed)');
   }, (e) => { console.warn('wildlife load failed:', assetKey, e); if (window.__gameNote) window.__gameNote('WILDLIFE FAILED (' + assetKey + '): ' + ((e && e.message) || e)); });
@@ -8658,6 +8658,10 @@ function registerFarCull(obj) {
   obj.traverse((n) => { n.matrixAutoUpdate = false; n.matrixWorldAutoUpdate = false; });
   farCullList.push(obj);
 }
+// For objects whose position keeps changing after placement (wildlife fliers) -
+// same visibility cutoff, but matrices stay auto-updating so their own per-frame
+// position.set() calls (in updateWildlife) keep taking effect.
+function registerFarCullMoving(obj) { if (obj) farCullList.push(obj); }
 let _farCullTimer = 0;
 function updateFarCull(dt) {
   _farCullTimer -= dt;
