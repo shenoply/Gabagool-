@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 00:58';
+  window.__BUILD = '2026-09-01 01:06';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -2728,6 +2728,7 @@ function buildStringLights(centerX, centerZ, halfSpan, poleHeight) {
     const pl = new THREE.PointLight(0xffb877, 0.5, halfSpan * 2.2, 2);
     pl.position.copy(mid);
     scene.add(pl);
+    registerLightCull(pl);
   });
 }
 
@@ -8670,6 +8671,36 @@ function updateFarCull(dt) {
   }
 }
 
+/* ================= LIGHT CULL =================
+   Your own interior-lighting comment already names this exact cost: "every point
+   light multiplies shader work across all draw calls" - true of the WHOLE scene,
+   not just indoors, but only the interior ever acted on it (capped at 2 lamps +
+   a fire). Outdoors accumulated 13 persistent PointLights running simultaneously
+   at night (2 string, 5 porch, 5 streetlamp, 1 pool) with nothing capping them -
+   every one of those runs its shading calculation for every rendered pixel in
+   the scene, all the time it's dark, regardless of whether the light is next to
+   you or 900 units away. That's very likely the dominant cost behind fps 21-22
+   at night even at forced-low quality.
+   Fix: visible=false past a cutoff. Every light here has an effective radius of
+   7-14 units (their own `distance` parameter) - a 90-unit cutoff is 6-13x that,
+   so nothing visibly changes; light.visible=false is what actually removes a
+   light from the shader's light list for that frame, not just zeroing intensity. */
+const lightCullList = [];
+const LIGHT_CULL_DIST = 90;
+function registerLightCull(light) { if (light) lightCullList.push(light); }
+let _lightCullTimer = 0;
+function updateLightCull(dt) {
+  _lightCullTimer -= dt;
+  if (_lightCullTimer > 0) return;
+  _lightCullTimer = 0.5;
+  const px = camera.position.x, pz = camera.position.z;
+  const d2 = LIGHT_CULL_DIST * LIGHT_CULL_DIST;
+  for (const l of lightCullList) {
+    const dx = l.position.x - px, dz = l.position.z - pz;
+    l.visible = (dx * dx + dz * dz) <= d2;
+  }
+}
+
 /* ================= SKY PLANE =================
    A single 787 on a slow, high, wide circuit. Fog here is more aggressive at
    range than it looks from FOG_OUTDOOR alone — CITY_BACKDROP_POS's own comment
@@ -9178,6 +9209,7 @@ function buildStreetDetail() {
     pl.position.set((side > 0 ? 39.8 : 14.2) + side * 0.4, 3.4, 80 + i * 210);
     scene.add(pl);
     nightLights.push({ light: pl, base: 0.55, flicker: false });
+    registerLightCull(pl);
   }
   // 15. Flickering streetlamps — was just one at a fixed spot, easy to miss on a
   // ~1500-unit street. Five now, spread along the pole line, each with its own
@@ -9188,6 +9220,7 @@ function buildStreetDetail() {
     lamp.position.set(41.5, 9.5, 130 + i * 260);
     scene.add(lamp);
     nightLights.push({ light: lamp, base: 0.9, flicker: true, phase: i * 17.3 });
+    registerLightCull(lamp);
   }
 
   // 16. Steam near the factory landmarks — same sprite technique as the manhole
@@ -10009,6 +10042,7 @@ function loadDucksIntoPool(pool) {
   const poolLight = new THREE.PointLight(0xfff2d8, 1.1, 8, 2);
   poolLight.position.set(pool.x, pool.deckHeight + 1.6, pool.z);
   scene.add(poolLight);
+  registerLightCull(poolLight);
 
   const duckLoader = new GLTFLoader();
   const duckBuffer = ASSETS.DUCK; // URL — fetched by the parse shim
@@ -11613,6 +11647,7 @@ function tick() {
   }
   } // close world-pause gate — camera update/render below always run so free-cam keeps working while paused
   updateFarCull(dt);
+  updateLightCull(dt);
   updateCamera(dt);
   updatePovCamera(); // overrides the orbit camera while in first person
   if (character && !drivingMode) {
