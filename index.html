@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 11:07';
+  window.__BUILD = '2026-09-01 11:22';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7494,7 +7494,11 @@ function loadMeshyBuildings() {
      Replicates put()'s road-collision-avoidance shift, computed once per side
      (rotation is fixed at +-90deg per side, so the correction doesn't vary
      enough across the small per-slot jitter to need recomputing per instance). */
-  const INSTANCE_TYPES = new Set([ASSETS.CORNER_BLOCK, ASSETS.ROW_FIVE_B]);
+  const INSTANCE_TYPES = new Set([
+    ASSETS.CORNER_BLOCK, ASSETS.ROW_FIVE_B, ASSETS.CORNER_ROUND, ASSETS.CORNER_BLOCK_B,
+    ASSETS.CORNER_C, ASSETS.ROW_FIVE_A, ASSETS.ROW_FIVE_C, ASSETS.ROW_FIVE_D,
+    ASSETS.ROW_FOUR, ASSETS.ROW_FOUR_B,
+  ]); // all 10 confirmed single-mesh/single-primitive - same safe structure as the first 2
   function putInstanced(key, src, slotList) {
     let meshGeo = null, meshMat = null;
     src.traverse((m) => { if (m.isMesh) { meshGeo = m.geometry; meshMat = m.material; } });
