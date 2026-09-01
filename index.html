@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 04:41';
+  window.__BUILD = '2026-09-01 09:15';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7948,6 +7948,7 @@ function buildRoadPatrols() {
       const mesh = src.mesh.clone(true);
       mesh.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.frustumCulled = true; } });
       scene.add(mesh);
+      registerFarCullMoving(mesh);
       roadPatrolCars.push({
         mesh, axis: patrol.axis, fixed: patrol.fixed, from: patrol.from, to: patrol.to,
         t: rnd(),
@@ -8317,6 +8318,7 @@ function spawnAnimatedNPC(assetKey, positions, animName, scale) {
       if (pos.rotY !== undefined) clone.rotation.y = pos.rotY;
       clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
       scene.add(clone);
+      registerFarCull(clone); // pre-existing system (birds/rats/puppy/texter), same gap wildlife had — spread nearly the whole avenue, never registered
       if (gltf.animations && gltf.animations.length) {
         const mixer = new THREE.AnimationMixer(clone);
         const clip = (animName && THREE.AnimationClip.findByName(gltf.animations, animName)) || gltf.animations[0];
@@ -8651,7 +8653,7 @@ function updateWildlife(dt) {
    static building/tree/prop was recomposing position/quaternion/scale into a
    matrix every single frame for nothing. Frozen once, valid forever. */
 const farCullList = [];
-const FAR_CULL_DIST = 620;
+const FAR_CULL_DIST = 550; // recomputed from FogExp2's own formula - residual visibility here is ~2.5%, still solidly imperceptible, was needlessly generous at 620 (~0.9%)
 function registerFarCull(obj) {
   if (!obj) return;
   obj.updateMatrixWorld(true);
@@ -9440,6 +9442,7 @@ function buildCrossTraffic() {
     mesh.rotation.y = dir > 0 ? -Math.PI / 2 : Math.PI / 2;
     mesh.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.frustumCulled = true; } });
     scene.add(mesh);
+    registerFarCullMoving(mesh);
     crossCars.push({ mesh, jz, dir, speed: 5 + rnd() * 3, v: 0 });
   }
   if (window.__gameNote) window.__gameNote('cross traffic: ' + crossCars.length);
@@ -9612,6 +9615,7 @@ function spawnTrafficCars() {
     mesh.position.set(laneX(i), 0, startZ);
     mesh.rotation.y = 0;
     scene.add(mesh);
+    registerFarCullMoving(mesh);
     trafficCars.push({ mesh, laneX: mesh.position.x, speed: 3 + Math.random() * 3 });
   }
 }
