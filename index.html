@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 00:09';
+  window.__BUILD = '2026-09-01 00:25';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7269,6 +7269,7 @@ function loadMeshyBuildings() {
     l.rotation.y = rotY;
     scene.add(l);
     njBuildings.push(l);
+    registerFarCull(l);
   };
 
   let placedCount = 0;
@@ -7301,6 +7302,7 @@ function loadMeshyBuildings() {
     });
     scene.add(o);
     njBuildings.push(o);
+    registerFarCull(o);
   };
 
   load(ASSETS.TONY_HOUSE, (src) => put(src, -8, 62, Math.PI));
@@ -7348,6 +7350,7 @@ function loadMeshyBuildings() {
         });
         scene.add(t);
         njBuildings.push(t);
+        registerFarCull(t);
       }
     }
   };
@@ -7971,6 +7974,7 @@ function buildAmericanIntersection() {
     group.add(inner);
     group.position.set(ROAD_CX, 0.02, BRANCH_ROAD_Z); // +0.02 to clear the existing road strip, avoid z-fighting
     scene.add(group);
+    registerFarCull(group);
   }, (e) => { console.warn('intersection load failed:', e); });
 }
 
@@ -8057,6 +8061,7 @@ function buildNewVehiclesAndGolf() {
       t.rotation.y = s.rotY;
       t.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; m.frustumCulled = true; } });
       scene.add(t);
+      registerFarCull(t);
       // Stand sign, offset a couple units from the car itself
       const sign = new THREE.Group();
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 2.1, 6), poleMat);
@@ -8440,6 +8445,7 @@ function loadWildlife() {
         d.rotation.y = c.side > 0 ? -Math.PI / 2 : Math.PI / 2; // random jitter (was up to +-17deg) removed - it was reading as scattered rather than a placed pair. Base rotation itself is still unconfirmed against the model's native orientation.
         d.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = true; } });
         scene.add(d);
+        registerFarCull(d);
       }
     }
     if (window.__gameNote) window.__gameNote('avenue dumpster clusters loaded OK (' + clusters.length + ' pairs)');
@@ -8584,6 +8590,41 @@ function updateWildlife(dt) {
   }
 }
 
+/* ================= FAR CULL =================
+   camera.far went from a (regressed) 100 to 4000 so the plane and skyline can
+   exist, but FogExp2 at 0.0035 has ordinary scenery ~99% blended into the sky
+   by ~620 units - visually gone, yet still fully rendered whenever it sits in
+   the view frustum (a straight look down the avenue). Fog is shading, not
+   culling: the GPU pays full cost for pixels the fog then erases. Registered
+   static objects get hidden past FAR_CULL_DIST; at 99% sky-blend the toggle is
+   invisible, so visible graphics and draw distance are untouched - that was the
+   constraint. The plane is deliberately NOT registered (its fog is off on
+   purpose), nor is anything animated or moving.
+   Registration also freezes matrices: nothing registered ever moves after
+   placement, and this file never set matrixAutoUpdate=false anywhere - so every
+   static building/tree/prop was recomposing position/quaternion/scale into a
+   matrix every single frame for nothing. Frozen once, valid forever. */
+const farCullList = [];
+const FAR_CULL_DIST = 620;
+function registerFarCull(obj) {
+  if (!obj) return;
+  obj.updateMatrixWorld(true);
+  obj.traverse((n) => { n.matrixAutoUpdate = false; n.matrixWorldAutoUpdate = false; });
+  farCullList.push(obj);
+}
+let _farCullTimer = 0;
+function updateFarCull(dt) {
+  _farCullTimer -= dt;
+  if (_farCullTimer > 0) return;
+  _farCullTimer = 0.5; // a sweep twice a second is plenty - 620 units doesn't sneak up on you
+  const px = camera.position.x, pz = camera.position.z; // camera, not character - correct in walk, drive AND free-cam
+  const d2 = FAR_CULL_DIST * FAR_CULL_DIST;
+  for (const o of farCullList) {
+    const dx = o.position.x - px, dz = o.position.z - pz;
+    o.visible = (dx * dx + dz * dz) <= d2;
+  }
+}
+
 /* ================= SKY PLANE =================
    A single 787 on a slow, high, wide circuit. Fog here is more aggressive at
    range than it looks from FOG_OUTDOOR alone — CITY_BACKDROP_POS's own comment
@@ -8679,6 +8720,7 @@ function loadNYCSkyline() {
     group.position.set(NYC_SKYLINE_POS.x, 0, NYC_SKYLINE_POS.z);
     group.rotation.y = Math.atan2(-(NYC_SKYLINE_POS.x - ROAD_CX), -(NYC_SKYLINE_POS.z - BRANCH_ROAD_Z)); // face back toward the avenue
     scene.add(group);
+    registerFarCull(group);
   }, (e) => { console.warn('nyc skyline load failed:', e); });
 }
 
@@ -8701,6 +8743,7 @@ function loadBusStops() {
       shelter.position.set(s.x, 0, s.z);
       shelter.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = true; } });
       scene.add(shelter);
+      registerFarCull(shelter);
     }
   }, (e) => { console.warn('bus station load failed:', e); });
   loader.parse(ASSETS.BUS_NAGOYA, '', (gltf) => {
@@ -8714,6 +8757,7 @@ function loadBusStops() {
       bus.position.set(s.x - s.side * 1.6, 0, s.z - 6); // tucked right against the shelter, both now on the sidewalk-edge line
       bus.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; } });
       scene.add(bus);
+      registerFarCull(bus);
     }
   }, (e) => { console.warn('bus load failed:', e); });
 }
@@ -8757,6 +8801,7 @@ function loadBillboards() {
       clone.quaternion.copy(yaw.multiply(tilt));
       clone.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; } });
       scene.add(clone);
+      registerFarCull(clone);
     }
   }, (e) => { console.warn('billboard load failed:', e); });
 }
@@ -10189,6 +10234,7 @@ function placeForest(nearScene) {
       }
     });
     group.add(patch);
+    registerFarCull(patch); // per-patch: alpha-tested foliage is among the most expensive fill in the scene
   }
   scene.add(group);
   console.log('forest placed:', FOREST_PATCHES.length - skipped, 'patches,', skipped, 'skipped in the road corridor');
@@ -11515,6 +11561,7 @@ function tick() {
     }
   }
   } // close world-pause gate — camera update/render below always run so free-cam keeps working while paused
+  updateFarCull(dt);
   updateCamera(dt);
   updatePovCamera(); // overrides the orbit camera while in first person
   if (character && !drivingMode) {
