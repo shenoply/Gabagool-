@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 00:45';
+  window.__BUILD = '2026-09-01 00:52';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -966,7 +966,11 @@ function base64ToArrayBuffer(b64) {
 
 /* ---------- Scene setup ---------- */
 const app = document.getElementById('app');
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+// powerPreference hints the browser/OS to pick the high-performance GPU tile
+// on devices with two (common on laptops, some phones) instead of whatever it
+// defaults to. stencil disabled - nothing in this file uses clipping planes or
+// stencil ops, so the buffer was pure unused framebuffer bandwidth.
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance', stencil: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // capped harder — 2x on a 3x phone screen was a huge framebuffer; 1.5 halves that GPU memory for barely-visible softness
 // If the GPU gives out mid-game (context lost), say so clearly instead of freezing —
 // and tell the player the actual fix (full browser restart clears the refused state).
@@ -1856,6 +1860,7 @@ function toggleFreeCam() {
 }
 const _freeCamFwd = new THREE.Vector3(), _freeCamRight = new THREE.Vector3(), _freeCamLook = new THREE.Vector3();
 const _freeCamVel = new THREE.Vector3();
+const _freeCamTargetVel = new THREE.Vector3(); // was allocated fresh every frame while flying - reused now
 function stepFreeCam(dt) {
   // Was instant velocity (position moved directly by input every frame) — felt
   // robotic, snapping to full speed and stopping dead. Now eases toward a target
@@ -1886,7 +1891,7 @@ function stepFreeCam(dt) {
   } else {
     flyX = joyVec.x; flyY = joyVec.y;
   }
-  const targetVel = new THREE.Vector3()
+  const targetVel = _freeCamTargetVel.set(0, 0, 0)
     .addScaledVector(_freeCamFwd, flyY * speed)
     .addScaledVector(_freeCamRight, flyX * speed);
   targetVel.y = freeCamRise * speed * 0.7;
@@ -4144,6 +4149,7 @@ function buildRain() {
   }
   scene.add(rainMesh);
 }
+const _rainMx = new THREE.Matrix4(), _rainV = new THREE.Vector3(), _rainQ = new THREE.Quaternion(), _rainSc = new THREE.Vector3(1, 1, 1); // was reallocated every frame while raining
 function updateRain(dt) {
   if (!rainMesh) return;
   rainTimer -= dt;
@@ -4162,7 +4168,7 @@ function updateRain(dt) {
   if (!rainMesh.visible) return;
   rainMesh.material.opacity = 0.34 * Math.min(1, rainWet * 1.4);
   const cx = camTarget.x, cz = camTarget.z;
-  const mx = new THREE.Matrix4(), v = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(1,1,1);
+  const mx = _rainMx, v = _rainV, q = _rainQ, sc = _rainSc;
   const drops = rainMesh.userData.drops;
   for (let i = 0; i < drops.length; i++) {
     const d = drops[i];
