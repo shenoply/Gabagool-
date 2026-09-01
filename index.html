@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 15:55';
+  window.__BUILD = '2026-09-01 16:20';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -970,7 +970,14 @@ const app = document.getElementById('app');
 // on devices with two (common on laptops, some phones) instead of whatever it
 // defaults to. stencil disabled - nothing in this file uses clipping planes or
 // stencil ops, so the buffer was pure unused framebuffer bandwidth.
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance', stencil: false });
+/* antialias was true and, being a construction-time flag, was the one setting
+   the adaptive quality system could never turn off - so MSAA kept costing full
+   fill rate even after quality dropped to "low". That matters here because the
+   profile is fragment-bound, not geometry-bound: cutting triangles 58%
+   (14.4M -> 6.1M) moved fps by exactly zero, which only happens when the
+   bottleneck is per-pixel work rather than per-vertex. MSAA multiplies exactly
+   that. Edges go slightly softer; no asset, texture or model is touched. */
+const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance', stencil: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // capped harder — 2x on a 3x phone screen was a huge framebuffer; 1.5 halves that GPU memory for barely-visible softness
 // If the GPU gives out mid-game (context lost), say so clearly instead of freezing —
 // and tell the player the actual fix (full browser restart clears the refused state).
@@ -980,7 +987,7 @@ renderer.domElement.addEventListener('webglcontextlost', (e) => {
 }, false);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap; // PCFSoft takes several extra taps per shadowed pixel - pure fragment cost, and this profile is fragment-bound
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
@@ -2032,7 +2039,12 @@ rim.position.set(-5, 3, -4);
 scene.add(rim);
 const fill = new THREE.DirectionalLight(0xfff2d8, 0.6); // added: soft frontal fill to lift dark facades
 fill.position.set(0, 8, 12);
-scene.add(fill);
+/* NOT added to the scene. Each directional light runs its lighting math on
+   every pixel of every lit surface, so the third one was costing a full extra
+   per-pixel pass across the whole screen for a 0.6-intensity fill. Its lift is
+   partly recovered by the hemisphere bump below rather than a third light.
+   Kept as an object because other code reads fill.* for colour grading. */
+hemi.intensity = 0.72; // was 0.55 - recovers most of the removed fill's lift at zero per-pixel cost (hemisphere is a cheap gradient, not a lighting pass)
 
 /* Ground — grass lawn with a paver patio inset near the table/grill */
 function createPaverTexture() {
