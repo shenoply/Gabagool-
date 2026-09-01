@@ -941,7 +941,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 20:05';
+  window.__BUILD = '2026-09-01 21:15';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -979,7 +979,13 @@ const app = document.getElementById('app');
    bottleneck is per-pixel work rather than per-vertex. MSAA multiplies exactly
    that. Edges go slightly softer; no asset, texture or model is touched. */
 const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance', stencil: false });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // capped harder — 2x on a 3x phone screen was a huge framebuffer; 1.5 halves that GPU memory for barely-visible softness
+/* Pinned to 1.0, not scaled by devicePixelRatio. The frame is fragment-bound
+   (a 58% triangle cut moved fps by exactly zero), and fragment cost scales
+   directly with pixel count - 1.5 is 2.25x the pixels of 1.0. Pinning also
+   removes a stutter source in its own right: the adaptive tiers below used to
+   change this at runtime, and every change reallocates the framebuffer
+   mid-play, which is a hitch regardless of the fps it's chasing. */
+renderer.setPixelRatio(1);
 // If the GPU gives out mid-game (context lost), say so clearly instead of freezing —
 // and tell the player the actual fix (full browser restart clears the refused state).
 renderer.domElement.addEventListener('webglcontextlost', (e) => {
@@ -5924,7 +5930,7 @@ function enterInterior() {
     // map is one of the most expensive things per frame. Off while inside.
     try { renderer.shadowMap.enabled = false; } catch (e) {}
     // 209 draw calls indoors is the ceiling; drop the render scale to buy frames back
-    try { renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25)); } catch (e) {}
+    try { renderer.setPixelRatio(1); } catch (e) {} // pinned - see the construction-time note
     // pull the camera in — the outdoor distance puts it through a wall indoors
     camDist = Math.min(camDist, 4.2);
     camTargetYOffset = 1.2;
@@ -5950,7 +5956,7 @@ function exitInterior() {
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
     if (scene.fog) { scene.fog.near = FOG_NEAR; scene.fog.far = FOG_FAR; }  // back to outdoor haze
     try { renderer.shadowMap.enabled = qualityLevel >= 1; } catch (e) {}
-    try { renderer.setPixelRatio(qualityLevel >= 2 ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio, 1.5)); } catch (e) {}
+    try { renderer.setPixelRatio(1); } catch (e) {} // pinned across all tiers - fps gains stay as frames instead of being spent back on resolution
     camDist = 7.5;
     camTargetYOffset = 0.9;
     camPullIn = 0;
@@ -8810,6 +8816,38 @@ function registerFarCull(obj) {
 // position.set() calls (in updateWildlife) keep taking effect.
 function registerFarCullMoving(obj) { if (obj) farCullList.push(obj); }
 let _farCullTimer = 0;
+/* SHADER WARM-UP - targets stutter, not average fps.
+   The SHADERS counter in the live diagnostics climbs DURING play (39 -> 127 ->
+   ... -> 526 across one session). Every increment is three.js compiling a new
+   program the first time some material/light/skinning combination is actually
+   rendered, and each compile is a synchronous GPU stall - which is why 32-36fps
+   average could still feel unplayable: the average was fine, the frame-time
+   spikes were not.
+   The far-cull system made this worse rather than better: anything hidden until
+   you approach it defers its very first render, so its shader compiles at the
+   exact moment it pops into view while you're moving.
+   renderer.compile() builds the programs up front. Everything is temporarily
+   revealed first (including restoring InstancedMesh counts) because compile()
+   only walks what is currently visible - the whole point is to compile the
+   things far-cull is hiding. Nothing is drawn, so the stale instance matrices
+   beyond the live count are irrelevant; state is restored immediately after. */
+function warmUpShaders(tag) {
+  if (!scene || !camera) return;
+  const t0 = performance.now();
+  const hidden = [];
+  for (const o of farCullList) if (o && !o.visible) { hidden.push(o); o.visible = true; }
+  const counts = [];
+  for (const g of instancedCullList) {
+    for (const m of g.meshes) { counts.push([m, m.count]); m.count = g.placements.length; }
+  }
+  try { renderer.compile(scene, camera); }
+  catch (e) { console.warn('shader warm-up failed:', e); }
+  for (const o of hidden) o.visible = false;
+  for (const pair of counts) pair[0].count = pair[1];
+  const ms = Math.round(performance.now() - t0);
+  if (window.__gameNote) window.__gameNote('shaders warmed (' + tag + ', ' + ms + 'ms, ' + renderer.info.programs.length + ' programs)');
+}
+
 function updateFarCull(dt) {
   _farCullTimer -= dt;
   if (_farCullTimer > 0) return;
@@ -10645,6 +10683,13 @@ function endLoad(name) {
     setTimeout(loadPlane, 4750);              // always-on, not proximity-gated - it's meant to be visible from anywhere
     setTimeout(loadBusStops, 4900);
     setTimeout(loadBillboards, 5050);
+    /* Warm-ups staggered to follow the content waves above rather than one pass
+       that would miss everything arriving later. Each is idempotent - already
+       compiled programs are skipped, so the later calls only pay for whatever is
+       genuinely new. */
+    setTimeout(() => warmUpShaders('core'), 6000);
+    setTimeout(() => warmUpShaders('scenery'), 9000);
+    setTimeout(() => warmUpShaders('late'), 13000);
     registerProximityLoad(NYC_SKYLINE_POS.x, NYC_SKYLINE_POS.z, 300, loadNYCSkyline); // same far-content treatment as chicago/industrial - may never be visited
     setTimeout(buildCrossTraffic, 4200);  // same // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
