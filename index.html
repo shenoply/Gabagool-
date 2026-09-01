@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 04:23';
+  window.__BUILD = '2026-09-01 04:41';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -10413,7 +10413,15 @@ function endLoad(name) {
        low-poly next to a photoscanned character reads as a different game, and I
        made it worse by putting it 20 units from the road at 7.5x scale. Kept the
        loader in case a recoloured, far-set version is worth trying. */
-    setTimeout(() => { if (window.__reportGPU) window.__reportGPU(); }, 9000); // one-shot resource report once scenery has settled
+    // Was a one-shot report at 9s and never again - every reading anyone took
+    // after that point was this same frozen snapshot, regardless of where they
+    // were standing or which way they were facing. Made it look like "facing
+    // the avenue" wasn't changing anything, when the number just wasn't live.
+    // Now repeats every 4s so it actually reflects whatever's on screen.
+    setTimeout(() => {
+      if (window.__reportGPU) window.__reportGPU();
+      setInterval(() => { if (window.__reportGPU) window.__reportGPU(); }, 4000);
+    }, 9000);
   }
 }
 function updateLoadingPercent() {
