@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 11:20';
+  window.__BUILD = '2026-09-01 09:36';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7344,31 +7344,29 @@ function loadMeshyBuildings() {
     let seed = 90210;
     const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
     const CROSS_Z = JUNCTION_Z;
-    const plantOne = (px, pz, ry, s2) => {
-        const t = src.clone(true);
-        t.position.set(px, 0, pz);
-        t.scale.setScalar(s2);
-        t.rotation.y = ry;
-        t.traverse((m) => {
-          if (!m.isMesh) return;
-          m.castShadow = false; m.receiveShadow = false; m.frustumCulled = true;
-          const mats = Array.isArray(m.material) ? m.material : [m.material];
-          for (const mat of mats) {
-            if (!mat) continue;
-            if (mat.map) { mat.map.anisotropy = maxAniso; mat.map.needsUpdate = true; }
-            if (mat.map && mat.map.image) { mat.alphaTest = 0.35; mat.transparent = false; }
-            mat.side = THREE.DoubleSide;   // leaf cards are single-sided planes; harmless on the solid tree
-          }
-        });
-        scene.add(t);
-        njBuildings.push(t);
-        registerFarCull(t);
-    };
-    // Precompute every tree's placement (deterministic, same seed sequence as
-    // the old inline loop), then plant near-home immediately and defer the far
-    // half - same near-first split as the building rows above. ~180 clones in
-    // one synchronous burst was one of the heaviest single moments in the load.
-    const nearTrees = [], farTrees = [];
+    /* InstancedMesh replaces 180 separate clones (180 draw calls) with 2 (trunk +
+       leaf material, one InstancedMesh each) - same geometry, same materials, same
+       per-tree position/rotation/scale variety, just batched. Trees are static
+       (never move after planting) so this is exactly the case InstancedMesh is
+       for - unlike wildlife, nothing here needs independent per-instance animation.
+       Per-instance far-cull is preserved via a degenerate (zero-scale) matrix swap
+       instead of the old per-object .visible toggle - a hidden instance still costs
+       a trivial vertex-stage touch but rasterizes nothing, same visual result. */
+    let trunkGeo = null, leafGeo = null, trunkMat = null, leafMat = null;
+    src.traverse((m) => {
+      if (!m.isMesh) return;
+      const mat = Array.isArray(m.material) ? m.material[0] : m.material;
+      if (mat && mat.alphaTest === undefined) {} // no-op, keeps traverse simple
+      if (mat && mat.name === 'Rinde_Leaf') { leafGeo = m.geometry; leafMat = mat.clone(); }
+      else { trunkGeo = m.geometry; trunkMat = mat.clone(); }
+    });
+    for (const mat of [trunkMat, leafMat]) {
+      if (!mat) continue;
+      if (mat.map) { mat.map.anisotropy = maxAniso; mat.map.needsUpdate = true; }
+      if (mat.map && mat.map.image) { mat.alphaTest = 0.35; mat.transparent = false; }
+      mat.side = THREE.DoubleSide;
+    }
+    const placements = [];
     for (let z = 40; z < 1200; z += 11) {
       if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
       for (const side of [1, -1]) {
@@ -7376,11 +7374,29 @@ function loadMeshyBuildings() {
         const px = ROAD_CX + side * (ROAD_HW + 3.4 + rnd() * 0.8);
         const pz = z + (rnd() - 0.5) * 3;
         const ry = rnd() * Math.PI * 2;
-        (pz < 520 ? nearTrees : farTrees).push([px, pz, ry, s2]);
+        placements.push({ px, pz, ry, s2 });
       }
     }
-    for (const a of nearTrees) plantOne(a[0], a[1], a[2], a[3]);
-    if (farTrees.length) setTimeout(() => { for (const a of farTrees) plantOne(a[0], a[1], a[2], a[3]); }, 5000);
+    const n = placements.length;
+    const trunkMesh = new THREE.InstancedMesh(trunkGeo, trunkMat, n);
+    const leafMesh = new THREE.InstancedMesh(leafGeo, leafMat, n);
+    trunkMesh.castShadow = false; trunkMesh.receiveShadow = false;
+    leafMesh.castShadow = false; leafMesh.receiveShadow = false;
+    trunkMesh.frustumCulled = false; leafMesh.frustumCulled = false; // whole-instance bounds would span the entire avenue - per-instance far-cull below does the actual work
+    const m4 = new THREE.Matrix4(), pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+    placements.forEach((p, i) => {
+      pos.set(p.px, 0, p.pz);
+      quat.setFromAxisAngle(_UP, p.ry);
+      scl.setScalar(p.s2);
+      m4.compose(pos, quat, scl);
+      trunkMesh.setMatrixAt(i, m4);
+      leafMesh.setMatrixAt(i, m4);
+    });
+    trunkMesh.instanceMatrix.needsUpdate = true;
+    leafMesh.instanceMatrix.needsUpdate = true;
+    scene.add(trunkMesh);
+    scene.add(leafMesh);
+    registerInstancedFarCull(trunkMesh, leafMesh, placements);
   };
   /* street_tree_c: a legacy .3ds asset (bark + alpha-masked leaf card,
      German-authored: "Rinde" = bark, "Blatt" = leaf), converted with assimp since
@@ -8704,6 +8720,49 @@ function updateLightCull(dt) {
   for (const l of lightCullList) {
     const dx = l.position.x - px, dz = l.position.z - pz;
     l.visible = (dx * dx + dz * dz) <= d2;
+  }
+}
+
+/* Per-instance far-cull for InstancedMesh content (trees). A whole-object
+   .visible toggle isn't usable here since one InstancedMesh holds every tree
+   from z=40 to z=1200 - hiding it would hide all 180 at once regardless of
+   distance. Instead, far instances get a degenerate (zero-scale) matrix swap;
+   a zero-scale instance still gets touched in the vertex stage but rasterizes
+   nothing, which is the same practical result as the .visible approach used
+   for ordinary far-cull, just implemented per-slot instead of per-object. */
+const _UP = new THREE.Vector3(0, 1, 0);
+const _ZERO_M4 = new THREE.Matrix4().makeScale(0, 0, 0);
+const instancedCullList = [];
+function registerInstancedFarCull(...meshesAndPlacements) {
+  const placements = meshesAndPlacements.pop();
+  const meshes = meshesAndPlacements;
+  const m4 = new THREE.Matrix4(), pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+  const realMatrices = placements.map((p) => {
+    pos.set(p.px, 0, p.pz); quat.setFromAxisAngle(_UP, p.ry); scl.setScalar(p.s2);
+    return new THREE.Matrix4().compose(pos, quat, scl);
+  });
+  instancedCullList.push({ meshes, placements, realMatrices, visible: placements.map(() => true) });
+}
+let _instCullTimer = 0;
+function updateInstancedFarCull(dt) {
+  _instCullTimer -= dt;
+  if (_instCullTimer > 0) return;
+  _instCullTimer = 0.5;
+  const px = camera.position.x, pz = camera.position.z;
+  const d2 = FAR_CULL_DIST * FAR_CULL_DIST;
+  for (const group of instancedCullList) {
+    let changed = false;
+    for (let i = 0; i < group.placements.length; i++) {
+      const p = group.placements[i];
+      const dx = p.px - px, dz = p.pz - pz;
+      const shouldShow = (dx * dx + dz * dz) <= d2;
+      if (shouldShow === group.visible[i]) continue;
+      group.visible[i] = shouldShow;
+      const m = shouldShow ? group.realMatrices[i] : _ZERO_M4;
+      for (const mesh of group.meshes) mesh.setMatrixAt(i, m);
+      changed = true;
+    }
+    if (changed) for (const mesh of group.meshes) mesh.instanceMatrix.needsUpdate = true;
   }
 }
 
@@ -11663,6 +11722,7 @@ function tick() {
   }
   } // close world-pause gate — camera update/render below always run so free-cam keeps working while paused
   updateFarCull(dt);
+  updateInstancedFarCull(dt);
   updateLightCull(dt);
   updateCamera(dt);
   updatePovCamera(); // overrides the orbit camera while in first person
