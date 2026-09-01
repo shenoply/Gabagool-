@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 13:25';
+  window.__BUILD = '2026-09-01 13:40';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1155,7 +1155,17 @@ function updateDayNight(dt) {
 /* 0.0035 puts full occlusion at ~500 units — inside the length of the street, so
    nothing can ever appear in legible air:
      200: 34%   300: 59%   400: 78%   500: 95%   600: 99% */
-const FOG_OUTDOOR = 0.0035, FOG_INDOOR = 0.05;
+// Was 0.0035 - things stayed ~33% visible even 300 units out, meaning the
+// avenue's full density of buildings/trees/wildlife/traffic was all rendering
+// simultaneously whenever it was in view, no matter how much culling logic
+// wrapped around it. Tightened per explicit request to trade draw distance for
+// frame rate, computed (not guessed) so the new cull point lands exactly where
+// fog has ALREADY made things ~1% visible or less - the same "can't perceive
+// it" safety margin the old 550-unit cutoff had at 600 units, just at a
+// shorter absolute range. That's what keeps this from reading as things
+// spawning in front of you: the transition is buried in haze that was already
+// there, not a new hard edge.
+const FOG_OUTDOOR = 0.0062, FOG_INDOOR = 0.05;
 scene.fog = new THREE.FogExp2(0xc9784a, FOG_OUTDOOR); // pushed out again from (45,170): the world grew (ground 100->320, forest out to x 153) and 170 was fading all of it to nothing. It also meant the house disappeared as soon as you drove a little way up the road.
 
 /* ---------- Image-based lighting ----------
@@ -8727,7 +8737,7 @@ function updateWildlife(dt) {
    static building/tree/prop was recomposing position/quaternion/scale into a
    matrix every single frame for nothing. Frozen once, valid forever. */
 const farCullList = [];
-const FAR_CULL_DIST = 550; // recomputed from FogExp2's own formula - residual visibility here is ~2.5%, still solidly imperceptible, was needlessly generous at 620 (~0.9%)
+const FAR_CULL_DIST = 380; // matched to the new, denser fog (0.0062) - ~0.9% visibility at 350, this gives a small margin beyond that rather than sitting exactly on it
 function registerFarCull(obj) {
   if (!obj) return;
   obj.updateMatrixWorld(true);
