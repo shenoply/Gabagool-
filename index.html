@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 10:26';
+  window.__BUILD = '2026-09-01 11:07';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7484,7 +7484,61 @@ function loadMeshyBuildings() {
       i++;
     }
   }
+  /* corner_block and row_five_b_hq are the two heaviest single models on the
+     whole street (123,558 and 117,330 tris) and each gets placed 5-6 times
+     along the frontage - tested aggressive AND gentle decimation on this asset
+     family (corner_block_b, same construction) and both visibly warped fire
+     escapes/window frames even at a 51% cut, so geometry reduction is off the
+     table here. InstancedMesh doesn't touch geometry at all - full detail
+     preserved, just batches the repeats into 1 draw call instead of 5-6 each.
+     Replicates put()'s road-collision-avoidance shift, computed once per side
+     (rotation is fixed at +-90deg per side, so the correction doesn't vary
+     enough across the small per-slot jitter to need recomputing per instance). */
+  const INSTANCE_TYPES = new Set([ASSETS.CORNER_BLOCK, ASSETS.ROW_FIVE_B]);
+  function putInstanced(key, src, slotList) {
+    let meshGeo = null, meshMat = null;
+    src.traverse((m) => { if (m.isMesh) { meshGeo = m.geometry; meshMat = m.material; } });
+    if (!meshGeo) { for (const p of slotList) put(src, p.x, p.z, p.rot); return; } // fallback if structure is unexpected
+    meshMat = (Array.isArray(meshMat) ? meshMat[0] : meshMat).clone();
+    if (meshMat.map) { meshMat.map.anisotropy = maxAniso; meshMat.map.needsUpdate = true; }
+    // Per-side x correction, computed once from a representative slot instead of
+    // per-instance (put()'s own approach), since the correction depends on
+    // rotation + depth, not the ~2.8-unit jitter between same-side instances.
+    const sideCorrection = {};
+    for (const side of [1, -1]) {
+      const rep = slotList.find((p) => (side > 0 ? p.x > ROAD_CX : p.x < ROAD_CX));
+      if (!rep) continue;
+      const test = new THREE.Object3D(); test.add(src.clone(true));
+      test.position.set(rep.x, 0, rep.z); test.rotation.y = rep.rot; test.updateMatrixWorld(true);
+      const bb = new THREE.Box3().setFromObject(test);
+      let dx = 0;
+      if (side > 0 && bb.min.x < FRONT_FACE_E) dx = FRONT_FACE_E - bb.min.x;
+      else if (side < 0 && bb.max.x > FRONT_FACE_W) dx = FRONT_FACE_W - bb.max.x;
+      sideCorrection[side] = dx;
+    }
+    const inst = new THREE.InstancedMesh(meshGeo, meshMat, slotList.length);
+    inst.castShadow = false; inst.receiveShadow = false;
+    inst.frustumCulled = false; // spans the whole frontage - per-instance cull below does the real work
+    const m4 = new THREE.Matrix4(), pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3(1, 1, 1);
+    const placements = slotList.map((p) => {
+      const side = p.x > ROAD_CX ? 1 : -1;
+      return { px: p.x + (sideCorrection[side] || 0), pz: p.z, ry: p.rot, s2: 1 };
+    });
+    placements.forEach((p, i) => {
+      pos.set(p.px, 0, p.pz); quat.setFromAxisAngle(_UP, p.ry); scl.set(1, 1, 1);
+      m4.compose(pos, quat, scl);
+      inst.setMatrixAt(i, m4);
+    });
+    inst.instanceMatrix.needsUpdate = true;
+    scene.add(inst);
+    registerInstancedFarCull(inst, placements);
+    placedCount += slotList.length;
+  }
   for (const key of Object.keys(slots)) {
+    if (INSTANCE_TYPES.has(key)) {
+      load(key, (src) => putInstanced(key, src, slots[key]));
+      continue;
+    }
     load(key, (src) => {
       // Near-home first ("load the part of the map that shows from the house
       // first"): the parse cost is per-file and can't be split, but the per-
