@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 00:52';
+  window.__BUILD = '2026-09-01 00:58';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -3012,14 +3012,16 @@ function buildBackyardScene(bound, scale) {
 /* ---------- House model (replaces the procedural yard) ---------- */
 const groundRaycaster = new THREE.Raycaster();
 const wallRaycaster = new THREE.Raycaster();
+const _groundRayOrigin = new THREE.Vector3(); // getGroundHeightAt/getHeightAtUsing run every frame - was allocating a fresh Vector3 each call
 // Test both sides: single-sided wall materials would otherwise be invisible to the
 // ray from the inside, so you could walk out through a wall you were standing against.
 wallRaycaster.firstHitOnly = false;
 const DOWN = new THREE.Vector3(0, -1, 0);
+const _blockSide = new THREE.Vector3(), _blockOrigin = new THREE.Vector3(); // isBlockedAhead runs every frame during movement, was allocating up to 10 Vector3s per call
 
 function getGroundHeightAt(x, z) {
   if (houseColliders.length === 0) return 0;
-  groundRaycaster.set(new THREE.Vector3(x, 60, z), DOWN);
+  groundRaycaster.set(_groundRayOrigin.set(x, 60, z), DOWN);
   groundRaycaster.far = 120;
   const hits = groundRaycaster.intersectObjects(houseColliders, false);
   return hits.length > 0 ? hits[0].point.y : 0;
@@ -3030,7 +3032,7 @@ function getGroundHeightAt(x, z) {
 // triangles) can lose a relatively small feature like a pool basin during simplification.
 function getHeightAtUsing(colliders, x, z) {
   if (colliders.length === 0) return null;
-  groundRaycaster.set(new THREE.Vector3(x, 60, z), DOWN);
+  groundRaycaster.set(_groundRayOrigin.set(x, 60, z), DOWN);
   groundRaycaster.far = 120;
   const hits = groundRaycaster.intersectObjects(colliders, false);
   return hits.length > 0 ? hits[0].point.y : null;
@@ -3063,12 +3065,12 @@ function isBlockedAhead(fromPos, dir, lookahead) {
   // Three rays across the body's width, not one down the centre. A single centre ray
   // walks straight through door jambs, table legs and wall corners — you clip the
   // edge of something the ray misses entirely.
-  const side = new THREE.Vector3(-dir.z, 0, dir.x).normalize().multiplyScalar(0.28);
+  const side = _blockSide.set(-dir.z, 0, dir.x).normalize().multiplyScalar(0.28);
   const offsets = inInterior ? [0, 1, -1] : [0];
   for (const h of heights) {
     for (const o of offsets) {
       wallRaycaster.set(
-        new THREE.Vector3(fromPos.x + side.x * o, fromPos.y + h, fromPos.z + side.z * o),
+        _blockOrigin.set(fromPos.x + side.x * o, fromPos.y + h, fromPos.z + side.z * o),
         dir
       );
       wallRaycaster.far = lookahead;
