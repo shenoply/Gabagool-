@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 00:35';
+  window.__BUILD = '2026-09-01 00:45';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -3834,12 +3834,14 @@ function updateCarDriving(dt) {
   const speedoEl = document.getElementById('speedo');
   if (speedoEl) {
     speedoEl.style.display = '';
-    document.getElementById('speedo-val').textContent = Math.round(Math.abs(carState.speed) * 7.5);
+    const mph = String(Math.round(Math.abs(carState.speed) * 7.5));
+    const sv = document.getElementById('speedo-val');
+    if (sv.textContent !== mph) sv.textContent = mph; // skip identical rewrites (steady speed / standstill)
     let g = 0;
     while (g < ENGINE_GEARS.length - 1 && speedFrac > ENGINE_GEARS[g]) g++;
     const ge = document.getElementById('speedo-gear');
-    ge.dataset.g = String(g + 1);
-    ge.textContent = carState.speed < -0.2 ? 'REVERSE' : 'GEAR ' + (g + 1);
+    const gearTxt = carState.speed < -0.2 ? 'REVERSE' : 'GEAR ' + (g + 1);
+    if (ge.textContent !== gearTxt) { ge.dataset.g = String(g + 1); ge.textContent = gearTxt; } // only on actual gear change
   }
   // Speed used to add up to 16 degrees of FOV, which fought the +/- zoom buttons —
   // pressing zoom did nothing visible while moving. The surge is now much smaller
@@ -5453,10 +5455,13 @@ function bearingLabel(fromX, fromZ, facing, toX, toZ) {
 function updateCompass() {
   const el = document.getElementById('compass');
   const coordEl = document.getElementById('coords-display');
-  if (coordEl && (drivingMode || character)) {
+  const nowMs = performance.now();
+  if (coordEl && (drivingMode || character) && nowMs - (updateCompass._coordAt || 0) > 150) {
+    updateCompass._coordAt = nowMs;
     const cx = drivingMode ? carState.x : character.position.x;
     const cz = drivingMode ? carState.z : character.position.z;
-    coordEl.textContent = 'X ' + cx.toFixed(1) + '  Z ' + cz.toFixed(1);
+    const txt = 'X ' + cx.toFixed(1) + '  Z ' + cz.toFixed(1);
+    if (txt !== updateCompass._coordTxt) { updateCompass._coordTxt = txt; coordEl.textContent = txt; } // was a layout-forcing write every frame while moving
   }
   if (!el) return;
   if (photoMode || (!drivingMode && !character)) { el.style.display = 'none'; return; }
@@ -11605,7 +11610,7 @@ function tick() {
   if (character && !drivingMode) {
     spot.position.set(character.position.x, 5, character.position.z + 2);
     spot.target.position.copy(character.position);
-    scene.add(spot.target);
+    if (!spot.target.parent) scene.add(spot.target); // was re-added EVERY FRAME - add() on a parented object is a remove+re-add each tick
   }
   renderer.render(scene, camera);
   requestAnimationFrame(tick);
