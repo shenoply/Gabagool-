@@ -940,7 +940,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-01 09:36';
+  window.__BUILD = '2026-09-01 10:19';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -8744,18 +8744,38 @@ function registerInstancedFarCull(...meshesAndPlacements) {
   instancedCullList.push({ meshes, placements, realMatrices, visible: placements.map(() => true) });
 }
 let _instCullTimer = 0;
+// Real camera frustum, reused every sweep rather than allocated fresh.
+const _instCullFrustum = new THREE.Frustum();
+const _instCullMatrix = new THREE.Matrix4();
+const _instCullSphere = new THREE.Sphere();
+const _instCullVec3 = new THREE.Vector3();
 function updateInstancedFarCull(dt) {
   _instCullTimer -= dt;
   if (_instCullTimer > 0) return;
-  _instCullTimer = 0.5;
+  _instCullTimer = 0.15; // tighter than the 0.5s used elsewhere - frustum entry needs to feel responsive when panning/turning, unlike pure distance which changes gradually. The check itself is cheap (a few hundred sphere/frustum tests).
   const px = camera.position.x, pz = camera.position.z;
   const d2 = FAR_CULL_DIST * FAR_CULL_DIST;
+  // Disabling frustumCulled on the InstancedMesh (needed since its own bounds
+  // span the whole planted range, which three.js's automatic per-object test
+  // can't subdivide) lost the free behind-camera/off-to-the-side culling every
+  // individual tree used to get - triangle count went UP after switching to
+  // instancing, not down, because of this. Replaced with an explicit
+  // per-instance frustum test alongside the distance test, so an instance only
+  // renders when it's both close enough AND actually in view - same net effect
+  // as before, now correctly reproduced per-instance instead of per-object.
+  _instCullMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  _instCullFrustum.setFromProjectionMatrix(_instCullMatrix);
   for (const group of instancedCullList) {
     let changed = false;
     for (let i = 0; i < group.placements.length; i++) {
       const p = group.placements[i];
       const dx = p.px - px, dz = p.pz - pz;
-      const shouldShow = (dx * dx + dz * dz) <= d2;
+      let shouldShow = (dx * dx + dz * dz) <= d2;
+      if (shouldShow) {
+        // radius ~10 covers the tree's full canopy spread around its trunk position
+        _instCullSphere.set(_instCullVec3.set(p.px, 6, p.pz), 10);
+        shouldShow = _instCullFrustum.intersectsSphere(_instCullSphere);
+      }
       if (shouldShow === group.visible[i]) continue;
       group.visible[i] = shouldShow;
       const m = shouldShow ? group.realMatrices[i] : _ZERO_M4;
