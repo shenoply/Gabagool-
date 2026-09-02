@@ -941,7 +941,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-02 03:10';
+  window.__BUILD = '2026-09-02 03:35';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -10939,7 +10939,14 @@ loader.parse(buffer, '', (gltf) => {
   camDist = fitDist * 1.55; // margin so he isn't edge-to-edge
   camDistMin = fitDist * 0.7;
   camDistMax = fitDist * 3.5;
-  camera.near = Math.max(0.02, sphere.radius * 0.02);
+  /* near was 0.02 (from the character's own bounding sphere) against a far of
+     4000 - a 200,000:1 depth range. Mobile GPUs commonly carry a 16-bit depth
+     buffer, and a ratio that extreme collapses precision to the point of
+     z-fighting and can drop the driver onto slower paths. Depth precision is
+     governed almost entirely by the NEAR plane, so raising it is nearly free
+     visually (0.15 is still well inside the character) and buys back orders of
+     magnitude of precision. */
+  camera.near = 0.15;
   // Was Math.max(100, sphere.radius*40) using the CHARACTER's own bounding
   // sphere - for a 1.75m character that's exactly 100, and this is the ONLY
   // place camera.far is ever set in the whole file, so the real draw distance
@@ -10947,7 +10954,14 @@ loader.parse(buffer, '', (gltf) => {
   // mattered before because everything else stays low/close enough that fog
   // fades it out around the same range - the plane (220 altitude) and the NYC
   // skyline (towers up to ~140m) are the first things to actually exceed it.
-  camera.far = 4000;
+  /* 4000 was set when the plane and skyline needed to be reachable, back when
+     fog faded out around 600. Fog is now solid at FOG_FAR (95) and everything
+     except the plane is culled there, so a 4000 far plane was buying nothing and
+     costing depth precision. 950 keeps the plane's orbit (altitude 220, radius
+     up to 750) comfortably inside the frustum while cutting the depth range by
+     more than 4x. Matches the user's own observation that trouble began when
+     the plane and the far plane went in together. */
+  camera.far = 950;
   camera.updateProjectionMatrix();
 
   // House model confirmed working — restoring the call.
