@@ -941,7 +941,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-02 04:05';
+  window.__BUILD = '2026-09-02 11:45';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1786,7 +1786,7 @@ function updatePhoneRinger() {
 }
 
 
-const maxAniso = renderer.capabilities.getMaxAnisotropy();
+const maxAniso = Math.min(4, renderer.capabilities.getMaxAnisotropy()); // was device max (often 16x) - capped to 4x, a real sampling-cost multiplier applied to many textures, minimal visible difference beyond 4x
 function sharpenTextures(root) {
   root.traverse((o) => {
     if (!o.isMesh || !o.material) return;
