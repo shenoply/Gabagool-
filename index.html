@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-02 19:05';
+  window.__BUILD = '2026-09-02 20:10';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -8144,6 +8144,10 @@ function updateProximityLoads(dt) {
     if (dx * dx + dz * dz < p.radius) {
       p.fired = true;
       try { p.fn(); } catch (e) { console.warn('proximity load failed:', e); }
+      // A proximity load drops in a whole new content set mid-play, which is
+      // exactly when a compile stall is most noticeable. Warm shortly after, once
+      // its meshes have actually been added.
+      setTimeout(() => { try { warmUpShaders('proximity'); } catch (e) {} }, 1200);
     }
   }
 }
@@ -10766,9 +10770,23 @@ function endLoad(name) {
        that would miss everything arriving later. Each is idempotent - already
        compiled programs are skipped, so the later calls only pay for whatever is
        genuinely new. */
-    setTimeout(() => warmUpShaders('core'), 6000);
-    setTimeout(() => warmUpShaders('scenery'), 9000);
-    setTimeout(() => warmUpShaders('late'), 13000);
+    /* Three fixed warm-ups (6s/9s/13s) were not enough: the SHADERS counter
+       still climbed 174 -> 347 DURING play, because content keeps arriving long
+       after those windows - deferred scenery, and especially proximity loads
+       like "perimeter trees loaded OK, 144 placed" which fire whenever you drive
+       somewhere new. Every late arrival compiles its shader on first render,
+       mid-drive, and each compile is a synchronous stall.
+       This watches renderer.info.programs instead of guessing times: whenever
+       the program count has grown since the last check, it warms again. It backs
+       off once things settle and stops entirely after 3 minutes, so it costs
+       nothing in steady state. */
+    let _lastPrograms = -1, _warmChecks = 0;
+    const _warmTimer = setInterval(() => {
+      const n = renderer.info.programs ? renderer.info.programs.length : 0;
+      if (n !== _lastPrograms) { _lastPrograms = n; warmUpShaders('auto'); }
+      if (++_warmChecks > 60) clearInterval(_warmTimer);
+    }, 3000);
+    window.__warmNow = () => warmUpShaders('manual');
     registerProximityLoad(NYC_SKYLINE_POS.x, NYC_SKYLINE_POS.z, 300, loadNYCSkyline); // same far-content treatment as chicago/industrial - may never be visited
     setTimeout(buildCrossTraffic, 4200);  // same // ~14MB of scenery, lowest priority — safe to build early
     /* NJ street disabled. Kenney's kit is CC0 and cheap, but candy-coloured
