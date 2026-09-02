@@ -941,7 +941,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-02 11:45';
+  window.__BUILD = '2026-09-02 18:30';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7457,6 +7457,37 @@ function loadMeshyBuildings() {
       if (mat && mat.name === 'Rinde_Leaf') { leafGeo = m.geometry; leafMat = mat.clone(); }
       else { trunkGeo = m.geometry; trunkMat = mat.clone(); }
     });
+    /* FOLIAGE FILL-RATE FIX - aimed at the one thing that was actually measured.
+       Profiling showed all game JS costs ~1ms/frame (wildlife 0.00, traffic 0.00,
+       culling 0.00) while ~90% of the frame sits inside render submit. So the
+       cost is per-pixel, and the canopy is the worst case in this scene: alpha-
+       tested leaf cards fill the whole screen and stack many layers deep, and
+       alpha-test defeats the GPU's early-depth rejection - every one of those
+       layers runs a full fragment shader before discarding.
+       MeshStandardMaterial runs the complete PBR path per fragment (BRDF,
+       roughness/metalness, normal mapping, environment terms). MeshLambert
+       computes lighting at the VERTEX and only samples the texture per fragment.
+       For flat leaf cards - which have no meaningful specular or normal detail
+       to lose - the visual difference is close to nil, but the per-pixel work
+       drops by a large factor exactly where overdraw is deepest.
+       Only the foliage is converted. The trunk stays MeshStandard: it's a solid
+       opaque surface with real shading, it doesn't overdraw, and it's the part
+       you actually see up close. */
+    const toLambert = (mat) => {
+      if (!mat || !mat.isMeshStandardMaterial) return mat;
+      const lm = new THREE.MeshLambertMaterial({
+        map: mat.map || null,
+        color: mat.color ? mat.color.clone() : undefined,
+        side: THREE.DoubleSide,
+        alphaTest: 0.35,
+        transparent: false,
+        fog: mat.fog !== undefined ? mat.fog : true,
+        vertexColors: mat.vertexColors || false,
+      });
+      lm.name = mat.name;
+      return lm;
+    };
+    leafMat = toLambert(leafMat);
     for (const mat of [trunkMat, leafMat]) {
       if (!mat) continue;
       if (mat.map) { mat.map.anisotropy = maxAniso; mat.map.needsUpdate = true; }
