@@ -941,7 +941,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-02 00:35';
+  window.__BUILD = '2026-09-02 02:40';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1208,8 +1208,14 @@ function updateDayNight(dt) {
    facing down the avenue. 160 sits near the fast end of that curve while
    staying far enough to keep the street readable, and unlike the old 100 it
    costs nothing in pop-in. SA's ~0.35 start:far ratio kept. */
-const FOG_NEAR = 55;                              // haze onset - SA's ~0.35 x far
-const FOG_FAR = 160;                              // solid fog; nothing past this is visible - FAR_CULL_DIST tracks this automatically
+/* Cut to the shortest distance that still shows the road you're actually on.
+   Measured curve across builds: cull 275 -> 20fps, 160 -> 21-23fps, 100 ->
+   32-36fps. 95 sits at the fast end deliberately. Linear fog is what makes this
+   free: the scene reaches 100% sky colour exactly at `far`, so pulling the cull
+   this close costs nothing in pop-in - the earlier 100-unit build bought the
+   same speed by accepting visible popping, this does not. */
+const FOG_NEAR = 33;                              // haze onset
+const FOG_FAR = 95;                               // solid fog; FAR_CULL_DIST tracks this automatically
 const FOG_INDOOR_NEAR = 2, FOG_INDOOR_FAR = 34;   // indoors the horizon is a wall
 /* Anti-pop guarantee, by construction rather than by eye.
    FogExp2 leaves visibility = exp(-(density*dist)^2). Solving for the distance
