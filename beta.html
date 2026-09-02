@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-02 21:00';
+  window.__BUILD = '2026-09-02 22:15';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -10832,12 +10832,23 @@ function endLoad(name) {
        the program count has grown since the last check, it warms again. It backs
        off once things settle and stops entirely after 3 minutes, so it costs
        nothing in steady state. */
-    let _lastPrograms = -1, _warmChecks = 0;
+    /* Was: only re-warm when renderer.info.programs had GROWN. That can never
+       work, and the live SHADERS counter climbing 259 -> 372 during play proved
+       it: the count grows BECAUSE a shader just compiled, so reacting to growth
+       always fires one stall too late. Newly added content sits with an
+       uncompiled program and the watcher sees no change until the moment it
+       renders - which is the stall.
+       Now it warms UNCONDITIONALLY on a short interval, so anything added gets
+       its program built within ~2s of arriving, before you drive close enough to
+       render it. renderer.compile() skips programs that already exist, so the
+       repeat cost is small and drops to near-zero once content stops arriving.
+       Runs for 4 minutes, which covers the deferred queue and the proximity
+       loads that fire as you first reach each area. */
+    let _warmChecks = 0;
     const _warmTimer = setInterval(() => {
-      const n = renderer.info.programs ? renderer.info.programs.length : 0;
-      if (n !== _lastPrograms) { _lastPrograms = n; warmUpShaders('auto'); }
-      if (++_warmChecks > 60) clearInterval(_warmTimer);
-    }, 3000);
+      warmUpShaders('auto');
+      if (++_warmChecks > 120) clearInterval(_warmTimer);
+    }, 2000);
     window.__warmNow = () => warmUpShaders('manual');
     registerProximityLoad(NYC_SKYLINE_POS.x, NYC_SKYLINE_POS.z, 300, loadNYCSkyline); // same far-content treatment as chicago/industrial - may never be visited
     setTimeout(buildCrossTraffic, 4200);  // same // ~14MB of scenery, lowest priority — safe to build early
