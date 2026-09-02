@@ -941,7 +941,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-02 03:35';
+  window.__BUILD = '2026-09-02 04:05';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -993,7 +993,14 @@ renderer.domElement.addEventListener('webglcontextlost', (e) => {
   showFatalError('Graphics context lost — the phone GPU ran out of resources.\n\nFix: fully close the browser app (swipe it away in recents), reopen, and load the game again.');
 }, false);
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.shadowMap.enabled = true;
+/* MINIMUM PASS - shadows off. This is the largest single remaining cost: a
+   shadow map renders every shadow-casting object a SECOND time each frame from
+   the light's point of view, then every lit pixel pays a depth-comparison
+   lookup. Both are fixed per-frame costs independent of how much is on screen -
+   the same signature as everything else that mattered here. All the castShadow
+   flags below are left in place, so flipping this one line back to true fully
+   restores shadows if the trade isn't worth it. */
+renderer.shadowMap.enabled = false;
 renderer.shadowMap.type = THREE.PCFShadowMap; // PCFSoft takes several extra taps per shadowed pixel - pure fragment cost, and this profile is fragment-bound
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -5347,7 +5354,7 @@ function setQuality(level) {
   if (rainMesh && level === 0) rainMesh.visible = false;
   if (tallGrassMesh) tallGrassMesh.visible = level >= 1;
   try {
-    renderer.shadowMap.enabled = level >= 1;
+    renderer.shadowMap.enabled = false; // pinned off - was level>=1, which switched shadows back on the moment fps recovered, spending the gain straight back
     // Hard-capped at 1.0 across every quality tier. Was 2.0/1.5/1.0 by tier,
     // which on a fragment-bound frame meant every fps gain was immediately
     // spent back on resolution (2.25x the pixels at 1.5, 4x at 2.0) - the
@@ -5968,7 +5975,7 @@ function exitInterior() {
     character.rotation.y = Math.atan2(1.2, 2.2); // facing out, away from the door
     camTarget.set(character.position.x, camTargetYOffset, character.position.z);
     if (scene.fog) { scene.fog.near = FOG_NEAR; scene.fog.far = FOG_FAR; }  // back to outdoor haze
-    try { renderer.shadowMap.enabled = qualityLevel >= 1; } catch (e) {}
+    try { renderer.shadowMap.enabled = false; } catch (e) {} // pinned off, see above
     try { renderer.setPixelRatio(1); } catch (e) {} // pinned across all tiers - fps gains stay as frames instead of being spent back on resolution
     camDist = 7.5;
     camTargetYOffset = 0.9;
@@ -9019,7 +9026,13 @@ let planeMesh = null;
 // loop's reach the entire time regardless of phase. Re-centered on the avenue's
 // midpoint with rz stretched to nearly the full 0-1600 length so it actually
 // passes near home on every orbit, not just the far end.
-const PLANE_ORBIT = { cx: 27, cz: 800, rx: 180, rz: 750, y: 220, speed: 0.02, phase: 0 };
+/* Orbit pulled in hard. The old radius (up to 750) and altitude (220) were the
+   ONLY reason camera.far had to stay at 950 - everything else is culled by fog
+   at 95. Bringing it to r=120/y=95 lets the far plane drop to 200, which is
+   what actually shrinks the frustum. Centred near home (z=120) rather than at
+   the far junction, so it passes overhead where you are instead of 800 units
+   away. Smaller radius also means it comes round more often. */
+const PLANE_ORBIT = { cx: 27, cz: 120, rx: 120, rz: 120, y: 95, speed: 0.05, phase: 0 };
 function loadPlane() {
   loader.parse(ASSETS.PLANE, '', (gltf) => {
     const plane = gltf.scene;
@@ -10961,7 +10974,11 @@ loader.parse(buffer, '', (gltf) => {
      up to 750) comfortably inside the frustum while cutting the depth range by
      more than 4x. Matches the user's own observation that trouble began when
      the plane and the far plane went in together. */
-  camera.far = 950;
+  /* 200, down from 950. Nothing needs distance any more: fog is solid at 95 and
+     the plane now orbits at r=120/y=95. Depth ratio is 1,333:1 against near
+     0.15 - precision is effectively a non-issue at that range, versus the
+     200,000:1 it was at when the trouble started. */
+  camera.far = 200;
   camera.updateProjectionMatrix();
 
   // House model confirmed working — restoring the call.
