@@ -500,6 +500,7 @@
     <button id="pov-btn" title="First-person view" style="display:none;">👁</button>
     <button id="phone-btn" title="Phone">📱</button>
     <button id="freecam-btn" title="Free camera">🎥</button>
+    <button id="prof-btn" title="Frame profiler: start, drive the road, press again for the report">📊</button>
     <button id="markers-btn" title="Show asset markers">📍</button>
     <button id="map-btn" title="Map">🗺️</button>
   </div>
@@ -941,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-02 18:30';
+  window.__BUILD = '2026-09-02 19:05';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1988,6 +1989,14 @@ function stepFreeCam(dt) {
   camera.lookAt(_freeCamLook);
 }
 document.getElementById('freecam-btn').addEventListener('click', toggleFreeCam);
+(function () {
+  const pb = document.getElementById('prof-btn');
+  if (!pb) return;
+  pb.addEventListener('click', () => {
+    if (PROF.on) { profStop(); pb.style.background = ''; pb.textContent = '📊'; }
+    else { profStart(); pb.style.background = '#e2551f'; pb.textContent = '⏹'; }
+  });
+})();
 
 /* ================= DEBUG MARKERS — where every recent addition actually is =================
    One beacon + label per placement from the last few batches (NPCs, environment
@@ -11907,7 +11916,245 @@ window.addEventListener('resize', () => {
 
 /* ---------- Animation loop ---------- */
 const clock = new THREE.Clock();
+
+/* ================= FRAME PROFILER =================
+   Built because every optimisation so far was aimed at a guess. This measures
+   instead: it wraps each update subsystem, times the render call, asks the GPU
+   directly how long it took (EXT_disjoint_timer_query_webgl2 when the driver
+   exposes it), and records the worst frames with their full context - position,
+   speed, draw calls, triangles, and which subsystem spiked in that exact frame.
+
+   Why a GPU timer matters: renderer.render() returns almost immediately because
+   GL commands are queued, not executed. So CPU-side timing around it measures
+   nothing useful. The timer query is the only way to see real GPU cost from
+   inside the page, and it is what settles CPU-bound vs GPU-bound for good
+   rather than by inference from fps staying flat.
+
+   Wrapping is done by reassigning the function bindings (legal for `function`
+   declarations in the same module scope), so the tick loop itself is untouched
+   and the profiler adds nothing when off. */
+const PROF = {
+  on: false,
+  frames: 0,
+  startedAt: 0,
+  acc: Object.create(null),      // cumulative ms per subsystem
+  cur: Object.create(null),      // this frame's ms per subsystem
+  frameMs: [],                   // every frame's total, for percentiles
+  worst: [],                     // worst frames with context
+  gpuMs: [],                     // GPU times that came back from the driver
+  gpuExt: null, gpuQueries: [], gpuUnsupported: false,
+  hitchCount: 0,                 // frames over 2x the running median
+  path: [],                      // route samples: where you were, how it ran
+};
+
+function profWrap(name, fn) {
+  return function (a, b, c) {
+    if (!PROF.on) return fn(a, b, c);
+    const t0 = performance.now();
+    const r = fn(a, b, c);
+    const d = performance.now() - t0;
+    PROF.acc[name] = (PROF.acc[name] || 0) + d;
+    PROF.cur[name] = (PROF.cur[name] || 0) + d;
+    return r;
+  };
+}
+
+function profSetupGPU() {
+  try {
+    const gl = renderer.getContext();
+    PROF.gpuExt = gl.getExtension('EXT_disjoint_timer_query_webgl2')
+               || gl.getExtension('EXT_disjoint_timer_query');
+    if (!PROF.gpuExt) PROF.gpuUnsupported = true;
+  } catch (e) { PROF.gpuUnsupported = true; }
+}
+
+/* Collect any finished GPU queries. Results arrive a few frames late, which is
+   why they are gathered as an aggregate rather than matched to their frame. */
+function profCollectGPU() {
+  if (!PROF.gpuExt) return;
+  const gl = renderer.getContext();
+  for (let i = PROF.gpuQueries.length - 1; i >= 0; i--) {
+    const q = PROF.gpuQueries[i];
+    let available = false, disjoint = false;
+    try {
+      available = gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE);
+      disjoint = gl.getParameter(PROF.gpuExt.GPU_DISJOINT_EXT);
+    } catch (e) { PROF.gpuQueries.splice(i, 1); continue; }
+    if (available) {
+      if (!disjoint) {
+        try { PROF.gpuMs.push(gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6); } catch (e) {}
+      }
+      try { gl.deleteQuery(q); } catch (e) {}
+      PROF.gpuQueries.splice(i, 1);
+    }
+  }
+}
+
+function pct(arr, p) {
+  if (!arr.length) return 0;
+  const s = Float64Array.from(arr).sort();
+  return s[Math.min(s.length - 1, Math.floor((p / 100) * (s.length - 1)))];
+}
+
+function profStart() {
+  PROF.on = true; PROF.frames = 0; PROF.startedAt = performance.now();
+  PROF.acc = Object.create(null); PROF.frameMs = []; PROF.worst = [];
+  PROF.gpuMs = []; PROF.hitchCount = 0; PROF.path = [];
+  if (!PROF.gpuExt && !PROF.gpuUnsupported) profSetupGPU();
+  if (window.__gameNote) window.__gameNote('PROFILER ON - drive the road, then press again to stop');
+}
+
+function profStop() {
+  PROF.on = false;
+  const report = profReport();
+  try {
+    const blob = new Blob([report], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'gabagool-profile.txt';
+    a.click();
+  } catch (e) {}
+  try { navigator.clipboard && navigator.clipboard.writeText(report); } catch (e) {}
+  // Also print into the on-screen log, chunked so it stays readable
+  for (const line of report.split('\n')) if (window.__gameNote) window.__gameNote(line);
+  console.log(report);
+  return report;
+}
+
+function profReport() {
+  const durS = (performance.now() - PROF.startedAt) / 1000;
+  const n = PROF.frames || 1;
+  const avg = PROF.frameMs.reduce((a, b) => a + b, 0) / (PROF.frameMs.length || 1);
+  const p50 = pct(PROF.frameMs, 50), p95 = pct(PROF.frameMs, 95), p99 = pct(PROF.frameMs, 99);
+  const L = [];
+  L.push('===== GABAGOOL FRAME PROFILE =====');
+  L.push(`duration ${durS.toFixed(1)}s over ${PROF.frames} frames`);
+  L.push(`fps avg ${(1000 / avg).toFixed(1)} | frame ms: median ${p50.toFixed(1)}  p95 ${p95.toFixed(1)}  p99 ${p99.toFixed(1)}  worst ${pct(PROF.frameMs,100).toFixed(1)}`);
+  L.push(`hitches (frame > 2x median): ${PROF.hitchCount}  (${(PROF.hitchCount / n * 100).toFixed(1)}% of frames)`);
+  L.push('');
+
+  if (PROF.gpuMs.length) {
+    const g50 = pct(PROF.gpuMs, 50), g95 = pct(PROF.gpuMs, 95);
+    L.push(`--- GPU (driver-reported, ${PROF.gpuMs.length} samples) ---`);
+    L.push(`gpu ms: median ${g50.toFixed(2)}  p95 ${g95.toFixed(2)}`);
+    const cpuShare = Math.max(0, p50 - g50);
+    L.push(`VERDICT: median frame ${p50.toFixed(1)}ms = GPU ${g50.toFixed(1)}ms + CPU/other ${cpuShare.toFixed(1)}ms`);
+    L.push(g50 > p50 * 0.6
+      ? '  -> GPU-BOUND. Cut per-pixel cost: resolution, lights, overdraw, fog range.'
+      : '  -> CPU-BOUND. Cut per-frame JS: the subsystem table below names the cost.');
+  } else {
+    L.push('--- GPU ---');
+    L.push(PROF.gpuUnsupported
+      ? 'timer query unsupported by this driver - CPU table below is still valid'
+      : 'no GPU samples returned (driver withheld them)');
+  }
+  L.push('');
+
+  L.push('--- CPU per subsystem (ms/frame avg, worst single frame) ---');
+  const rows = Object.keys(PROF.acc).map(k => ({
+    k, avg: PROF.acc[k] / n, max: PROF.worstBy && PROF.worstBy[k] || 0,
+  })).sort((a, b) => b.avg - a.avg);
+  let cpuTotal = 0;
+  for (const r of rows) {
+    cpuTotal += r.avg;
+    L.push(`  ${r.k.padEnd(24)} ${r.avg.toFixed(2).padStart(7)} ms/f   (${(r.avg / avg * 100).toFixed(1)}% of frame)`);
+  }
+  L.push(`  ${'[measured JS total]'.padEnd(24)} ${cpuTotal.toFixed(2).padStart(7)} ms/f   (${(cpuTotal / avg * 100).toFixed(1)}% of frame)`);
+  L.push(`  ${'[unaccounted]'.padEnd(24)} ${(avg - cpuTotal).toFixed(2).padStart(7)} ms/f  <- GPU wait, browser compositing, video decode, throttling`);
+  L.push('');
+
+  L.push('--- WORST 12 FRAMES (what was happening) ---');
+  for (const w of PROF.worst.slice(0, 12)) {
+    const top = Object.keys(w.cur).sort((a, b) => w.cur[b] - w.cur[a]).slice(0, 3)
+      .map(k => `${k} ${w.cur[k].toFixed(1)}ms`).join(', ');
+    L.push(`  ${w.ms.toFixed(0).padStart(4)}ms @ x${w.x.toFixed(0)} z${w.z.toFixed(0)} ${w.driving ? 'DRIVING' : 'foot'} | ${w.calls} calls ${(w.tris/1000).toFixed(0)}k tris ${w.shaders} shaders | ${top || 'no JS spike -> GPU/browser stall'}`);
+  }
+  L.push('');
+
+  L.push('--- ROUTE (fps along the road) ---');
+  for (const p of PROF.path) L.push(`  z ${String(p.z).padStart(5)}: ${p.fps.toFixed(0)} fps, ${p.calls} calls, ${(p.tris/1000).toFixed(0)}k tris`);
+  L.push('');
+  L.push('--- READ THIS ---');
+  L.push('If [unaccounted] dominates and GPU median is low, the frame is being');
+  L.push('eaten outside the game: browser compositing, a video playing over the');
+  L.push('page, or thermal/battery throttling. If a named subsystem dominates,');
+  L.push('that is the thing to fix. If GPU median is high, cut per-pixel work.');
+  L.push('==================================');
+  return L.join('\n');
+}
+
+PROF.worstBy = Object.create(null);
+
+/* Called at the very top and bottom of each tick by the wrappers below. */
+function profFrameStart() {
+  if (!PROF.on) return;
+  PROF.cur = Object.create(null);
+  PROF._t0 = performance.now();
+  if (PROF.gpuExt && PROF.gpuQueries.length < 6) {
+    try {
+      const gl = renderer.getContext();
+      const q = gl.createQuery();
+      gl.beginQuery(PROF.gpuExt.TIME_ELAPSED_EXT, q);
+      PROF._q = q;
+    } catch (e) { PROF._q = null; }
+  }
+}
+
+function profFrameEnd() {
+  if (!PROF.on) return;
+  if (PROF._q) {
+    try { renderer.getContext().endQuery(PROF.gpuExt.TIME_ELAPSED_EXT); PROF.gpuQueries.push(PROF._q); }
+    catch (e) {}
+    PROF._q = null;
+  }
+  profCollectGPU();
+  const ms = performance.now() - PROF._t0;
+  PROF.frames++;
+  PROF.frameMs.push(ms);
+  for (const k in PROF.cur) if (PROF.cur[k] > (PROF.worstBy[k] || 0)) PROF.worstBy[k] = PROF.cur[k];
+
+  const med = PROF.frameMs.length > 30 ? pct(PROF.frameMs, 50) : 16.7;
+  if (ms > med * 2) PROF.hitchCount++;
+
+  const info = renderer.info.render;
+  const px = drivingMode ? carState.x : (character ? character.position.x : 0);
+  const pz = drivingMode ? carState.z : (character ? character.position.z : 0);
+  if (PROF.worst.length < 200) {
+    PROF.worst.push({ ms, x: px, z: pz, driving: !!drivingMode, calls: info.calls,
+                      tris: info.triangles, shaders: renderer.info.programs ? renderer.info.programs.length : 0,
+                      cur: Object.assign({}, PROF.cur) });
+    PROF.worst.sort((a, b) => b.ms - a.ms);
+    if (PROF.worst.length > 60) PROF.worst.length = 60;
+  }
+  // route sample every ~25 units of z travel
+  const zb = Math.round(pz / 25) * 25;
+  if (!PROF._lastZB || PROF._lastZB !== zb) {
+    PROF._lastZB = zb;
+    PROF.path.push({ z: zb, fps: 1000 / Math.max(1, ms), calls: info.calls, tris: info.triangles });
+    if (PROF.path.length > 120) PROF.path.shift();
+  }
+}
+
+window.__prof = { start: profStart, stop: profStop, report: profReport, state: PROF };
+
+/* Wrap the subsystems. Reassigning `function` declarations is legal in the same
+   module scope, so tick() needs no edits and the wrappers cost one boolean
+   check when the profiler is off. */
+updateDayNight = profWrap('dayNight', updateDayNight);
+updateCamera = profWrap('camera', updateCamera);
+updateCarDriving = profWrap('carDriving', updateCarDriving);
+updateRain = profWrap('rain', updateRain);
+updateRoadPatrols = profWrap('roadPatrols', updateRoadPatrols);
+updateWildlife = profWrap('wildlife', updateWildlife);
+updateFarCull = profWrap('farCull', updateFarCull);
+updateInstancedFarCull = profWrap('instancedCull', updateInstancedFarCull);
+updateStreetDetail = profWrap('streetDetail', updateStreetDetail);
+updateCrossTraffic = profWrap('crossTraffic', updateCrossTraffic);
+updateTraffic = profWrap('traffic', updateTraffic);
+handleMovement = profWrap('movement', handleMovement);
+
 function tick() {
+  profFrameStart();
   if (renderPaused) return; // rAF is already throttled when hidden, but this skips the work too
   const dt = Math.min(clock.getDelta(), 0.05);
   updatePerf(dt);
@@ -12043,7 +12290,10 @@ function tick() {
     spot.target.position.copy(character.position);
     if (!spot.target.parent) scene.add(spot.target); // was re-added EVERY FRAME - add() on a parented object is a remove+re-add each tick
   }
+  const _rt0 = PROF.on ? performance.now() : 0;
   renderer.render(scene, camera);
+  if (PROF.on) { const d = performance.now() - _rt0; PROF.acc['render(submit)'] = (PROF.acc['render(submit)']||0)+d; PROF.cur['render(submit)'] = d; }
+  profFrameEnd();
   requestAnimationFrame(tick);
 }
 tick();
