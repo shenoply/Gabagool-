@@ -941,7 +941,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-02 02:40';
+  window.__BUILD = '2026-09-02 03:10';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -8780,9 +8780,10 @@ function updateWildlife(dt) {
   const px = drivingMode ? carState.x : (character ? character.position.x : 0);
   const pz = drivingMode ? carState.z : (character ? character.position.z : 0);
   // grounded: same 120-unit skeletal cull as the street NPCs
-  for (const n of wildlifeMixers) {
+  for (let i = 0; i < wildlifeMixers.length; i++) {
+    const n = wildlifeMixers[i];
     const dx = n.x - px, dz = n.z - pz;
-    if (dx * dx + dz * dz < 14400) n.mixer.update(dt);
+    if (dx * dx + dz * dz < 2500 && (i + _mixerPhase) % 3 === 0) n.mixer.update(dt * 3);
   }
   for (const f of wildlifeFliers) {
     if (!f.mesh) continue;
@@ -8797,7 +8798,7 @@ function updateWildlife(dt) {
       const dx = x - px, dz = z - pz;
       // fliers get a wider mixer range (200) — a frozen-winged bird overhead is
       // more noticeable than a frozen rat 130 units up the street
-      if (dx * dx + dz * dz < 40000) f.mixer.update(dt);
+      if (dx * dx + dz * dz < 10000) f.mixer.update(dt);
     }
   }
 }
@@ -8942,6 +8943,18 @@ function registerInstancedFarCull(...meshesAndPlacements) {
   for (const p of placements) { p.cullR = r; p.cullY = cy; }
   instancedCullList.push({ meshes, placements, realMatrices, lastCount: -1 });
 }
+/* CPU SKELETAL ANIMATION - the fixed per-frame cost.
+   Live evidence: 38 draw calls / 431k tris ran at 25fps and 2086 draw calls /
+   3.03M tris ran at 26fps in the same session. 55x the draw calls for the same
+   framerate means rendering was never the limit. Skinning fits the signature
+   exactly because mixers were gated on DISTANCE, not visibility - turning around
+   changes what is drawn but not what is animating, which is why fps never moved
+   however much geometry was culled. ~100 wildlife plus ~80 street NPCs were each
+   recomputing every bone matrix on the CPU every frame at up to 120 units.
+   Two changes: radius 120 -> 50 (past that a skinned animal is a few pixels in
+   fog), and round-robin thirds - each mixer updates every 3rd frame with 3x dt,
+   so the animation plays at the same speed for a third of the CPU cost. */
+let _mixerPhase = 0;
 let _instCullTimer = 0;
 // Real camera frustum, reused every sweep rather than allocated fresh.
 const _instCullFrustum = new THREE.Frustum();
@@ -11950,12 +11963,14 @@ function tick() {
     // beyond that in normal play, so nothing changes on screen.
     const px = drivingMode ? carState.x : (character ? character.position.x : 0);
     const pz = drivingMode ? carState.z : (character ? character.position.z : 0);
-    for (const n of npcMixers) {
+    for (let i = 0; i < npcMixers.length; i++) {
+      const n = npcMixers[i];
       const dx = n.x - px, dz = n.z - pz;
-      if (dx * dx + dz * dz < 14400) n.mixer.update(dt);   // 120*120
+      if (dx * dx + dz * dz < 2500 && (i + _mixerPhase) % 3 === 0) n.mixer.update(dt * 3);   // 50*50, round-robin thirds
     }
   }
   } // close world-pause gate — camera update/render below always run so free-cam keeps working while paused
+  _mixerPhase++;
   updateFarCull(dt);
   updateInstancedFarCull(dt);
   updateLightCull(dt);
