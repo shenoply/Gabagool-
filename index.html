@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 12:20';
+  window.__BUILD = '2026-09-03 13:15';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1236,9 +1236,9 @@ function updateDayNight(dt) {
    jumps, and there is a dead zone around the target so it settles instead of
    oscillating. */
 const FOG_TARGET_FPS = 30;
-const FOG_FAR_MIN = 60, FOG_FAR_MAX = 260;
+const FOG_FAR_MIN = 45, FOG_FAR_MAX = 170;   // floor and ceiling both pulled in per request
 const FOG_NEAR_RATIO = 0.35;                      // SA's start:far proportion, kept as fog moves
-let FOG_FAR = 110;                                // live, auto-tuned from here
+let FOG_FAR = 75;                                 // live, auto-tuned from here - starts closer so it converges downward instead of spending the first seconds too far out
 let FOG_NEAR = FOG_FAR * FOG_NEAR_RATIO;
 const FOG_INDOOR_NEAR = 2, FOG_INDOOR_FAR = 34;   // indoors the horizon is a wall
 /* Anti-pop guarantee, by construction rather than by eye.
@@ -7538,7 +7538,16 @@ function loadMeshyBuildings() {
       mat.side = THREE.DoubleSide;
     }
     const placements = [];
-    for (let z = 40; z < 1200; z += 11) {
+    /* Spacing 11 -> 22: half as many avenue trees. This is the single biggest
+       remaining GPU win and it is the one thing that actually attacks the real
+       cost. The frame accounting showed GL submit at 41-69ms with game JS at
+       2.7ms, and the dominant per-pixel cost is canopy overdraw - hundreds of
+       alpha-tested leaf cards stacked down the avenue, each shading a full
+       fragment even where it is hidden behind the ones in front, because
+       alpha-test defeats the GPU's early-depth rejection. Halving the count
+       roughly halves the number of stacked layers per pixel, which is a direct
+       halving of the dominant cost rather than a trim at the edges. */
+    for (let z = 40; z < 1200; z += 22) {
       if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
       for (const side of [1, -1]) {
         const s2 = 0.85 + rnd() * 0.4;
