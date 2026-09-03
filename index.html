@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-02 22:15';
+  window.__BUILD = '2026-09-03 00:20';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -10844,11 +10844,18 @@ function endLoad(name) {
        repeat cost is small and drops to near-zero once content stops arriving.
        Runs for 4 minutes, which covers the deferred queue and the proximity
        loads that fire as you first reach each area. */
-    let _warmChecks = 0;
-    const _warmTimer = setInterval(() => {
-      warmUpShaders('auto');
-      if (++_warmChecks > 120) clearInterval(_warmTimer);
-    }, 2000);
+    /* REVERTED, and this is the important lesson: warming every 2s made things
+       measurably WORSE. The live log showed "shaders warmed (auto, 176ms)"
+       repeating on the interval while the program count barely moved (481 -> 483
+       -> 487). warmUpShaders() has to reveal every far-culled object and restore
+       every InstancedMesh count so compile() can see them - that traversal is
+       the expensive part, and it runs whether or not anything new needs
+       compiling. A 150ms stall every 2 seconds is far worse than the occasional
+       compile it was trying to pre-empt.
+       Warming is now event-driven only: once after the deferred load queue has
+       drained, and after each proximity load (both real "new content exists"
+       signals). No polling. */
+    setTimeout(() => warmUpShaders('post-load'), 12000);
     window.__warmNow = () => warmUpShaders('manual');
     registerProximityLoad(NYC_SKYLINE_POS.x, NYC_SKYLINE_POS.z, 300, loadNYCSkyline); // same far-content treatment as chicago/industrial - may never be visited
     setTimeout(buildCrossTraffic, 4200);  // same // ~14MB of scenery, lowest priority — safe to build early
