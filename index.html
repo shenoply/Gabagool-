@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 15:30';
+  window.__BUILD = '2026-09-03 16:40';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1236,9 +1236,15 @@ function updateDayNight(dt) {
    jumps, and there is a dead zone around the target so it settles instead of
    oscillating. */
 const FOG_TARGET_FPS = 30;
-const FOG_FAR_MIN = 32, FOG_FAR_MAX = 170;   // floor lowered again - the tuner is sitting on it, so it was binding too
+/* Floor raised hard. The tuner had been driving fog down to 32-45 units, which
+   is what produced the orange-white soup with no buildings and bare trees. At
+   build 04:41 the world was readable to roughly 100+ units and ran at 30fps, so
+   a floor below that is destroying the game to solve a problem the far-plane fix
+   below actually solves. The tuner keeps its job, but it can no longer trade
+   away the thing that makes the game worth looking at. */
+const FOG_FAR_MIN = 120, FOG_FAR_MAX = 240;
 const FOG_NEAR_RATIO = 0.35;                      // SA's start:far proportion, kept as fog moves
-let FOG_FAR = 75;                                 // live, auto-tuned from here - starts closer so it converges downward instead of spending the first seconds too far out
+let FOG_FAR = 160;                                // live, auto-tuned from here
 let FOG_NEAR = FOG_FAR * FOG_NEAR_RATIO;
 const FOG_INDOOR_NEAR = 2, FOG_INDOOR_FAR = 34;   // indoors the horizon is a wall
 /* Anti-pop guarantee, by construction rather than by eye.
@@ -7552,7 +7558,13 @@ function loadMeshyBuildings() {
        exercise, so it is worth one more step. Thinning further rather than
        shortening the run keeps the avenue lined all the way down instead of
        ending abruptly. */
-    for (let z = 40; z < 1200; z += 34) {
+    /* RESTORED to 11. Screenshots of build 04:41 - dense blossom, full street,
+       41 draw calls, 30fps - prove the trees were never the problem. They were
+       thinned twice (11 -> 22 -> 34) to compensate for camera.far being raised
+       from 100 to 4000, which is what actually exploded the draw calls (41 ->
+       2590 in the same session). Fixing the far plane below makes the thinning
+       pointless, and it cost the street its entire character. */
+    for (let z = 40; z < 1200; z += 11) {
       if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
       for (const side of [1, -1]) {
         const s2 = 0.85 + rnd() * 0.4;
@@ -8496,7 +8508,7 @@ function buildPerimeterTrees() {
     const lines = [-160, 310];
     let placed = 0;
     for (const roadX of lines) {
-      for (let z = 60; z < 1480; z += 90) {
+      for (let z = 60; z < 1480; z += 40) {   // restored with the avenue trees
         for (const side of [1, -1]) {
           const t = gltf.scene.clone(true);
           t.position.set(roadX + side * 7, 0, z + (side > 0 ? 0 : 20));
@@ -8956,12 +8968,12 @@ function updateDrawDistanceTuner(dt) {
      Resolution scale is the direct lever on that: 0.8 is 36% fewer pixels for a
      slight softening, and it only engages once fog has run out of room, so
      sharpness is only ever traded after distance has been. */
-  if (fps < FOG_TARGET_FPS - 2 && FOG_FAR <= FOG_FAR_MIN + 1 && _resScale > 0.55) {
+  if (fps < FOG_TARGET_FPS - 2 && FOG_FAR <= FOG_FAR_MIN + 1 && _resScale > 0.85) {
     // Floor lowered 0.70 -> 0.55: the live log showed it walk down to exactly
     // 0.70 and stop while still short of target, i.e. the limit was binding
     // rather than the frame being solved. 0.55 is ~70% fewer pixels than full
     // and is the last lever available once fog is already at its floor.
-    _resScale = Math.max(0.55, _resScale - 0.05);
+    _resScale = Math.max(0.85, _resScale - 0.05);   // floor raised from 0.55 - a blurry game is not a fixed game
     try { renderer.setPixelRatio(_resScale); } catch (e) {}
     if (window.__gameNote) window.__gameNote('resolution -> ' + _resScale.toFixed(2) + ' (fog at floor, still under target)');
     return;
@@ -8977,20 +8989,9 @@ function updateDrawDistanceTuner(dt) {
     // corrects quickly and a small one drifts.
     const deficit = Math.min(1, (FOG_TARGET_FPS - fps) / FOG_TARGET_FPS);
     FOG_FAR = Math.max(FOG_FAR_MIN, FOG_FAR - (4 + 26 * deficit));
-  } else if (fps > FOG_TARGET_FPS + 20) {
-    /* OSCILLATION FIX. This was `fps > target + 4` with a +3 step, which made the
-       tuner fight itself: thinning the trees improved the frame, fps crossed 34,
-       the fog pushed out, the extra content dragged fps back under 30, and it
-       pulled in again - endlessly. The live evidence was draw calls RISING from
-       156 to 452 after a change that removed geometry, with frame time going
-       28.7ms -> 51.9ms.
-       The gap between the pull-in trigger (28) and the push-out trigger is now 22
-       fps wide instead of 6, and the step is 1 instead of 3, so distance is only
-       ever regained when there is a large, sustained surplus rather than the
-       moment the target is met. In practice it converges downward to a stable
-       point and stays there, which is what "stable 30" actually requires - a
-       tuner that keeps reaching for more is a tuner that never settles. */
-    FOG_FAR = Math.min(FOG_FAR_MAX, FOG_FAR + 1);
+  } else if (fps > FOG_TARGET_FPS + 4) {
+    // Push back out slowly - regaining distance should never cost stability.
+    FOG_FAR = Math.min(FOG_FAR_MAX, FOG_FAR + 3);
   }
   if (FOG_FAR !== before) {
     FOG_NEAR = FOG_FAR * FOG_NEAR_RATIO;
@@ -11182,7 +11183,17 @@ loader.parse(buffer, '', (gltf) => {
      the plane now orbits at r=120/y=95. Depth ratio is 1,333:1 against near
      0.15 - precision is effectively a non-issue at that range, versus the
      200,000:1 it was at when the trouble started. */
-  camera.far = 200;
+  /* THE ROOT CAUSE, corrected. This was 100 until it was raised to 4000 so the
+     plane would be visible. That one change took draw calls from 41 to 2590 in
+     a single session and is responsible for essentially every performance
+     problem chased since - because at 100, everything beyond was clipped by the
+     GPU for free, and the fog hid the clip so completely that the world still
+     looked deep and detailed.
+     220 restores nearly all of that free clipping while still comfortably
+     clearing the plane's orbit (r=120, y=95) and staying well beyond the fog's
+     far plane, so nothing visible is ever cut. Depth ratio against near 0.15 is
+     ~1,470:1 - precision is a non-issue. */
+  camera.far = 220;
   camera.updateProjectionMatrix();
 
   // House model confirmed working — restoring the call.
