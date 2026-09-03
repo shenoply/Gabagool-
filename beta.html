@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 13:15';
+  window.__BUILD = '2026-09-03 14:05';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1236,7 +1236,7 @@ function updateDayNight(dt) {
    jumps, and there is a dead zone around the target so it settles instead of
    oscillating. */
 const FOG_TARGET_FPS = 30;
-const FOG_FAR_MIN = 45, FOG_FAR_MAX = 170;   // floor and ceiling both pulled in per request
+const FOG_FAR_MIN = 32, FOG_FAR_MAX = 170;   // floor lowered again - the tuner is sitting on it, so it was binding too
 const FOG_NEAR_RATIO = 0.35;                      // SA's start:far proportion, kept as fog moves
 let FOG_FAR = 75;                                 // live, auto-tuned from here - starts closer so it converges downward instead of spending the first seconds too far out
 let FOG_NEAR = FOG_FAR * FOG_NEAR_RATIO;
@@ -8945,8 +8945,12 @@ function updateDrawDistanceTuner(dt) {
      Resolution scale is the direct lever on that: 0.8 is 36% fewer pixels for a
      slight softening, and it only engages once fog has run out of room, so
      sharpness is only ever traded after distance has been. */
-  if (fps < FOG_TARGET_FPS - 2 && FOG_FAR <= FOG_FAR_MIN + 1 && _resScale > 0.7) {
-    _resScale = Math.max(0.7, _resScale - 0.05);
+  if (fps < FOG_TARGET_FPS - 2 && FOG_FAR <= FOG_FAR_MIN + 1 && _resScale > 0.55) {
+    // Floor lowered 0.70 -> 0.55: the live log showed it walk down to exactly
+    // 0.70 and stop while still short of target, i.e. the limit was binding
+    // rather than the frame being solved. 0.55 is ~70% fewer pixels than full
+    // and is the last lever available once fog is already at its floor.
+    _resScale = Math.max(0.55, _resScale - 0.05);
     try { renderer.setPixelRatio(_resScale); } catch (e) {}
     if (window.__gameNote) window.__gameNote('resolution -> ' + _resScale.toFixed(2) + ' (fog at floor, still under target)');
     return;
