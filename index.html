@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 03:45';
+  window.__BUILD = '2026-09-03 12:20';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -8915,6 +8915,7 @@ function getFarCull() { return FOG_FAR; }
    A median ignores those spikes and responds to sustained load, which is the
    only thing pulling the fog in can actually fix. */
 const _fpsWin = [];
+let _resScale = 1;   // render scale, second lever after fog
 let _tuneCooldown = 0;
 function updateDrawDistanceTuner(dt) {
   _fpsWin.push(dt);
@@ -8926,6 +8927,27 @@ function updateDrawDistanceTuner(dt) {
   const medDt = s[Math.floor(s.length / 2)];
   const fps = 1 / Math.max(0.0001, medDt);
   const before = FOG_FAR;
+  /* SECOND LEVER: resolution. The frame-accounting readout settled the question -
+     game JS 2.7ms, BROWSER/OS 0.0ms, GL submit 41-69ms. The GPU is the whole
+     frame, so the two things that matter are how much is drawn (fog, below) and
+     how many pixels each draw touches (this). Fog alone cannot close a 44ms ->
+     33ms gap once it is already near its floor, because the remaining cost is
+     per-pixel overdraw from foliage filling the screen, not distant geometry.
+     Resolution scale is the direct lever on that: 0.8 is 36% fewer pixels for a
+     slight softening, and it only engages once fog has run out of room, so
+     sharpness is only ever traded after distance has been. */
+  if (fps < FOG_TARGET_FPS - 2 && FOG_FAR <= FOG_FAR_MIN + 1 && _resScale > 0.7) {
+    _resScale = Math.max(0.7, _resScale - 0.05);
+    try { renderer.setPixelRatio(_resScale); } catch (e) {}
+    if (window.__gameNote) window.__gameNote('resolution -> ' + _resScale.toFixed(2) + ' (fog at floor, still under target)');
+    return;
+  }
+  if (fps > FOG_TARGET_FPS + 6 && _resScale < 1) {
+    // give sharpness back first, before pushing distance out again
+    _resScale = Math.min(1, _resScale + 0.05);
+    try { renderer.setPixelRatio(_resScale); } catch (e) {}
+    return;
+  }
   if (fps < FOG_TARGET_FPS - 2) {
     // Pull in proportionally to how far under target we are, so a big shortfall
     // corrects quickly and a small one drifts.
@@ -8940,7 +8962,7 @@ function updateDrawDistanceTuner(dt) {
     if (scene.fog && !inInterior) { scene.fog.near = FOG_NEAR; scene.fog.far = FOG_FAR; }
   }
 }
-window.__drawDist = () => ({ far: Math.round(FOG_FAR), near: Math.round(FOG_NEAR), targetFps: FOG_TARGET_FPS });
+window.__drawDist = () => ({ far: Math.round(FOG_FAR), near: Math.round(FOG_NEAR), res: _resScale, targetFps: FOG_TARGET_FPS });
 function registerFarCull(obj) {
   if (!obj) return;
   obj.updateMatrixWorld(true);
