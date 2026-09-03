@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 14:05';
+  window.__BUILD = '2026-09-03 14:45';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7547,7 +7547,12 @@ function loadMeshyBuildings() {
        alpha-test defeats the GPU's early-depth rejection. Halving the count
        roughly halves the number of stacked layers per pixel, which is a direct
        halving of the dominant cost rather than a trim at the edges. */
-    for (let z = 40; z < 1200; z += 22) {
+    /* 22 -> 34. The first halving (11 -> 22) took frame time 71.9ms -> 28.7ms,
+       which makes this the single most effective change found in the whole
+       exercise, so it is worth one more step. Thinning further rather than
+       shortening the run keeps the avenue lined all the way down instead of
+       ending abruptly. */
+    for (let z = 40; z < 1200; z += 34) {
       if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
       for (const side of [1, -1]) {
         const s2 = 0.85 + rnd() * 0.4;
@@ -8482,10 +8487,16 @@ function buildNewVehiclesAndGolf() {
 
 function buildPerimeterTrees() {
   loader.parse(ASSETS.STREET_TREE_D, '', (gltf) => {
+    /* Spacing 40 -> 90, and these sit at x=-160 and x=310 while the avenue is at
+       x=27 with fog solid at 32-45 units. They are permanently invisible from
+       anywhere you actually drive, yet each one is another stack of alpha-tested
+       leaf cards for the GPU to shade wherever the frustum happens to cross them.
+       144 -> ~64. Kept rather than deleted so the tree line still exists if the
+       fog is ever opened back up. */
     const lines = [-160, 310];
     let placed = 0;
     for (const roadX of lines) {
-      for (let z = 60; z < 1480; z += 40) {
+      for (let z = 60; z < 1480; z += 90) {
         for (const side of [1, -1]) {
           const t = gltf.scene.clone(true);
           t.position.set(roadX + side * 7, 0, z + (side > 0 ? 0 : 20));
