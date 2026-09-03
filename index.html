@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 00:20';
+  window.__BUILD = '2026-09-03 01:10';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -5540,10 +5540,17 @@ function updateRainScreen() {
   if (!rainScreenEl) {
     rainScreenEl = document.createElement('div');
     rainScreenEl.style.cssText = 'position:fixed;inset:0;z-index:4;pointer-events:none;opacity:0;transition:opacity 0.8s ease;' +
-      'background:repeating-linear-gradient(102deg, rgba(255,255,255,0.06) 0 1px, rgba(255,255,255,0) 1px 9px);';
+      // A repeating-linear-gradient across the whole viewport is re-rasterised by
+      // the compositor whenever it is visible. Widened the period (9px -> 14px)
+      // so there is far less to rasterise, and capped the opacity below.
+      'background:repeating-linear-gradient(102deg, rgba(255,255,255,0.05) 0 1px, rgba(255,255,255,0) 1px 14px);';
     document.body.appendChild(rainScreenEl);
   }
-  rainScreenEl.style.opacity = (drivingMode && rainWet > 0.15) ? String(rainWet * 0.5) : '0';
+  // display:none rather than opacity:0 - an opacity-0 layer is still a composited
+  // layer the browser keeps around and may still process; none removes it outright.
+  const want = (drivingMode && rainWet > 0.15) ? String(rainWet * 0.35) : '0';
+  if (want === '0') { if (rainScreenEl.style.display !== 'none') rainScreenEl.style.display = 'none'; }
+  else { if (rainScreenEl.style.display === 'none') rainScreenEl.style.display = ''; rainScreenEl.style.opacity = want; }
 }
 
 /* 11. Colour grading by time of day — a light screen tint, cheap and it ties the
@@ -5552,13 +5559,24 @@ let gradeEl = null;
 function updateColorGrade() {
   if (!gradeEl) {
     gradeEl = document.createElement('div');
-    gradeEl.style.cssText = 'position:fixed;inset:0;z-index:3;pointer-events:none;mix-blend-mode:soft-light;opacity:0.35;';
+    /* mix-blend-mode:soft-light was the killer. A full-screen blended layer over
+       the WebGL canvas forces the browser compositor to read back the whole
+       composited frame and run a per-pixel blend EVERY frame, on the GPU but
+       outside WebGL - so it never appears in renderer.info, and it costs exactly
+       the same whether the scene is 38 draw calls or 2086. That is precisely the
+       signature we kept measuring: fps flat against scene complexity, ~90% of the
+       frame unaccounted for, yet responsive to per-pixel changes like disabling
+       MSAA. It also explains why nothing done inside three.js moved the number.
+       Plain alpha compositing is a fast path the compositor can handle without a
+       readback. Opacity is raised a little below to keep a similar tint strength,
+       since normal blending reads weaker than soft-light at the same value. */
+    gradeEl.style.cssText = 'position:fixed;inset:0;z-index:3;pointer-events:none;opacity:0.35;';
     document.body.appendChild(gradeEl);
   }
   const s = sampleSky(dayTime);
   const c = new THREE.Color(s.horizon);
   gradeEl.style.background = `rgb(${(c.r*255)|0},${(c.g*255)|0},${(c.b*255)|0})`;
-  gradeEl.style.opacity = String(0.16 + nightLightLevel * 0.16);
+  gradeEl.style.opacity = String(0.10 + nightLightLevel * 0.11); // trimmed: normal blend is more opaque than soft-light was at the same alpha
 }
 
 /* 16. Fade to black when getting in or out of the car, instead of a hard cut. */
