@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 01:10';
+  window.__BUILD = '2026-09-03 03:45';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -958,6 +958,7 @@ function base64ToArrayBuffer(b64) {
       const c = window.__charRef && window.__charRef.position;
       if (c) note('POSITION: X ' + c.x.toFixed(1) + '  Z ' + c.z.toFixed(1));
       if (i.programs) note('SHADERS: ' + i.programs.length);
+      const fa = faReport(); if (fa) note(fa);
       note('GPU: ' + i.memory.geometries + ' geometries, ' + i.memory.textures +
            ' textures, ' + i.render.triangles.toLocaleString() + ' tris/frame, ' +
            i.render.calls + ' draw calls, ' +
@@ -12192,6 +12193,32 @@ function profReport() {
 PROF.worstBy = Object.create(null);
 
 /* Called at the very top and bottom of each tick by the wrappers below. */
+/* ALWAYS-ON FRAME ACCOUNTING.
+   Separate from the profiler button, and deliberately cheap: two timestamps and
+   a subtraction per frame. It answers the one question that matters now - of a
+   ~45ms frame, how much is the game and how much is everything else? JS time is
+   what tick() spends; GPU submit is measured around renderer.render(); anything
+   left is the browser: compositing the canvas, decoding a picture-in-picture
+   video, or the OS throttling the chip. That remainder is invisible to
+   renderer.info, which is why it never showed up in any earlier measurement. */
+let _fa = { t0: 0, js: 0, sub: 0, n: 0, jsSum: 0, subSum: 0, totSum: 0 };
+function faStart() { _fa.t0 = performance.now(); }
+function faEnd() {
+  const tot = performance.now() - _fa.t0;
+  _fa.n++; _fa.totSum += tot; _fa.jsSum += _fa.js; _fa.subSum += _fa.sub;
+  _fa.js = 0; _fa.sub = 0;
+}
+function faReport() {
+  if (!_fa.n) return '';
+  const t = _fa.totSum / _fa.n, j = _fa.jsSum / _fa.n, s = _fa.subSum / _fa.n;
+  const other = Math.max(0, t - j - s);
+  const r = 'FRAME ' + t.toFixed(1) + 'ms = game JS ' + j.toFixed(1) + ' + GL submit ' +
+            s.toFixed(1) + ' + BROWSER/OS ' + other.toFixed(1) + 'ms (' +
+            Math.round(other / t * 100) + '%)';
+  _fa = { t0: 0, js: 0, sub: 0, n: 0, jsSum: 0, subSum: 0, totSum: 0 };
+  return r;
+}
+
 function profFrameStart() {
   if (!PROF.on) return;
   PROF.cur = Object.create(null);
@@ -12260,6 +12287,7 @@ updateTraffic = profWrap('traffic', updateTraffic);
 handleMovement = profWrap('movement', handleMovement);
 
 function tick() {
+  faStart();
   profFrameStart();
   if (renderPaused) return; // rAF is already throttled when hidden, but this skips the work too
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -12398,10 +12426,14 @@ function tick() {
     spot.target.position.copy(character.position);
     if (!spot.target.parent) scene.add(spot.target); // was re-added EVERY FRAME - add() on a parented object is a remove+re-add each tick
   }
-  const _rt0 = PROF.on ? performance.now() : 0;
+  const _rt0 = performance.now();
   renderer.render(scene, camera);
-  if (PROF.on) { const d = performance.now() - _rt0; PROF.acc['render(submit)'] = (PROF.acc['render(submit)']||0)+d; PROF.cur['render(submit)'] = d; }
+  const _rtd = performance.now() - _rt0;
+  _fa.sub += _rtd;
+  _fa.js = (performance.now() - _fa.t0) - _rtd; // everything in tick that wasn't the GL submit
+  if (PROF.on) { PROF.acc['render(submit)'] = (PROF.acc['render(submit)']||0)+_rtd; PROF.cur['render(submit)'] = _rtd; }
   profFrameEnd();
+  faEnd();
   requestAnimationFrame(tick);
 }
 tick();
