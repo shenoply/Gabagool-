@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 17:20';
+  window.__BUILD = '2026-09-03 18:05';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -9210,7 +9210,14 @@ let planeMesh = null;
    what actually shrinks the frustum. Centred near home (z=120) rather than at
    the far junction, so it passes overhead where you are instead of 800 units
    away. Smaller radius also means it comes round more often. */
-const PLANE_ORBIT = { cx: 27, cz: 120, rx: 120, rz: 120, y: 95, speed: 0.05, phase: 0 };
+/* Orbit pulled inside the frustum. camera.far is 130 (correctly just above
+   FOG_FAR_MAX of 125), but at r=120/y=95 the plane's distance from the player
+   reached about 150 - beyond the far plane - so it was clipping in and out at
+   the frustum edge instead of being drawn consistently. That is the one visible
+   artefact left in the current distance setup, and it is also why the plane has
+   been hard to spot. r=55/y=52 keeps it comfortably inside 130 at every point in
+   the orbit, and it passes overhead more often as a bonus. */
+const PLANE_ORBIT = { cx: 27, cz: 90, rx: 55, rz: 55, y: 52, speed: 0.07, phase: 0 };
 function loadPlane() {
   loader.parse(ASSETS.PLANE, '', (gltf) => {
     const plane = gltf.scene;
