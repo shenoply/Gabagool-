@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 14:45';
+  window.__BUILD = '2026-09-03 15:30';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -8977,9 +8977,20 @@ function updateDrawDistanceTuner(dt) {
     // corrects quickly and a small one drifts.
     const deficit = Math.min(1, (FOG_TARGET_FPS - fps) / FOG_TARGET_FPS);
     FOG_FAR = Math.max(FOG_FAR_MIN, FOG_FAR - (4 + 26 * deficit));
-  } else if (fps > FOG_TARGET_FPS + 4) {
-    // Push back out slowly - regaining distance should never cost stability.
-    FOG_FAR = Math.min(FOG_FAR_MAX, FOG_FAR + 3);
+  } else if (fps > FOG_TARGET_FPS + 20) {
+    /* OSCILLATION FIX. This was `fps > target + 4` with a +3 step, which made the
+       tuner fight itself: thinning the trees improved the frame, fps crossed 34,
+       the fog pushed out, the extra content dragged fps back under 30, and it
+       pulled in again - endlessly. The live evidence was draw calls RISING from
+       156 to 452 after a change that removed geometry, with frame time going
+       28.7ms -> 51.9ms.
+       The gap between the pull-in trigger (28) and the push-out trigger is now 22
+       fps wide instead of 6, and the step is 1 instead of 3, so distance is only
+       ever regained when there is a large, sustained surplus rather than the
+       moment the target is met. In practice it converges downward to a stable
+       point and stays there, which is what "stable 30" actually requires - a
+       tuner that keeps reaching for more is a tuner that never settles. */
+    FOG_FAR = Math.min(FOG_FAR_MAX, FOG_FAR + 1);
   }
   if (FOG_FAR !== before) {
     FOG_NEAR = FOG_FAR * FOG_NEAR_RATIO;
