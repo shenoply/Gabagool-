@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 16:40';
+  window.__BUILD = '2026-09-03 17:20';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1242,9 +1242,14 @@ const FOG_TARGET_FPS = 30;
    a floor below that is destroying the game to solve a problem the far-plane fix
    below actually solves. The tuner keeps its job, but it can no longer trade
    away the thing that makes the game worth looking at. */
-const FOG_FAR_MIN = 120, FOG_FAR_MAX = 240;
+/* Pulled to sit just inside the new far plane. The pairing is what matters:
+   fog goes fully opaque at FOG_FAR, the camera clips a little past it, so the
+   clip is invisible and everything beyond is free. That pairing - not aggressive
+   fog, not fewer trees - is what made the original build both fast and
+   good-looking. */
+const FOG_FAR_MIN = 85, FOG_FAR_MAX = 125;
 const FOG_NEAR_RATIO = 0.35;                      // SA's start:far proportion, kept as fog moves
-let FOG_FAR = 160;                                // live, auto-tuned from here
+let FOG_FAR = 110;                                // live, auto-tuned from here
 let FOG_NEAR = FOG_FAR * FOG_NEAR_RATIO;
 const FOG_INDOOR_NEAR = 2, FOG_INDOOR_FAR = 34;   // indoors the horizon is a wall
 /* Anti-pop guarantee, by construction rather than by eye.
@@ -11193,7 +11198,15 @@ loader.parse(buffer, '', (gltf) => {
      clearing the plane's orbit (r=120, y=95) and staying well beyond the fog's
      far plane, so nothing visible is ever cut. Depth ratio against near 0.15 is
      ~1,470:1 - precision is a non-issue. */
-  camera.far = 220;
+  /* 220 -> 130. Restoring the trees and fog brought the look back (blue sky,
+     dense blossom, real depth) but left 666 draw calls at 68-148ms, because the
+     far plane was still more than twice the original. The 04:41 build ran 41
+     draw calls at 30fps with this at 100 - the free GPU clipping it provides is
+     the single largest lever in this whole exercise, and it costs nothing
+     visually as long as it sits just beyond the fog's far plane, since anything
+     past that is already solid sky colour. 130 keeps that relationship with the
+     fog range below. The plane's orbit (r=120, y=95) still fits. */
+  camera.far = 130;
   camera.updateProjectionMatrix();
 
   // House model confirmed working — restoring the call.
