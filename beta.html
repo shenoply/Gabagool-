@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 18:05';
+  window.__BUILD = '2026-09-03 21:58';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1815,6 +1815,10 @@ function updatePhoneRinger() {
 
 
 const maxAniso = Math.min(4, renderer.capabilities.getMaxAnisotropy()); // was device max (often 16x) - capped to 4x, a real sampling-cost multiplier applied to many textures, minimal visible difference beyond 4x
+// Shared utility material - was 3 separate identical instances (0x2a2a2c,
+// roughness 0.92) across 3 different functions, each compiling its own
+// shader. One instance now, reused wherever that exact material was needed.
+const sharedPlazaMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
 function sharpenTextures(root) {
   root.traverse((o) => {
     if (!o.isMesh || !o.material) return;
@@ -8158,8 +8162,7 @@ function buildBranchRoad() {
   scene.add(strip);
   // small paved turnaround plaza at the far end - flat color still fine here,
   // a dashed lane line wrapped around a circle would look wrong
-  const plazaMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
-  const plaza = new THREE.Mesh(new THREE.CircleGeometry(22, 20), plazaMat);
+  const plaza = new THREE.Mesh(new THREE.CircleGeometry(22, 20), sharedPlazaMat);
   plaza.rotation.x = -Math.PI / 2;
   plaza.position.set(endX, 0.015, BRANCH_ROAD_Z);
   plaza.receiveShadow = true;
@@ -8258,7 +8261,7 @@ function updateRoadPatrols(dt) {
    convention every road in this game uses, no diagonals). Shared helper so the
    3 new roads below are built consistently. */
 function buildRoadSegment(x1, z1, x2, z2) {
-  const mat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
+  const mat = sharedPlazaMat; // was creating a new identical material on every one of the ~8 calls to this function - now one shared instance for all of them
   const w = 8;
   if (Math.abs(x1 - x2) < 0.01) {
     const len = Math.abs(z2 - z1);
@@ -8548,8 +8551,7 @@ function buildBranchRoad2() {
   strip.position.set(endX + roadLen / 2, 0.015, BRANCH_ROAD_Z2);
   strip.receiveShadow = true;
   scene.add(strip);
-  const plazaMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.92 });
-  const plaza = new THREE.Mesh(new THREE.CircleGeometry(22, 20), plazaMat);
+  const plaza = new THREE.Mesh(new THREE.CircleGeometry(22, 20), sharedPlazaMat);
   plaza.rotation.x = -Math.PI / 2;
   plaza.position.set(endX, 0.015, BRANCH_ROAD_Z2);
   plaza.receiveShadow = true;
