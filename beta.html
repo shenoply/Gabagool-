@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 22:20';
+  window.__BUILD = '2026-09-04 22:15';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7448,7 +7448,17 @@ function loadMeshyBuildings() {
        properly tuned now (FogExp2, 86% obscured at 400u, 95% at 500u per the
        __fog() table), so 480 should sit inside where it's already mostly hidden —
        worth the framerate back if the swap really is invisible now. */
-    l.addLevel(b, 480);
+    /* 480 -> 62. This was dead code: camera.far is 130 and fog closes at 125, so
+       a swap distance of 480 could never be reached. The four buildings that DO
+       have hand-made low-poly versions have therefore been rendering full detail
+       100% of the time, and the low meshes have been loaded but never drawn.
+       62 sits comfortably inside the visible range but far enough out that the
+       fog is already thickening, which is the whole point of an LOD: the reduced
+       mesh only ever appears where its flaws cannot be resolved. That is also the
+       answer to "how do you reduce these without losing quality" - you don't
+       preserve quality in the reduced mesh, you make sure it is only ever seen at
+       a distance where the difference is invisible. */
+    l.addLevel(b, 62);
     l.position.set(x, 0, z);
     l.rotation.y = rotY;
     scene.add(l);
