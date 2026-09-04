@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-03 21:58';
+  window.__BUILD = '2026-09-03 22:20';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1235,7 +1235,14 @@ function updateDayNight(dt) {
    Adjustments are small and rate-limited so the horizon drifts rather than
    jumps, and there is a dead zone around the target so it settles instead of
    oscillating. */
-const FOG_TARGET_FPS = 30;
+/* 36, not 30. The target is where the controller STOPS correcting, not a floor -
+   so aiming at 30 settles the game hovering at 30 and dipping under it
+   constantly. At 36 the existing "pull in when 2 under target" rule keeps
+   correcting until it is above 34, which leaves headroom for the things a
+   controller cannot smooth out: traffic entering view, a proximity load firing,
+   a thermal dip. The felt result is a stable 30+, which hovering at 30 never
+   gives you. */
+const FOG_TARGET_FPS = 36;
 /* Floor raised hard. The tuner had been driving fog down to 32-45 units, which
    is what produced the orange-white soup with no buildings and bare trees. At
    build 04:41 the world was readable to roughly 100+ units and ran at 30fps, so
@@ -1247,7 +1254,11 @@ const FOG_TARGET_FPS = 30;
    clip is invisible and everything beyond is free. That pairing - not aggressive
    fog, not fewer trees - is what made the original build both fast and
    good-looking. */
-const FOG_FAR_MIN = 85, FOG_FAR_MAX = 125;
+/* Floor 85 -> 68. Aiming higher achieves nothing if the tuner runs out of room
+   before it gets there. 68 is still far above the 32-45 that produced the fog
+   soup with no visible buildings, and it is only approached on the heaviest
+   views - it comes straight back out afterwards. */
+const FOG_FAR_MIN = 68, FOG_FAR_MAX = 125;
 const FOG_NEAR_RATIO = 0.35;                      // SA's start:far proportion, kept as fog moves
 let FOG_FAR = 110;                                // live, auto-tuned from here
 let FOG_NEAR = FOG_FAR * FOG_NEAR_RATIO;
@@ -8975,12 +8986,12 @@ function updateDrawDistanceTuner(dt) {
      Resolution scale is the direct lever on that: 0.8 is 36% fewer pixels for a
      slight softening, and it only engages once fog has run out of room, so
      sharpness is only ever traded after distance has been. */
-  if (fps < FOG_TARGET_FPS - 2 && FOG_FAR <= FOG_FAR_MIN + 1 && _resScale > 0.85) {
+  if (fps < FOG_TARGET_FPS - 2 && FOG_FAR <= FOG_FAR_MIN + 1 && _resScale > 0.78) {
     // Floor lowered 0.70 -> 0.55: the live log showed it walk down to exactly
     // 0.70 and stop while still short of target, i.e. the limit was binding
     // rather than the frame being solved. 0.55 is ~70% fewer pixels than full
     // and is the last lever available once fog is already at its floor.
-    _resScale = Math.max(0.85, _resScale - 0.05);   // floor raised from 0.55 - a blurry game is not a fixed game
+    _resScale = Math.max(0.78, _resScale - 0.05);   // last resort, only after fog has bottomed out; still well clear of the 0.55 that looked soft
     try { renderer.setPixelRatio(_resScale); } catch (e) {}
     if (window.__gameNote) window.__gameNote('resolution -> ' + _resScale.toFixed(2) + ' (fog at floor, still under target)');
     return;
