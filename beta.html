@@ -676,6 +676,17 @@ const ASSETS = {
   ROW_FOUR_B: 'row_four_b_hq.glb',
   CORNER_BLOCK_B: 'corner_block_b.glb',
   CORNER_C: 'corner_c.glb',
+  /* Distance LODs for the six frontage buildings that could be simplified
+     (82-89% triangle cuts). Only ever drawn beyond BUILDING_LOD_DIST, where fog
+     is already thickening - which is why an imperfect reduction is fine here.
+     corner_block, corner_round and row_five_a have no entry: they are
+     photogrammetry shells with no shared edges and cannot be reduced at all. */
+  CORNER_C_LOD: 'corner_c_lod.glb',
+  CORNER_BLOCK_B_LOD: 'corner_block_b_lod.glb',
+  ROW_FIVE_C_LOD: 'row_five_c_hq_lod.glb',
+  ROW_FIVE_D_LOD: 'row_five_d_hq_lod.glb',
+  ROW_FOUR_LOD: 'row_four_hq_lod.glb',
+  ROW_FOUR_B_LOD: 'row_four_b_hq_lod.glb',
   FACTORY_A: 'factory_a.glb',
   FACTORY_B: 'factory_b.glb',
   CHAIN_LINK_FENCE: 'chain_link_fence.glb',
@@ -942,7 +953,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-04 23:05';
+  window.__BUILD = '2026-09-04 23:45';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7737,6 +7748,20 @@ function loadMeshyBuildings() {
     ASSETS.CORNER_C, ASSETS.ROW_FIVE_A, ASSETS.ROW_FIVE_C, ASSETS.ROW_FIVE_D,
     ASSETS.ROW_FOUR, ASSETS.ROW_FOUR_B,
   ]); // all 10 confirmed single-mesh/single-primitive - same safe structure as the first 2
+  /* Instanced LOD. THREE.LOD cannot be used with InstancedMesh, so each type with
+     a reduced version gets TWO instance buffers - full detail and reduced - and
+     the per-instance cull pass below decides which buffer each placement lands
+     in by distance. Same idea as THREE.LOD, applied per instance instead of per
+     object, so the batching is kept. */
+  const BUILDING_LOD_DIST = 62;
+  const LOD_FOR = {
+    [ASSETS.CORNER_C]: ASSETS.CORNER_C_LOD,
+    [ASSETS.CORNER_BLOCK_B]: ASSETS.CORNER_BLOCK_B_LOD,
+    [ASSETS.ROW_FIVE_C]: ASSETS.ROW_FIVE_C_LOD,
+    [ASSETS.ROW_FIVE_D]: ASSETS.ROW_FIVE_D_LOD,
+    [ASSETS.ROW_FOUR]: ASSETS.ROW_FOUR_LOD,
+    [ASSETS.ROW_FOUR_B]: ASSETS.ROW_FOUR_B_LOD,
+  };
   function putInstanced(key, src, slotList) {
     let meshGeo = null, meshMat = null;
     src.traverse((m) => { if (m.isMesh) { meshGeo = m.geometry; meshMat = m.material; } });
@@ -7758,9 +7783,13 @@ function loadMeshyBuildings() {
       else if (side < 0 && bb.max.x > FRONT_FACE_W) dx = FRONT_FACE_W - bb.max.x;
       sideCorrection[side] = dx;
     }
-    const inst = new THREE.InstancedMesh(meshGeo, meshMat, slotList.length);
-    inst.castShadow = false; inst.receiveShadow = false;
-    inst.frustumCulled = false; // spans the whole frontage - per-instance cull below does the real work
+    const mkInst = (geo, mat) => {
+      const im = new THREE.InstancedMesh(geo, mat, slotList.length);
+      im.castShadow = false; im.receiveShadow = false;
+      im.frustumCulled = false; // spans the whole frontage - per-instance cull below does the real work
+      return im;
+    };
+    const inst = mkInst(meshGeo, meshMat);
     const m4 = new THREE.Matrix4(), pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3(1, 1, 1);
     const placements = slotList.map((p) => {
       const side = p.x > ROAD_CX ? 1 : -1;
@@ -7773,8 +7802,30 @@ function loadMeshyBuildings() {
     });
     inst.instanceMatrix.needsUpdate = true;
     scene.add(inst);
-    registerInstancedFarCull(inst, placements);
     placedCount += slotList.length;
+
+    const lodKey = LOD_FOR[key];
+    if (!lodKey) { registerInstancedFarCull(inst, placements); return; }
+    // Reduced buffer, filled with the same matrices. The cull pass routes each
+    // placement into exactly one of the two, so a building is never drawn twice.
+    load(lodKey, (lsrc) => {
+      let lGeo = null, lMat = null;
+      lsrc.traverse((m) => { if (m.isMesh) { lGeo = m.geometry; lMat = m.material; } });
+      if (!lGeo) { registerInstancedFarCull(inst, placements); return; }
+      lMat = (Array.isArray(lMat) ? lMat[0] : lMat).clone();
+      if (lMat.map) { lMat.map.anisotropy = maxAniso; lMat.map.needsUpdate = true; }
+      const instLo = mkInst(lGeo, lMat);
+      placements.forEach((p, i) => {
+        pos.set(p.px, 0, p.pz); quat.setFromAxisAngle(_UP, p.ry); scl.set(1, 1, 1);
+        m4.compose(pos, quat, scl);
+        instLo.setMatrixAt(i, m4);
+      });
+      instLo.instanceMatrix.needsUpdate = true;
+      scene.add(instLo);
+      const g = registerInstancedFarCull(inst, placements);
+      g.lodMeshes = [instLo];
+      g.lodDist = BUILDING_LOD_DIST;
+    });
   }
   for (const key of Object.keys(slots)) {
     if (INSTANCE_TYPES.has(key)) {
@@ -9160,7 +9211,9 @@ function registerInstancedFarCull(...meshesAndPlacements) {
   }
   r = (r || 10) * 1.15; // margin so nothing clips out at the frustum edge
   for (const p of placements) { p.cullR = r; p.cullY = cy; }
-  instancedCullList.push({ meshes, placements, realMatrices, lastCount: -1 });
+  const group = { meshes, placements, realMatrices, lastCount: -1, lodMeshes: null, lastLoCount: -1 };
+  instancedCullList.push(group);
+  return group;
 }
 /* CPU SKELETAL ANIMATION - the fixed per-frame cost.
    Live evidence: 38 draw calls / 431k tris ran at 25fps and 2086 draw calls /
@@ -9206,21 +9259,37 @@ function updateInstancedFarCull(dt) {
      setting count = visibleCount makes hidden instances cost literally zero.
      That is the difference between "drawn invisibly" and "not drawn". */
   for (const group of instancedCullList) {
-    let n = 0;
+    let n = 0, nLo = 0;
     for (let i = 0; i < group.placements.length; i++) {
       const p = group.placements[i];
       const dx = p.px - px, dz = p.pz - pz;
-      if ((dx * dx + dz * dz) > d2) continue;
+      const d2i = dx * dx + dz * dz;
+      if (d2i > d2) continue;
       _instCullSphere.set(_instCullVec3.set(p.px, p.cullY, p.pz), p.cullR);
       if (!_instCullFrustum.intersectsSphere(_instCullSphere)) continue;
-      for (const mesh of group.meshes) mesh.setMatrixAt(n, group.realMatrices[i]);
-      n++;
+      /* Route to exactly one buffer. Inside lodDist the full mesh is used; beyond
+         it the reduced one. Each placement lands in one or the other, never both,
+         so nothing is drawn twice and the total instance count is unchanged. */
+      if (group.lodMeshes && d2i > group.lodDist * group.lodDist) {
+        for (const mesh of group.lodMeshes) mesh.setMatrixAt(nLo, group.realMatrices[i]);
+        nLo++;
+      } else {
+        for (const mesh of group.meshes) mesh.setMatrixAt(n, group.realMatrices[i]);
+        n++;
+      }
     }
     if (n !== group.lastCount) {
       for (const mesh of group.meshes) mesh.count = n;
       group.lastCount = n;
     }
     for (const mesh of group.meshes) mesh.instanceMatrix.needsUpdate = true;
+    if (group.lodMeshes) {
+      if (nLo !== group.lastLoCount) {
+        for (const mesh of group.lodMeshes) mesh.count = nLo;
+        group.lastLoCount = nLo;
+      }
+      for (const mesh of group.lodMeshes) mesh.instanceMatrix.needsUpdate = true;
+    }
   }
 }
 
