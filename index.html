@@ -942,7 +942,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-04 22:15';
+  window.__BUILD = '2026-09-04 23:05';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7448,17 +7448,7 @@ function loadMeshyBuildings() {
        properly tuned now (FogExp2, 86% obscured at 400u, 95% at 500u per the
        __fog() table), so 480 should sit inside where it's already mostly hidden —
        worth the framerate back if the swap really is invisible now. */
-    /* 480 -> 62. This was dead code: camera.far is 130 and fog closes at 125, so
-       a swap distance of 480 could never be reached. The four buildings that DO
-       have hand-made low-poly versions have therefore been rendering full detail
-       100% of the time, and the low meshes have been loaded but never drawn.
-       62 sits comfortably inside the visible range but far enough out that the
-       fog is already thickening, which is the whole point of an LOD: the reduced
-       mesh only ever appears where its flaws cannot be resolved. That is also the
-       answer to "how do you reduce these without losing quality" - you don't
-       preserve quality in the reduced mesh, you make sure it is only ever seen at
-       a distance where the difference is invisible. */
-    l.addLevel(b, 62);
+    l.addLevel(b, 480);
     l.position.set(x, 0, z);
     l.rotation.y = rotY;
     scene.add(l);
@@ -7678,6 +7668,27 @@ function loadMeshyBuildings() {
     { key: ASSETS.BARBER_SHOP,    w: 10 },
     { key: ASSETS.CORNER_C,       w: 25 },
     { key: ASSETS.ROW_FOUR,       w: 40 },
+    /* DILUTION, not removal. corner_block (123,558 tris), corner_round (86,420)
+       and row_five_a (42,880) cannot be reduced - they are photogrammetry meshes
+       built from thousands of disconnected shells, so there are no shared edges
+       for a simplifier to collapse. Verified by trying: welding, stripping the
+       attribute discontinuities, and pushing the error budget to 0.9 all left
+       them within 3-14% of their original size.
+       Since the pattern below repeats along the whole avenue, each entry lands
+       5-6 times. Adding more of the types that DO have working LODs lengthens the
+       cycle, so the three heavy ones become a smaller fraction of placements -
+       they still appear on the street, just less often, and every building is
+       kept. Roughly a third fewer of the expensive ones for no lost variety. */
+    { key: ASSETS.ROW_FOUR_B,     w: 40 },
+    { key: ASSETS.ROW_FIVE_C,     w: 32 },
+    { key: ASSETS.CORNER_C,       w: 25 },
+    { key: ASSETS.PORK_STORE,     w: 11 },
+    { key: ASSETS.ROW_FIVE_D,     w: 32 },
+    { key: ASSETS.CORNER_BLOCK_B, w: 33 },
+    { key: ASSETS.BARBER_SHOP,    w: 10 },
+    { key: ASSETS.ROW_FOUR,       w: 40 },
+    { key: ASSETS.CHURCH,         w: 14 },
+    { key: ASSETS.ROW_FIVE_C,     w: 32 },
     // Native footprint 9.6 x 84.2 — treating the 84.2 dimension as the street
     // frontage (a bundled row of facades, matching the "buildings_front" name and
     // the same shallow-depth convention row_five_a already uses) rather than the
