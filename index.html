@@ -687,6 +687,18 @@ const ASSETS = {
   ROW_FIVE_D_LOD: 'row_five_d_hq_lod.glb',
   ROW_FOUR_LOD: 'row_four_hq_lod.glb',
   ROW_FOUR_B_LOD: 'row_four_b_hq_lod.glb',
+  /* The final four. These are photogrammetry shells with no coherent surface -
+     five different reduction approaches (meshopt at three error budgets, UV
+     stripping, vertex welding, and vertex-merge plus quadric decimation) either
+     barely touched them or shattered them into floating fragments. So instead of
+     reducing them, each is stood in for at distance by a matched low-poly
+     brownstone, scaled to the original's exact bounding box so it occupies the
+     same silhouette and needs no repositioning. Only ever drawn past 62 units,
+     where the swap is hidden by fog. */
+  CORNER_BLOCK_LOD: 'corner_block_lod.glb',
+  ROW_FIVE_B_LOD: 'row_five_b_hq_lod.glb',
+  CORNER_ROUND_LOD: 'corner_round_lod.glb',
+  ROW_FIVE_A_LOD: 'row_five_a_hq_lod.glb',
   FACTORY_A: 'factory_a.glb',
   FACTORY_B: 'factory_b.glb',
   CHAIN_LINK_FENCE: 'chain_link_fence.glb',
@@ -953,7 +965,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-04 23:45';
+  window.__BUILD = '2026-09-05 09:30';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7761,6 +7773,10 @@ function loadMeshyBuildings() {
     [ASSETS.ROW_FIVE_D]: ASSETS.ROW_FIVE_D_LOD,
     [ASSETS.ROW_FOUR]: ASSETS.ROW_FOUR_LOD,
     [ASSETS.ROW_FOUR_B]: ASSETS.ROW_FOUR_B_LOD,
+    [ASSETS.CORNER_BLOCK]: ASSETS.CORNER_BLOCK_LOD,   // 123,558 -> 2,808
+    [ASSETS.ROW_FIVE_B]: ASSETS.ROW_FIVE_B_LOD,       // 117,330 -> 1,412
+    [ASSETS.CORNER_ROUND]: ASSETS.CORNER_ROUND_LOD,   //  86,420 -> 2,457
+    [ASSETS.ROW_FIVE_A]: ASSETS.ROW_FIVE_A_LOD,       //  42,880 ->   863
   };
   function putInstanced(key, src, slotList) {
     let meshGeo = null, meshMat = null;
