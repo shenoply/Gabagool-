@@ -716,6 +716,12 @@ const ASSETS = {
      the same proportions. Both have no ground slab and sit at y=0. */
   JERSEY_CLUB: 'jersey_club.glb',
   JERSEY_WAREHOUSE: 'jersey_warehouse.glb',
+  /* Funeral home and dry cleaner as one 40-unit frontage pair. Deliberately
+     opposite in character - limestone, four-column portico, pediment and urns
+     against plain brick with a painted window sign and a garment conveyor - so
+     they break up a run that would otherwise read as one repeated shape. Base at
+     y=0, no ground slab, so the pair drops into a frontage slot. */
+  JERSEY_FUNERAL_CLEANER: 'jersey_funeral_cleaner.glb',
   /* Distance LODs for the six frontage buildings that could be simplified
      (82-89% triangle cuts). Only ever drawn beyond BUILDING_LOD_DIST, where fog
      is already thickening - which is why an imperfect reduction is fine here.
@@ -1005,7 +1011,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-05 23:20';
+  window.__BUILD = '2026-09-06 00:55';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7751,7 +7757,7 @@ function loadMeshyBuildings() {
   const FRONT = [
     { key: ASSETS.JERSEY_TAVERN,  w: 20 },   // was ROW_FIVE_A (42,880 tris)
     { key: ASSETS.PORK_STORE,     w: 11 },
-    { key: ASSETS.ROW_FOUR,       w: 40 },
+    { key: ASSETS.JERSEY_FUNERAL_CLEANER, w: 41 },   // funeral home + dry cleaner
     { key: ASSETS.BARBER_SHOP,    w: 10 },
     { key: ASSETS.JERSEY_SHOPS,   w: 36 },   // four-shop row, two storeys
     { key: ASSETS.CHURCH,         w: 14 },
