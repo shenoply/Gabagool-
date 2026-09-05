@@ -688,6 +688,14 @@ const ASSETS = {
      fire escape. 5,920 tris / 0.6 MB. Taller than the pork store so the roofline
      along the avenue varies instead of running flat. */
   JERSEY_TAVERN: 'jersey_tavern.glb',
+  /* Two main-street shop rows. Each is four separately-built bays with its own
+     brick, parapet height, awning colour and window neon, so a row reads as four
+     shops rather than one long facade. Row 1 is two storeys (pizzeria, deli,
+     barber, laundromat); row 2 is three (bakery, pharmacy, hardware, liquor)
+     with stepped parapets, so placing both varies the roofline along the avenue.
+     No ground slab and base at y=0, so they sit on the existing road surface. */
+  JERSEY_SHOPS: 'jersey_shops.glb',
+  JERSEY_SHOPS2: 'jersey_shops2.glb',
   /* Distance LODs for the six frontage buildings that could be simplified
      (82-89% triangle cuts). Only ever drawn beyond BUILDING_LOD_DIST, where fog
      is already thickening - which is why an imperfect reduction is fine here.
@@ -977,7 +985,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-05 12:40';
+  window.__BUILD = '2026-09-05 20:05';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7690,7 +7698,7 @@ function loadMeshyBuildings() {
     { key: ASSETS.PORK_STORE,     w: 11 },
     { key: ASSETS.ROW_FOUR,       w: 40 },
     { key: ASSETS.BARBER_SHOP,    w: 10 },
-    { key: ASSETS.ROW_FIVE_C,     w: 32 },
+    { key: ASSETS.JERSEY_SHOPS,   w: 36 },   // four-shop row, two storeys
     { key: ASSETS.CHURCH,         w: 14 },
     { key: ASSETS.JERSEY_PORKSTORE, w: 19 },   // was CORNER_BLOCK (123,558 tris)
     { key: ASSETS.BRICK_WALL,     w: 16 },
@@ -7698,7 +7706,7 @@ function loadMeshyBuildings() {
     { key: ASSETS.JERSEY_PORKSTORE, w: 19 },   // was CORNER_ROUND (86,420 tris)
     { key: ASSETS.ROW_FOUR_B,     w: 40 },
     { key: ASSETS.PORK_STORE,     w: 11 },
-    { key: ASSETS.ROW_FIVE_D,     w: 32 },
+    { key: ASSETS.JERSEY_SHOPS2,  w: 39 },   // four-shop row, three storeys
     { key: ASSETS.CORNER_BLOCK_B, w: 33 },
     { key: ASSETS.BARBER_SHOP,    w: 10 },
     { key: ASSETS.CORNER_C,       w: 25 },
