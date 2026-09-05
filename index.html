@@ -688,13 +688,6 @@ const ASSETS = {
      fire escape. 5,920 tris / 0.6 MB. Taller than the pork store so the roofline
      along the avenue varies instead of running flat. */
   JERSEY_TAVERN: 'jersey_tavern.glb',
-  /* Four-shop main-street row - pizzeria, deli, barber, laundromat - each bay a
-     different brick and parapet height so it reads as separately-built shops
-     rather than one long facade. Apartments above, fire escape on the deli.
-     8,084 tris across 36 units of frontage, so about 2,000 per shop. Built with
-     no ground slab and its base at y=0 so it drops into a frontage slot without
-     fighting the existing road and pavement. */
-  JERSEY_SHOPS: 'jersey_shops.glb',
   /* Distance LODs for the six frontage buildings that could be simplified
      (82-89% triangle cuts). Only ever drawn beyond BUILDING_LOD_DIST, where fog
      is already thickening - which is why an imperfect reduction is fine here.
@@ -984,7 +977,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-05 18:20';
+  window.__BUILD = '2026-09-05 12:40';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7722,7 +7715,7 @@ function loadMeshyBuildings() {
        they still appear on the street, just less often, and every building is
        kept. Roughly a third fewer of the expensive ones for no lost variety. */
     { key: ASSETS.ROW_FOUR_B,     w: 40 },
-    { key: ASSETS.JERSEY_SHOPS,   w: 36 },   // four-shop row
+    { key: ASSETS.ROW_FIVE_C,     w: 32 },
     { key: ASSETS.CORNER_C,       w: 25 },
     { key: ASSETS.PORK_STORE,     w: 11 },
     { key: ASSETS.ROW_FIVE_D,     w: 32 },
