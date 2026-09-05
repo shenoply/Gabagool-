@@ -1011,7 +1011,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-06 00:55';
+  window.__BUILD = '2026-09-06 01:45';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7589,14 +7589,37 @@ function loadMeshyBuildings() {
        Per-instance far-cull is preserved via a degenerate (zero-scale) matrix swap
        instead of the old per-object .visible toggle - a hidden instance still costs
        a trivial vertex-stage touch but rasterizes nothing, same visual result. */
+    /* CRASH FIX. This used to pick the leaf mesh by the literal material name
+       'Rinde_Leaf' - German for bark/leaf, from the old .3ds asset. The sakura's
+       materials are named 'Bark001_2K_JPG_Mat' and 'Sakura_Mat', so NEITHER
+       matched, both meshes fell through to the trunk branch, leafGeo stayed null,
+       and `new THREE.InstancedMesh(null, null, n)` threw inside the render loop
+       on the first frame.
+       Now it identifies the foliage by what it actually IS - the material that
+       needs alpha cutout - and falls back to mesh order if that is ambiguous, so
+       it keeps working whatever the next species is called. */
     let trunkGeo = null, leafGeo = null, trunkMat = null, leafMat = null;
-    src.traverse((m) => {
-      if (!m.isMesh) return;
+    const meshes = [];
+    src.traverse((m) => { if (m.isMesh && m.geometry) meshes.push(m); });
+    const isFoliage = (mat) => {
+      if (!mat) return false;
+      const n = (mat.name || '').toLowerCase();
+      if (/leaf|blatt|foliage|sakura|blossom|canopy/.test(n)) return true;
+      return mat.transparent === true || (mat.alphaTest && mat.alphaTest > 0);
+    };
+    for (const m of meshes) {
       const mat = Array.isArray(m.material) ? m.material[0] : m.material;
-      if (mat && mat.alphaTest === undefined) {} // no-op, keeps traverse simple
-      if (mat && mat.name === 'Rinde_Leaf') { leafGeo = m.geometry; leafMat = mat.clone(); }
-      else { trunkGeo = m.geometry; trunkMat = mat.clone(); }
-    });
+      if (!leafGeo && isFoliage(mat)) { leafGeo = m.geometry; leafMat = mat.clone(); }
+      else if (!trunkGeo) { trunkGeo = m.geometry; trunkMat = mat ? mat.clone() : new THREE.MeshLambertMaterial({ color: 0x5d4a3c }); }
+    }
+    // fallback: if the split was ambiguous, take them in order
+    if (!trunkGeo && meshes.length) { trunkGeo = meshes[0].geometry; const mm = Array.isArray(meshes[0].material)?meshes[0].material[0]:meshes[0].material; trunkMat = mm ? mm.clone() : new THREE.MeshLambertMaterial({ color: 0x5d4a3c }); }
+    if (!leafGeo && meshes.length > 1) { leafGeo = meshes[1].geometry; const mm = Array.isArray(meshes[1].material)?meshes[1].material[0]:meshes[1].material; leafMat = mm ? mm.clone() : new THREE.MeshLambertMaterial({ color: 0xd99fb4 }); }
+    if (!trunkGeo || !leafGeo) {
+      console.warn('plantAvenue: could not resolve trunk/leaf meshes, skipping avenue trees');
+      if (window.__gameNote) window.__gameNote('avenue trees skipped - mesh split failed');
+      return;
+    }
     /* FOLIAGE FILL-RATE FIX - aimed at the one thing that was actually measured.
        Profiling showed all game JS costs ~1ms/frame (wildlife 0.00, traffic 0.00,
        culling 0.00) while ~90% of the frame sits inside render submit. So the
