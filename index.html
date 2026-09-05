@@ -676,6 +676,12 @@ const ASSETS = {
   ROW_FOUR_B: 'row_four_b_hq.glb',
   CORNER_BLOCK_B: 'corner_block_b.glb',
   CORNER_C: 'corner_c.glb',
+  /* Procedurally built North Jersey corner block: pork store below, apartments
+     above, fire escape, water tower, stoop and street furniture. 4,240 tris and
+     0.49 MB against corner_block.glb's 123,558 and 9.7 MB - about 3% of the cost
+     with more detail at street level, where you actually look. Its own textures
+     are canvas-generated, so it adds no image downloads. */
+  JERSEY_PORKSTORE: 'jersey_porkstore.glb',
   /* Distance LODs for the six frontage buildings that could be simplified
      (82-89% triangle cuts). Only ever drawn beyond BUILDING_LOD_DIST, where fog
      is already thickening - which is why an imperfect reduction is fine here.
@@ -965,7 +971,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-05 09:30';
+  window.__BUILD = '2026-09-05 11:20';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7680,10 +7686,10 @@ function loadMeshyBuildings() {
     { key: ASSETS.BARBER_SHOP,    w: 10 },
     { key: ASSETS.ROW_FIVE_C,     w: 32 },
     { key: ASSETS.CHURCH,         w: 14 },
-    { key: ASSETS.CORNER_BLOCK,   w: 33 },
+    { key: ASSETS.JERSEY_PORKSTORE, w: 19 },   // was CORNER_BLOCK (123,558 tris)
     { key: ASSETS.BRICK_WALL,     w: 16 },
     { key: ASSETS.ROW_FIVE_B,     w: 32 },
-    { key: ASSETS.CORNER_ROUND,   w: 25 },
+    { key: ASSETS.JERSEY_PORKSTORE, w: 19 },   // was CORNER_ROUND (86,420 tris)
     { key: ASSETS.ROW_FOUR_B,     w: 40 },
     { key: ASSETS.PORK_STORE,     w: 11 },
     { key: ASSETS.ROW_FIVE_D,     w: 32 },
