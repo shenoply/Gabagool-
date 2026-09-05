@@ -656,7 +656,20 @@ const ASSETS = {
      here on gets a new name. */
   STREET_TREE: 'street_tree_v2.glb',
   STREET_TREE_B: 'street_tree_b.glb', // mature deciduous — Meshy 2.6M tris knocked to 20K, 10m height + ground offset baked in
-  STREET_TREE_C: 'street_tree_c.glb', // legacy .3ds asset via assimp, 16K tris, 10m height + ground offset baked in
+  STREET_TREE_C: 'street_tree_c.glb',
+  /* Avenue sakura with a billboard LOD. The hi model keeps the realistic look but
+     its blossom is alpha-tested cards, same category of cost as the tree it
+     replaces - so the model swap alone is only a modest win (2 draw calls, 512
+     textures, and BLEND changed to MASK, which matters because blended surfaces
+     get no depth rejection at all).
+     The real win is the LOD: a two-quad cross carrying a baked render of the hi
+     model, 4 triangles against 7,007. Overdraw is a per-pixel cost and most of
+     the screen looking down the avenue is past the swap distance, so that is
+     where the canopy stops shading hidden layers. This is the San Andreas
+     approach - full model near, flat impostor beyond. A cross rather than a
+     single quad because one quad vanishes edge-on as you drive past it. */
+  SAKURA_HI: 'sakura_hi.glb',
+  SAKURA_LOD: 'sakura_lod.glb', // legacy .3ds asset via assimp, 16K tris, 10m height + ground offset baked in
   /* _hq: 1024px textures instead of 512. New filenames because the service worker
      caches .glb cache-first and would keep serving the blurry ones. */
   ROW_FIVE_A: 'row_five_a_hq.glb',
@@ -992,7 +1005,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-05 21:30';
+  window.__BUILD = '2026-09-05 23:20';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7556,6 +7569,8 @@ function loadMeshyBuildings() {
      Meshy AI export) is out too, same as street_tree_v2 before it. Every slot
      plants directly, no more species roll splitting them — so this is ~2x the
      count of the last build, not just the wider/tighter range on its own. */
+  const TREE_BASE_SCALE = 26;   // 0.4-unit export -> ~10m street tree
+  const TREE_LOD_DIST = 46;     // closer than the buildings' 62: canopies fill far more screen
   const plantAvenue = (src) => {
     let seed = 90210;
     const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
@@ -7637,7 +7652,10 @@ function loadMeshyBuildings() {
     for (let z = 40; z < 1200; z += 11) {
       if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
       for (const side of [1, -1]) {
-        const s2 = 0.85 + rnd() * 0.4;
+        /* The sakura exports at roughly 0.4 units tall against the ~10m the old
+           species had baked in, so the per-tree variation multiplier is applied
+           on top of a base scale that brings it up to avenue height. */
+        const s2 = TREE_BASE_SCALE * (0.85 + rnd() * 0.4);
         const px = ROAD_CX + side * (ROAD_HW + 3.4 + rnd() * 0.8);
         const pz = z + (rnd() - 0.5) * 3;
         const ry = rnd() * Math.PI * 2;
@@ -7663,7 +7681,37 @@ function loadMeshyBuildings() {
     leafMesh.instanceMatrix.needsUpdate = true;
     scene.add(trunkMesh);
     scene.add(leafMesh);
-    registerInstancedFarCull(trunkMesh, leafMesh, placements);
+    const treeGroup = registerInstancedFarCull(trunkMesh, leafMesh, placements);
+
+    /* Billboard buffer, same placements. The cull sweep routes each tree into
+       either the full pair or this one by distance, never both, so the total
+       instance count is unchanged and nothing is drawn twice. */
+    load(ASSETS.SAKURA_LOD, (lsrc) => {
+      let bbGeo = null, bbMat = null;
+      lsrc.traverse((m) => { if (m.isMesh && !bbGeo) { bbGeo = m.geometry; bbMat = m.material; } });
+      if (!bbGeo) return;
+      bbMat = (Array.isArray(bbMat) ? bbMat[0] : bbMat).clone();
+      bbMat.alphaTest = 0.4; bbMat.transparent = false; bbMat.side = THREE.DoubleSide;
+      if (bbMat.map) { bbMat.map.anisotropy = maxAniso; bbMat.map.needsUpdate = true; }
+      const bbMesh = new THREE.InstancedMesh(bbGeo, bbMat, n);
+      bbMesh.castShadow = false; bbMesh.receiveShadow = false; bbMesh.frustumCulled = false;
+      /* The billboard is authored 1 unit tall; the hi model is ~0.4, so the
+         billboard needs the base scale divided back out or it would tower over
+         the trees it stands in for. */
+      const BB = TREE_BASE_SCALE * 0.4;
+      placements.forEach((p, i) => {
+        pos.set(p.px, 0, p.pz);
+        quat.setFromAxisAngle(_UP, p.ry);
+        scl.setScalar(BB * (p.s2 / TREE_BASE_SCALE));
+        m4.compose(pos, quat, scl);
+        bbMesh.setMatrixAt(i, m4);
+      });
+      bbMesh.instanceMatrix.needsUpdate = true;
+      scene.add(bbMesh);
+      treeGroup.lodMeshes = [bbMesh];
+      treeGroup.lodDist = TREE_LOD_DIST;
+      if (window.__gameNote) window.__gameNote('sakura billboard LOD active past ' + TREE_LOD_DIST + ' units');
+    });
   };
   /* street_tree_c: a legacy .3ds asset (bark + alpha-masked leaf card,
      German-authored: "Rinde" = bark, "Blatt" = leaf), converted with assimp since
@@ -7674,7 +7722,7 @@ function loadMeshyBuildings() {
      leaf here. gltfpack (-si 0.22 -sa) took the welded model from 93K verts to 16K
      and correctly preserved MASK on the leaf material. Scale and ground offset
      baked in. Not a Meshy asset — the only tree species left that isn't. */
-  load(ASSETS.STREET_TREE_C, (src) => plantAvenue(src));
+  load(ASSETS.SAKURA_HI, (src) => plantAvenue(src));
 
   const EAST_X = 49, WEST_X = 5;   // was 44/10 - same clearance issue as the factories fix, separate instance here. Road edges are 37/17, so this was only ~7 units clearance each side - widened to ~12
   const FACE_W = -Math.PI / 2, FACE_E = Math.PI / 2;
