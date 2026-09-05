@@ -682,6 +682,12 @@ const ASSETS = {
      with more detail at street level, where you actually look. Its own textures
      are canvas-generated, so it adds no image downloads. */
   JERSEY_PORKSTORE: 'jersey_porkstore.glb',
+  /* Four-storey corner tavern: chamfered corner entrance, neon in the windows,
+     gold lettering on a green fascia with goose-neck lamps, a hanging bracket
+     sign, cellar hatch and kegs, three floors of apartments with a three-level
+     fire escape. 5,920 tris / 0.6 MB. Taller than the pork store so the roofline
+     along the avenue varies instead of running flat. */
+  JERSEY_TAVERN: 'jersey_tavern.glb',
   /* Distance LODs for the six frontage buildings that could be simplified
      (82-89% triangle cuts). Only ever drawn beyond BUILDING_LOD_DIST, where fog
      is already thickening - which is why an imperfect reduction is fine here.
@@ -971,7 +977,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-05 11:20';
+  window.__BUILD = '2026-09-05 12:40';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7680,7 +7686,7 @@ function loadMeshyBuildings() {
      width plus a small gap. That is what stops the street reading as one building
      copied over and over. */
   const FRONT = [
-    { key: ASSETS.ROW_FIVE_A,     w: 32 },
+    { key: ASSETS.JERSEY_TAVERN,  w: 20 },   // was ROW_FIVE_A (42,880 tris)
     { key: ASSETS.PORK_STORE,     w: 11 },
     { key: ASSETS.ROW_FOUR,       w: 40 },
     { key: ASSETS.BARBER_SHOP,    w: 10 },
@@ -7688,7 +7694,7 @@ function loadMeshyBuildings() {
     { key: ASSETS.CHURCH,         w: 14 },
     { key: ASSETS.JERSEY_PORKSTORE, w: 19 },   // was CORNER_BLOCK (123,558 tris)
     { key: ASSETS.BRICK_WALL,     w: 16 },
-    { key: ASSETS.ROW_FIVE_B,     w: 32 },
+    { key: ASSETS.JERSEY_TAVERN,  w: 20 },   // was ROW_FIVE_B (117,330 tris)
     { key: ASSETS.JERSEY_PORKSTORE, w: 19 },   // was CORNER_ROUND (86,420 tris)
     { key: ASSETS.ROW_FOUR_B,     w: 40 },
     { key: ASSETS.PORK_STORE,     w: 11 },
