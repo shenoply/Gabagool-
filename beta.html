@@ -1011,7 +1011,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-06 03:15';
+  window.__BUILD = '2026-09-06 12:50';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1027,6 +1027,33 @@ function base64ToArrayBuffer(b64) {
       const c = window.__charRef && window.__charRef.position;
       if (c) note('POSITION: X ' + c.x.toFixed(1) + '  Z ' + c.z.toFixed(1));
       if (i.programs) note('SHADERS: ' + i.programs.length);
+      /* DRAW CALL BREAKDOWN. Measured on device: 34 calls ran at 54fps and 71
+         calls at 28fps with the SAME triangle count, so cost tracks call count at
+         roughly 0.4-0.5ms each. That is high enough that the only question worth
+         answering is which objects are issuing them - counting the total does not
+         say where to look. This walks the visible scene once every few seconds
+         and attributes calls to the thing that owns them. */
+      try {
+        const tally = {};
+        let total = 0;
+        scene.traverse((o) => {
+          if (!o.visible) return;
+          if (!o.isMesh && !o.isInstancedMesh && !o.isPoints && !o.isLine) return;
+          if (o.isInstancedMesh && o.count === 0) return;
+          const prims = Array.isArray(o.material) ? o.material.length : 1;
+          let p = o, label = null;
+          for (let d = 0; d < 8 && p; d++) {
+            if (p.name && /tree|build|road|car|npc|wild|street|shop|jersey|sky|forest|court|fence|light|rain|golf|house|inter/i.test(p.name)) { label = p.name; break; }
+            p = p.parent;
+          }
+          label = (label || o.name || o.type).slice(0, 22);
+          tally[label] = (tally[label] || 0) + prims;
+          total += prims;
+        });
+        const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 6)
+          .map(e => e[0] + ':' + e[1]).join('  ');
+        note('CALLS ~' + total + ' | ' + top);
+      } catch (e) {}
       const fa = faReport(); if (fa) note(fa);
       note('GPU: ' + i.memory.geometries + ' geometries, ' + i.memory.textures +
            ' textures, ' + i.render.triangles.toLocaleString() + ' tris/frame, ' +
