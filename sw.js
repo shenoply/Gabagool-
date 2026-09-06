@@ -7,8 +7,17 @@
      - HTML: network-first, so a new build is never masked by the cache
      - everything else (glb/webp/mp3/m4a/mp4/js): cache-first, since those change
        only when their filename does
+
+   That last assumption is the catch, and it bit hard: an asset REPLACED under
+   the same filename is invisible to every device that already cached it. The
+   sakura trees were re-uploaded three times - fixing scale, then origin, then a
+   dropped rotation - and every corrected copy was ignored on-device because
+   sakura_hi.glb was already in this cache. The version below is the only lever
+   that clears it, so it MUST be bumped whenever an asset is replaced in place
+   rather than renamed. The activate handler deletes every cache whose key does
+   not match, so bumping it purges the stale set on next load.
 */
-const CACHE = 'gabagool-v1';
+const CACHE = 'gabagool-v2';
 const ASSET_RE = /\.(glb|webp|png|jpg|jpeg|mp3|m4a|mp4|js)$/i;
 
 self.addEventListener('install', (e) => {
