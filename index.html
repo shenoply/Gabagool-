@@ -1011,7 +1011,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-06 21:15';
+  window.__BUILD = '2026-09-06 22:40';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7726,7 +7726,11 @@ function loadMeshyBuildings() {
        from 100 to 4000, which is what actually exploded the draw calls (41 ->
        2590 in the same session). Fixing the far plane below makes the thinning
        pointless, and it cost the street its entire character. */
-    for (let z = 40; z < 1200; z += 11) {
+    /* Halved: 11 -> 22. Cutting foliage is the change that has moved the frame
+       most reliably all along (an earlier halving took 71.9ms to 28.7ms), and it
+       now helps for a second reason too: every tree is a scene object, and the
+       measurements point at object count as the dominant cost. */
+    for (let z = 40; z < 1200; z += 22) {
       if (CROSS_Z.some((c) => Math.abs(c - z) < 9)) continue;   // leave the junctions clear
       for (const side of [1, -1]) {
         /* The sakura exports at roughly 0.4 units tall against the ~10m the old
@@ -8771,7 +8775,7 @@ function buildPerimeterTrees() {
     const lines = [-160, 310];
     let placed = 0;
     for (const roadX of lines) {
-      for (let z = 60; z < 1480; z += 40) {   // restored with the avenue trees
+      for (let z = 60; z < 1480; z += 80) {   // halved with the avenue trees
         for (const side of [1, -1]) {
           const t = gltf.scene.clone(true);
           t.position.set(roadX + side * 7, 0, z + (side > 0 ? 0 : 20));
@@ -11111,35 +11115,20 @@ const FOREST_PATCHES = [
   // one actually encountered up close near the start rather than as distant
   // treeline. Reported as a messy/oversized-looking clump at that range.
   [118, -14, 0.16],
-  [-134, 20, 5.78],
   [-98, 20, 2.02],
-  [-62, 20, 4.54],
   [82, 20, 2.06],
-  [118, 20, 4.58],
   [154, 20, 0.82],
-  [-170, 54, 1.4],
   [-134, 54, 3.92],
-  [-98, 54, 0.16],
   [-62, 54, 2.68],
-  [82, 54, 0.2],
   [118, 54, 2.72],
-  [-134, 88, 2.06],
   [-98, 88, 4.58],
-  [-62, 88, 0.82],
   [-26, 88, 3.34],
-  [82, 88, 4.62],
   [118, 88, 0.86],
-  [154, 88, 3.38],
   [-170, 122, 3.96],
-  [-98, 122, 2.72],
   [-62, 122, 5.24],
-  [-26, 122, 1.48],
   [82, 122, 2.76],
-  [118, 122, 5.28],
   [-134, 156, 4.62],
-  [-62, 156, 3.38],
   [82, 156, 0.9],
-  [154, 156, 5.94],
 ];
 
 /* The road corridor now holds three rows of buildings and 62 street trees. These
