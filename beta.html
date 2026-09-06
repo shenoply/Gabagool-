@@ -1011,7 +1011,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-06 20:30';
+  window.__BUILD = '2026-09-06 21:15';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1039,15 +1039,8 @@ function base64ToArrayBuffer(b64) {
          source. Walking to the direct child of the scene names the thing that was
          actually added, and reporting its world position tells us where it sits,
          which identifies it even when the name is meaningless. */
-      /* Count top-level OBJECTS as well as meshes. The previous version keyed
-         purely by name, and "Sketchfab_Scene" is the default root name in a
-         Sketchfab export - so every clone of every such asset landed in one
-         bucket. 1502 meshes under that key could be one object with 1502 meshes
-         or 300 clones with 5 each, and those need opposite fixes: flatten the
-         asset, or stop cloning it. This reports both, plus the scene's direct
-         child count, which is what three.js actually walks each frame. */
       try {
-        const tally = {}, objs = {}, where = {};
+        const tally = {}, where = {};
         let total = 0;
         scene.traverse((o) => {
           if (!o.visible) return;
@@ -1056,16 +1049,18 @@ function base64ToArrayBuffer(b64) {
           const prims = Array.isArray(o.material) ? o.material.length : 1;
           let top = o;
           while (top.parent && top.parent !== scene) top = top.parent;
-          const key = (top.name || top.type || '?').slice(0, 18);
-          if (!tally[key]) { tally[key] = 0; objs[key] = new Set(); }
-          tally[key] += prims;
-          objs[key].add(top.uuid);
-          if (!where[key]) { const v = new THREE.Vector3(); top.getWorldPosition(v); where[key] = Math.round(v.x)+','+Math.round(v.z); }
+          const key = (top.name || top.type || '?').slice(0, 20) + (top.isInstancedMesh ? '[inst]' : '');
+          tally[key] = (tally[key] || 0) + prims;
+          if (!where[key]) {
+            const v = new THREE.Vector3();
+            top.getWorldPosition(v);
+            where[key] = Math.round(v.x) + ',' + Math.round(v.z);
+          }
           total += prims;
         });
-        const line = Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,4)
-          .map(e => e[0]+'='+e[1]+'m/'+objs[e[0]].size+'obj@'+where[e[0]]).join('  ');
-        note('SRC ' + total + ' in ' + scene.children.length + ' roots | ' + line);
+        const top6 = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 5)
+          .map(e => e[0] + '=' + e[1] + '@' + where[e[0]]).join('  ');
+        note('SRC ' + total + ' | ' + top6);
       } catch (e) { note('breakdown failed: ' + e.message); }
       const fa = faReport(); if (fa) note(fa);
       note('GPU: ' + i.memory.geometries + ' geometries, ' + i.memory.textures +
@@ -1367,9 +1362,15 @@ const FOG_TARGET_FPS = 36;
    before it gets there. 68 is still far above the 32-45 that produced the fog
    soup with no visible buildings, and it is only approached on the heaviest
    views - it comes straight back out afterwards. */
-const FOG_FAR_MIN = 68, FOG_FAR_MAX = 125;
+/* Pulled in another step: floor 68 -> 52, ceiling 125 -> 100. Distance is still
+   a real lever here, but for a different reason than it was at the start - it no
+   longer cuts triangles that matter, it cuts how many OBJECTS fall inside the
+   frustum, and object count is what the measurements now point at. Linear fog
+   still reaches full sky colour exactly at `far`, so pulling in costs nothing in
+   pop-in whatever value the tuner settles on. */
+const FOG_FAR_MIN = 52, FOG_FAR_MAX = 100;
 const FOG_NEAR_RATIO = 0.35;                      // SA's start:far proportion, kept as fog moves
-let FOG_FAR = 110;                                // live, auto-tuned from here
+let FOG_FAR = 85;                                 // live, auto-tuned from here - starts inside the new band
 let FOG_NEAR = FOG_FAR * FOG_NEAR_RATIO;
 const FOG_INDOOR_NEAR = 2, FOG_INDOOR_FAR = 34;   // indoors the horizon is a wall
 /* Anti-pop guarantee, by construction rather than by eye.
@@ -11554,7 +11555,10 @@ loader.parse(buffer, '', (gltf) => {
      visually as long as it sits just beyond the fog's far plane, since anything
      past that is already solid sky colour. 130 keeps that relationship with the
      fog range below. The plane's orbit (r=120, y=95) still fits. */
-  camera.far = 130;
+  /* Tracks the fog ceiling. Kept just above FOG_FAR_MAX so the fog is always
+     fully closed before anything reaches the clip plane, and a shorter frustum
+     rejects more objects before they are ever considered. */
+  camera.far = 112;
   camera.updateProjectionMatrix();
 
   // House model confirmed working — restoring the call.
