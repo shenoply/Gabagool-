@@ -17,7 +17,7 @@
    rather than renamed. The activate handler deletes every cache whose key does
    not match, so bumping it purges the stale set on next load.
 */
-const CACHE = 'gabagool-v3';
+const CACHE = 'gabagool-v4';
 const ASSET_RE = /\.(glb|webp|png|jpg|jpeg|mp3|m4a|mp4|js)$/i;
 
 self.addEventListener('install', (e) => {
