@@ -1011,7 +1011,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-06 13:40';
+  window.__BUILD = '2026-09-06 15:45';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -7478,6 +7478,7 @@ function buildRoadFurniture() {
   }
 
   roadFurniture.traverse((o) => { if (o.isMesh || o.isLine) o.frustumCulled = true; });
+  mergeStaticGroup(roadFurniture, 'roadFurniture');
   scene.add(roadFurniture);
   if (window.__gameNote) window.__gameNote('roadside: ' + poleZs.length + ' poles');
 }
@@ -8113,6 +8114,7 @@ function buildCrossStreets() {
     }
   }
   crossStreets.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; o.frustumCulled = true; } });
+  mergeStaticGroup(crossStreets, 'crossStreets');
   scene.add(crossStreets);
   if (window.__gameNote) window.__gameNote('cross-streets: ' + AT_Z.length * 2);
 }
@@ -8141,6 +8143,7 @@ function buildParkedCars() {
     parkedCars.add(c);
     registerFarCull(c);
   }
+  mergeStaticGroup(parkedCars, 'parkedCars');
   scene.add(parkedCars);
   if (window.__gameNote) window.__gameNote('parked cars: ' + parkedCars.children.length);
 }
@@ -8710,6 +8713,7 @@ function buildNewVehiclesAndGolf() {
     }
 
     golf.position.set(cx, 0, cz);
+    mergeStaticGroup(golf, 'golfCourse');
     scene.add(golf);
 
     // Trees around the perimeter - reuses the same tree asset already loaded
@@ -9292,6 +9296,72 @@ function warmUpShaders(tag) {
   for (const pair of counts) pair[0].count = pair[1];
   const ms = Math.round(performance.now() - t0);
   if (window.__gameNote) window.__gameNote('shaders warmed (' + tag + ', ' + ms + 'ms, ' + renderer.info.programs.length + ' programs)');
+}
+
+/* STATIC GROUP MERGER.
+   Measured on device: cost tracks draw calls at roughly 0.45ms each (34 calls
+   ran 54fps, 422 calls ran 20fps at similar triangle counts). Walking the live
+   scene graph found the calls are not in one place - the player car was 140
+   meshes, and several procedurally-built groups hold 90 to 293 static meshes
+   each, one per little box or cylinder. Individually they are all trivial
+   geometry; collectively they are the frame.
+   This collapses a group's static meshes into one mesh per material. World
+   transforms are baked in first, so nothing moves. InstancedMesh, skinned
+   meshes and anything the game keeps a reference to (colliders, animated props)
+   are left untouched - only plain static Mesh children are folded. */
+function mergeStaticGroup(group, label) {
+  if (!group || !group.children || !group.children.length) return;
+  try {
+    group.updateMatrixWorld(true);
+    const buckets = new Map();
+    const keep = [];
+    const scan = (o) => {
+      if (o.isInstancedMesh || o.isSkinnedMesh || o.isPoints || o.isLine) { keep.push(o); return; }
+      if (o.isMesh && o.geometry && o.geometry.attributes && o.geometry.attributes.position) {
+        const mat = Array.isArray(o.material) ? o.material[0] : o.material;
+        if (!mat || o.userData.noMerge) { keep.push(o); return; }
+        const key = mat.uuid;
+        if (!buckets.has(key)) buckets.set(key, { mat, geos: [] });
+        const g2 = o.geometry.clone();
+        g2.applyMatrix4(o.matrixWorld);
+        for (const a of Object.keys(g2.attributes)) if (!['position','normal','uv'].includes(a)) g2.deleteAttribute(a);
+        if (!g2.attributes.uv) {
+          const n = g2.attributes.position.count;
+          g2.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+        }
+        if (!g2.attributes.normal) g2.computeVertexNormals();
+        buckets.get(key).geos.push(g2);
+        return;
+      }
+      if (o.children) for (const c of o.children.slice()) scan(c);
+    };
+    for (const c of group.children.slice()) scan(c);
+    if (buckets.size === 0) return;
+
+    let before = 0;
+    group.traverse((o) => { if (o.isMesh || o.isInstancedMesh) before++; });
+
+    // rebuild: group's own transform is now baked into the geometry, so reset it
+    group.clear();
+    group.position.set(0, 0, 0);
+    group.rotation.set(0, 0, 0);
+    group.scale.set(1, 1, 1);
+    for (const { mat, geos } of buckets.values()) {
+      if (!geos.length) continue;
+      const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
+      if (!merged) { continue; }
+      const m = new THREE.Mesh(merged, mat);
+      m.castShadow = false; m.receiveShadow = true;
+      group.add(m);
+    }
+    for (const k of keep) group.add(k);
+
+    let after = 0;
+    group.traverse((o) => { if (o.isMesh || o.isInstancedMesh) after++; });
+    if (window.__gameNote && before > 20) window.__gameNote('merged ' + (label || 'group') + ': ' + before + ' -> ' + after + ' meshes');
+  } catch (e) {
+    console.warn('mergeStaticGroup failed for', label, e);
+  }
 }
 
 function updateFarCull(dt) {
@@ -9916,6 +9986,7 @@ function buildStreetDetail() {
   }
 
   streetDetail.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; o.frustumCulled = true; } });
+  mergeStaticGroup(streetDetail, 'streetDetail');
   scene.add(streetDetail);
 
   // 11. A few birds perched on the utility wires instead of only kerb pigeons —
