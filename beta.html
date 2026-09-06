@@ -1011,7 +1011,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-06 12:50';
+  window.__BUILD = '2026-09-06 13:40';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -1033,27 +1033,35 @@ function base64ToArrayBuffer(b64) {
          answering is which objects are issuing them - counting the total does not
          say where to look. This walks the visible scene once every few seconds
          and attributes calls to the thing that owns them. */
+      /* Attribute each mesh to the TOP-LEVEL object it hangs under, not its own
+         name. The first pass reported 887 objects called "Mesh" and 280 called
+         "mesh_0" - generic names an exporter assigns, useless for finding the
+         source. Walking to the direct child of the scene names the thing that was
+         actually added, and reporting its world position tells us where it sits,
+         which identifies it even when the name is meaningless. */
       try {
-        const tally = {};
+        const tally = {}, where = {};
         let total = 0;
         scene.traverse((o) => {
           if (!o.visible) return;
-          if (!o.isMesh && !o.isInstancedMesh && !o.isPoints && !o.isLine) return;
+          if (!o.isMesh && !o.isInstancedMesh) return;
           if (o.isInstancedMesh && o.count === 0) return;
           const prims = Array.isArray(o.material) ? o.material.length : 1;
-          let p = o, label = null;
-          for (let d = 0; d < 8 && p; d++) {
-            if (p.name && /tree|build|road|car|npc|wild|street|shop|jersey|sky|forest|court|fence|light|rain|golf|house|inter/i.test(p.name)) { label = p.name; break; }
-            p = p.parent;
+          let top = o;
+          while (top.parent && top.parent !== scene) top = top.parent;
+          const key = (top.name || top.type || '?').slice(0, 20) + (top.isInstancedMesh ? '[inst]' : '');
+          tally[key] = (tally[key] || 0) + prims;
+          if (!where[key]) {
+            const v = new THREE.Vector3();
+            top.getWorldPosition(v);
+            where[key] = Math.round(v.x) + ',' + Math.round(v.z);
           }
-          label = (label || o.name || o.type).slice(0, 22);
-          tally[label] = (tally[label] || 0) + prims;
           total += prims;
         });
-        const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 6)
-          .map(e => e[0] + ':' + e[1]).join('  ');
-        note('CALLS ~' + total + ' | ' + top);
-      } catch (e) {}
+        const top6 = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 5)
+          .map(e => e[0] + '=' + e[1] + '@' + where[e[0]]).join('  ');
+        note('SRC ' + total + ' | ' + top6);
+      } catch (e) { note('breakdown failed: ' + e.message); }
       const fa = faReport(); if (fa) note(fa);
       note('GPU: ' + i.memory.geometries + ' geometries, ' + i.memory.textures +
            ' textures, ' + i.render.triangles.toLocaleString() + ' tris/frame, ' +
