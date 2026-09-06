@@ -1011,7 +1011,7 @@ function base64ToArrayBuffer(b64) {
      page — the fix was live and the browser was running yesterday's file. This
      prints on every load so we can both see which build is running before
      debugging anything else. */
-  window.__BUILD = '2026-09-06 02:30';
+  window.__BUILD = '2026-09-06 03:15';
   /* BUG FOUND: this used to be a hardcoded literal — 'BUILD 2026-08-29 12:29' —
      copy-pasted once when the stamp feature was written, then never touched again
      while the __BUILD variable above kept getting updated build after build. Every
@@ -12530,9 +12530,19 @@ function faReport() {
   if (!_fa.n) return '';
   const t = _fa.totSum / _fa.n, j = _fa.jsSum / _fa.n, s = _fa.subSum / _fa.n;
   const other = Math.max(0, t - j - s);
+  let gpuTxt = '';
+  const GQ = window.__gpuQ;
+  if (GQ && GQ.samples && GQ.samples.length) {
+    const sorted = Float64Array.from(GQ.samples).sort();
+    const med = sorted[Math.floor(sorted.length / 2)];
+    gpuTxt = ' | REAL GPU ' + med.toFixed(1) + 'ms' +
+             (med > t * 0.6 ? ' -> GPU-BOUND (per-pixel work)' : ' -> NOT gpu; CPU is stalling');
+  } else if (GQ && GQ.tried && !GQ.ext) {
+    gpuTxt = ' | GPU timer unsupported';
+  }
   const r = 'FRAME ' + t.toFixed(1) + 'ms = game JS ' + j.toFixed(1) + ' + GL submit ' +
             s.toFixed(1) + ' + BROWSER/OS ' + other.toFixed(1) + 'ms (' +
-            Math.round(other / t * 100) + '%)';
+            Math.round(other / t * 100) + '%)' + gpuTxt;
   _fa = { t0: 0, js: 0, sub: 0, n: 0, jsSum: 0, subSum: 0, totSum: 0 };
   return r;
 }
@@ -12744,8 +12754,49 @@ function tick() {
     spot.target.position.copy(character.position);
     if (!spot.target.parent) scene.add(spot.target); // was re-added EVERY FRAME - add() on a parented object is a remove+re-add each tick
   }
+  /* ALWAYS-ON GPU TIMER. The frame accounting says GL submit is 30-45ms while
+     the scene is 43 draw calls and 68k triangles - an almost empty frame. CPU
+     time around renderer.render() cannot explain that, because GL commands are
+     queued rather than executed, so a long "submit" really means the CPU blocked
+     waiting on a full GPU queue. This asks the driver for the actual GPU time so
+     the two can finally be told apart: if GPU ms is close to the frame, the work
+     is real per-pixel cost; if it is small, the CPU is stalling on something else
+     entirely and no amount of scene reduction will help. */
+  if (!window.__gpuQ) {
+    window.__gpuQ = { ext: null, list: [], samples: [], tried: false };
+  }
+  const GQ = window.__gpuQ;
+  if (!GQ.tried) {
+    GQ.tried = true;
+    try {
+      const gl = renderer.getContext();
+      GQ.ext = gl.getExtension('EXT_disjoint_timer_query_webgl2') || gl.getExtension('EXT_disjoint_timer_query');
+      if (window.__gameNote) window.__gameNote(GQ.ext ? 'GPU timer available' : 'GPU timer NOT supported by this driver');
+    } catch (e) { GQ.ext = null; }
+  }
+  let _q = null;
+  if (GQ.ext && GQ.list.length < 4) {
+    try { const gl = renderer.getContext(); _q = gl.createQuery(); gl.beginQuery(GQ.ext.TIME_ELAPSED_EXT, _q); }
+    catch (e) { _q = null; }
+  }
   const _rt0 = performance.now();
   renderer.render(scene, camera);
+  if (_q) {
+    try { renderer.getContext().endQuery(GQ.ext.TIME_ELAPSED_EXT); GQ.list.push(_q); } catch (e) {}
+  }
+  if (GQ.ext && GQ.list.length) {
+    const gl = renderer.getContext();
+    for (let i = GQ.list.length - 1; i >= 0; i--) {
+      const q = GQ.list[i];
+      try {
+        if (gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) {
+          if (!gl.getParameter(GQ.ext.GPU_DISJOINT_EXT)) GQ.samples.push(gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6);
+          gl.deleteQuery(q); GQ.list.splice(i, 1);
+          if (GQ.samples.length > 90) GQ.samples.shift();
+        }
+      } catch (e) { GQ.list.splice(i, 1); }
+    }
+  }
   const _rtd = performance.now() - _rt0;
   _fa.sub += _rtd;
   _fa.js = (performance.now() - _fa.t0) - _rtd; // everything in tick that wasn't the GL submit
